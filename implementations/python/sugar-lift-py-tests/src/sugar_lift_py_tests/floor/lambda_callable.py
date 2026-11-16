@@ -434,7 +434,9 @@ def definition_edge_call(
     - ``py.class(<argument key>, <class>)`` for each actual whose class is
       decided here (``receiver_dispatch.class_arguments``, step 8), and
       ``py.class("cell:<name>", <class>)`` for each captured cell whose
-      value's class is (step 7).
+      value's class is (step 7), and ``py.class("global:<name>", <class>)``
+      for each global some function of the module mutates in place
+      (``receiver_dispatch.global_class_arguments``, step 7).
 
     Sent down the path an imported call takes: the one unanswered call
     (``UnknownCalleeCallV1.faces``: completes under its ``completes`` atom,
@@ -618,6 +620,14 @@ def definition_edge_call(
             )
             for item in _global_inputs(signature)
         ]
+        # The class of each such global's object where it is decided here,
+        # keyed by the input it supplies (``global:<name>``): what the
+        # callee's ``class:global:<name>`` input is bound to where its
+        # contract mutates the global's object through a method or an item
+        # store (#7757 step 7).
+        from sugar_lift_py_tests.receiver_dispatch import global_class_arguments
+
+        arguments += global_class_arguments(globals_read, signature.unit)
     symbol = symbol_definition.bridge_source_symbol()
     target = (
         symbol[len(_PYTHON_NAMESPACE) :]

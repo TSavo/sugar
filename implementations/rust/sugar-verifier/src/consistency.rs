@@ -4622,8 +4622,12 @@ fn read_call_arguments(formals: &[String], args: &[Json]) -> Option<CallArgument
 /// (step 5, #7757): the header's `inputValues`, `[{formal, value}, ...]`.
 /// A function reads its own module's globals; called after import, they are
 /// the values the module's one run left, and the producer's own proof states
-/// them. A global the run leaves undecided is not stated. An entry that is
-/// not `{formal: "global:<name>", value: <term>}` states nothing.
+/// them. A global the run leaves undecided is not stated. Beside a global's
+/// value, the class of that object (`class:global:<name>`, #7757 step 7),
+/// where the contract takes it and the run decides it: the one binder binds
+/// it only where it binds the global to its stated value too
+/// (`bind_call`). An entry that is not `{formal: "global:<name>" |
+/// "class:global:<name>", value: <term>}` states nothing.
 pub(crate) fn stated_input_values(body: &Json) -> Vec<(String, Json)> {
     body.get("inputValues")
         .and_then(Json::as_array)
@@ -4632,7 +4636,9 @@ pub(crate) fn stated_input_values(body: &Json) -> Vec<(String, Json)> {
                 .iter()
                 .filter_map(|entry| {
                     let formal = entry.get("formal")?.as_str()?;
-                    if !formal.starts_with(GLOBAL_INPUT_PREFIX) {
+                    if !formal.starts_with(GLOBAL_INPUT_PREFIX)
+                        && stated_global_class(formal).is_none()
+                    {
                         return None;
                     }
                     let value = entry.get("value").filter(|value| value.is_object())?;
@@ -4645,6 +4651,18 @@ pub(crate) fn stated_input_values(body: &Json) -> Vec<(String, Json)> {
 
 /// The formal prefix of a module global input.
 const GLOBAL_INPUT_PREFIX: &str = "global:";
+
+/// The `global:<name>` input whose class `formal` is, where `formal` is a
+/// module global's class input `class:global:<name>` (#7757 step 7): the
+/// class of the object the global binds, the one input kind over the
+/// formal, as `class:cell:<name>` is a cell's.
+fn stated_global_class(formal: &str) -> Option<&str> {
+    let global = formal.strip_prefix(CLASS_INPUT_PREFIX)?;
+    global
+        .strip_prefix(GLOBAL_INPUT_PREFIX)
+        .filter(|name| !name.is_empty())
+        .map(|_| global)
+}
 
 /// Each formal of the answering contract bound to what the call supplies
 /// for it (step 4): the call's arguments read against the formals by
@@ -4692,7 +4710,22 @@ fn bind_call(formals: &[String], stated: &[(String, Json)], args: &[Json]) -> Op
         .collect();
     let CallArguments { supplied, keyed } = read_call_arguments(formals, args)?;
     let mut bound: std::collections::BTreeMap<String, Json> = supplied.into_iter().collect();
+    // A global's stated class goes with its stated value: the class of the
+    // object the module's run left. Where the call supplies the global
+    // (`py.global`: the binding standing where it runs), that class says
+    // nothing of the object supplied, so only the call's own `py.class`
+    // binds it; with none, it stays unbound (#7757 step 7).
+    let supplied_globals: Vec<String> = bound
+        .keys()
+        .filter(|formal| formal.starts_with(GLOBAL_INPUT_PREFIX))
+        .cloned()
+        .collect();
     for (formal, value) in stated {
+        if stated_global_class(formal)
+            .is_some_and(|global| supplied_globals.iter().any(|supplied| supplied == global))
+        {
+            continue;
+        }
         if formals.contains(formal) && !bound.contains_key(formal) {
             bound.insert(formal.clone(), value.clone());
         }
@@ -16328,6 +16361,56 @@ mod tests {
         let (instance, inputs) = bind_own_inputs_with_unstated(&unstated);
         assert_eq!(instance["inv"], eqf(var("global:X"), int(4)));
         assert_eq!(inputs, vec!["global:X".to_string()]);
+    }
+
+    #[test]
+    fn a_global_s_stated_class_binds_only_beside_its_stated_value() {
+        // #7757 step 7: `class:global:G` is the class of the object the
+        // global binds. Stated beside the global's module-final value, it is
+        // bound where the global is bound to that value (no call supplies
+        // it), never beside a `py.global` a call supplies; a call that
+        // supplies both binds its own.
+        let contract = formals(&["global:G", "class:global:G"]);
+        let builtin = |name: &str| {
+            json!({"kind": "ctor", "name": "python:builtin", "args": [string_const(name)]})
+        };
+        let body = json!({
+            "formals": ["global:G", "class:global:G"],
+            "inputValues": [
+                {"formal": "global:G", "value": int(1)},
+                {"formal": "class:global:G", "value": builtin("list")},
+                {"formal": "class:G", "value": builtin("list")},
+            ],
+        });
+        let stated = stated_input_values(&body);
+        assert_eq!(
+            stated,
+            vec![
+                ("global:G".to_string(), int(1)),
+                ("class:global:G".to_string(), builtin("list")),
+            ]
+        );
+        let own = bind_call_arguments(&contract, &stated, &[]).unwrap();
+        assert!(own.contains(&("global:G".to_string(), int(1))), "{own:?}");
+        assert!(own.contains(&("class:global:G".to_string(), builtin("list"))), "{own:?}");
+        let supplied = bind_call_arguments(
+            &contract,
+            &stated,
+            &[named_arg("py.global", "G", var("g"))],
+        )
+        .unwrap();
+        assert!(supplied.contains(&("global:G".to_string(), var("g"))), "{supplied:?}");
+        assert!(supplied.iter().all(|(formal, _)| formal != "class:global:G"), "{supplied:?}");
+        let both = bind_call_arguments(
+            &contract,
+            &stated,
+            &[
+                named_arg("py.global", "G", var("g")),
+                named_arg("py.class", "global:G", builtin("dict")),
+            ],
+        )
+        .unwrap();
+        assert!(both.contains(&("class:global:G".to_string(), builtin("dict"))), "{both:?}");
     }
 
     #[test]

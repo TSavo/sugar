@@ -115,9 +115,31 @@ def test_an_undecided_global_is_an_input_with_no_stated_value(tmp_path):
     # contract is stated over the free ``global:X`` input with no stated
     # value (#8704): a claim that reads it is undecidable by name at prove.
     # Never a refusal of the file, never a value the run does not determine.
-    assert row.formals == ["global:X"]
+    # ``add`` mutates ``X`` through a dispatched call, so every contract that
+    # takes ``X`` takes its class too (``class:global:X``, #7757 step 7); with
+    # no value stated, no class is stated either.
+    assert row.formals == ["global:X", "class:global:X"]
     assert "global:X" in repr(row.post.ir_formula)
     assert row.input_values == ()
+
+
+def test_a_global_mutated_in_place_states_its_class_beside_its_value(tmp_path):
+    row = _rows(
+        tmp_path,
+        "G = [1]\n\n\ndef bump():\n    G[0] = 2\n",
+        lambda tree: next(iter(tree.functions())),
+    )
+
+    # ``G[0] = 2`` on the global's object is the dispatched ``__setitem__``
+    # over the class of the object ``G`` binds: the contract takes it as
+    # ``class:global:G`` after the global itself, and the row states it
+    # beside the global's value, the builtin ``list`` the module's run made
+    # (#7757 step 7).
+    assert row.formals == ["global:G", "class:global:G"]
+    stated = dict(row.input_values)
+    assert set(stated) == {"global:G", "class:global:G"}
+    assert "python:builtin" in repr(stated["class:global:G"])
+    assert "list" in repr(stated["class:global:G"])
 
 
 def test_a_global_only_a_star_import_may_bind_is_an_input_with_no_stated_value(
