@@ -194,15 +194,22 @@ def test_a_display_unpack_binds_each_member_under_its_projection() -> None:
     assert ret.value.evaluation == projection_key(assign.evaluation, "a")
 
 
-def test_each_unrolled_iteration_is_its_own_evaluation() -> None:
+def test_each_item_binds_the_one_unpack_key_the_latch_reads() -> None:
+    # No rewrite unrolls the loop (#8957): the unpack stands once, in the one
+    # loop statement's body, keyed by its evaluation.  The reduction binds
+    # that key in each item, qualified by the item (``evaluation_here``), and
+    # the latch hands on the latest write of ``a``, its projection of that
+    # key (``LiveForRuntimeV1.carried_evaluations``).
     body = _body(UNROLLED)
-    assigns = _unpacks(body)
-    assert len(assigns) == 2
-    assert assigns[0].evaluation != assigns[1].evaluation
-    ret = body[-1]
-    assert isinstance(ret, Return)
-    assert isinstance(ret.value, EvaluationRef)
-    assert ret.value.evaluation == projection_key(assigns[1].evaluation, "a")
+    assert _unpacks(body) == []
+    (loop,) = [node for node in body if node.kind == "LoopRecurrenceStatement"]
+    (unpack,) = _unpacks(loop.loop.body)
+    assert isinstance(unpack.evaluation, str)
+    runtime = loop.construction.loop_runtime
+    _header, writes, _else_writes = runtime.carried_evaluations[
+        runtime.carried_names.index("a")
+    ]
+    assert projection_key(unpack.evaluation, "a") in writes
 
 
 def test_statement_sugar_carries_its_evaluation_key() -> None:

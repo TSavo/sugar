@@ -82,16 +82,18 @@ def _contract(rows: list[dict]) -> dict:
 
 def test_concrete_string_slice_is_decided_at_the_one_door(tmp_path: Path) -> None:
     """``'abcdef'[1:3]`` is ``'bc'``: the slice is decided at the lift, and it
-    cannot raise, so it has no halted arm.
+    cannot raise, so it adds no halted arm.
 
     The comparison is not folded at the lift: a string equality is a fact the
     assertion states (``ff8cd13b0``, the ruling that deleted the
-    ``StringValue.equals`` fold), and an assert whose test is a predicate states
-    its claim and has no failing arm (``AssertSugar``).  So neither twin has a
-    ``panicLoci`` entry: no halted arm exists to carry.  The truthful twin's
-    claim is ``'bc' == 'bc'``.  The lying twin's claim is ``'bc' == 'bd'``, an
-    equality of two distinct string constants that no model satisfies, so prove
-    refutes it and it is never ``sat``."""
+    ``StringValue.equals`` fold).  An assert in a function body is a halt of
+    that function (#8961, ``assert_sugar.halts_where_its_asserts_fail``): under
+    the complement of its fact the function halts with ``AssertionError`` at
+    the ``assert``.  So each twin states exactly one panic locus, the assert's
+    at line 2, and none for the slice.  The truthful twin's claim is ``'bc' ==
+    'bc'``.  The lying twin's claim is ``'bc' == 'bd'``, an equality of two
+    distinct string constants that no model satisfies, so prove refutes it and
+    it is never ``sat``."""
     truthful = _scan(
         tmp_path / "good",
         "def test_concrete_string_slice():\n    assert 'abcdef'[1:3] == 'bc'\n",
@@ -105,7 +107,8 @@ def test_concrete_string_slice_is_decided_at_the_one_door(tmp_path: Path) -> Non
     assert good["kind"] == "function-contract"
     assert good["name"] == "python:test_slice_subscript.test_concrete_string_slice"
     assert "inv" in good
-    assert "panicLoci" not in good
+    (good_locus,) = good["panicLoci"]
+    assert (good_locus["file"], good_locus["line"]) == ("test_slice_subscript.py", 2)
     good_strings = _string_constants(good["inv"], truthful["termTable"])
     assert "bc" in good_strings
     assert "bd" not in good_strings
@@ -113,7 +116,8 @@ def test_concrete_string_slice_is_decided_at_the_one_door(tmp_path: Path) -> Non
 
     (bad,) = [node["audit"] for node in lying["nodes"]]
     assert bad["kind"] == "function-contract"
-    assert "panicLoci" not in bad
+    (bad_locus,) = bad["panicLoci"]
+    assert (bad_locus["file"], bad_locus["line"]) == ("test_slice_subscript.py", 2)
     bad_strings = _string_constants(bad["inv"], lying["termTable"])
     assert {"bc", "bd"} <= bad_strings
     assert "abcdef" not in bad_strings

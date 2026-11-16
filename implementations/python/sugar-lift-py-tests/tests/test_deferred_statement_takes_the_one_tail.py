@@ -175,15 +175,26 @@ def test_the_lying_half_that_drops_the_return_face_is_not_stated(
 def test_a_halt_inside_a_deferred_statement_carries_what_ran_before_it(
     tmp_path: Path,
 ) -> None:
-    """SPLICED: every halt of ``if flag: assert claim`` left after the first
-    ``if``, so its record holds that ``if``'s ``return`` and its guard states
-    the ``if`` did not return. The one halt before it is ``bool(c)``'s."""
+    """SPLICED: every halt the deferred ``if flag: assert claim`` reduces to
+    (``bool(flag)``, ``bool(claim)``) left after the first ``if``, so its
+    record holds that ``if``'s ``return`` and its guard states the ``if`` did
+    not return. The one halt before it is ``bool(c)``'s.
+
+    The failed ``assert`` is a halt of the function (#8961,
+    ``assert_sugar.halts_where_its_asserts_fail``): it is split off the
+    completed arm that holds the assert's fact, at the function's universe,
+    after the body's records were composed, so it carries no record (what a
+    universe-level halt states is its panic locus: site, type, guard). Its
+    guard is that arm's, so it too holds only where the ``if`` did not
+    return."""
     faces = _faces(_own_proof(tmp_path, "g"))
 
     halts = [face for face in faces if face[0] != COMPLETED]
     assert halts.count((HALTED_BEFORE, UNSTATED)) == 1, faces
-    after = [face for face in halts if face[0] == HALTED_AFTER]
-    # ``bool(flag)``, ``bool(claim)`` and the failed ``assert``.
-    assert len(after) == len(halts) - 1 and len(after) >= 2, faces
-    assert set(after) == {(HALTED_AFTER, WENT_ON)}, faces
+    rest = [face for face in halts if face != (HALTED_BEFORE, UNSTATED)]
+    after = [face for face in rest if face[0] == HALTED_AFTER]
+    # ``bool(flag)`` and ``bool(claim)``.
+    assert len(after) >= 2, faces
+    # Those and the failed ``assert``: none where the ``if`` returned.
+    assert {position for _kind, position in rest} == {WENT_ON}, faces
     assert (COMPLETED, RETURNED) in faces, faces

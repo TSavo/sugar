@@ -33,7 +33,7 @@ from sugar_lift_py_tests.temporal.temporal_context import (
     projection_key,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.nodes import (
     Assign,
     ContainerMutationStatement,
@@ -148,7 +148,7 @@ def _outcome(tmp_path: Path, source: str, stem: str):
     path.write_text(source, encoding="utf-8")
     functions = list(
         SourceFile(
-            path_source(str(path)),
+            workspace_path_source(str(path), root=str(tmp_path)),
             construction_context=TreeConstructionContextV1.for_test_without_workspace(),
         ).functions()
     )
@@ -247,20 +247,25 @@ def test_an_assignment_of_a_formal_is_keyed_too() -> None:
     assert body[-1].value.evaluation == projection_key(assign.evaluation, "y")
 
 
-def test_each_unrolled_iteration_aliases_its_own_evaluation() -> None:
+def test_the_alias_in_a_loop_is_one_keyed_statement_per_item_at_reduce() -> None:
+    # No rewrite unrolls the loop (#8957): ``y = x`` stands once, in the one
+    # loop statement's body, keyed by its construct-time evaluation.  The
+    # reduction binds that key in each item, qualified by the item
+    # (``evaluation_here``), so each item's alias is its own evaluation.
     body = _function(IN_UNROLLED_FOR).substitute({}).body
-    assigns = [node for node in body if isinstance(node, Assign)]
-    aliases = [
+    (loop,) = [node for node in body if node.kind == "LoopRecurrenceStatement"]
+    assert not [
         node
-        for node in assigns
-        if isinstance(getattr(node, "evaluation", None), str)
-        and node.targets[0].id == "y"
+        for node in body
+        if isinstance(node, Assign) and node.targets[0].id == "y"
     ]
-    assert len(aliases) == 2
-    assert aliases[0].evaluation != aliases[1].evaluation
-    read = _after_the_rebind(body[-1].value)
-    assert isinstance(read, EvaluationRef)
-    assert read.evaluation == projection_key(aliases[1].evaluation, "y")
+    (alias,) = [
+        node
+        for node in loop.loop.body
+        if isinstance(node, Assign) and node.targets[0].id == "y"
+    ]
+    assert isinstance(alias.evaluation, str)
+    assert alias.evaluation.startswith(EVALUATION_PREFIX)
 
 
 # ---------------------------------------------------------------------------

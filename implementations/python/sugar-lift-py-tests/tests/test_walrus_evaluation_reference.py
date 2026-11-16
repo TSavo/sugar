@@ -129,17 +129,25 @@ def test_walrus_sugar_carries_its_evaluation_key() -> None:
     assert sugar.evaluation == walrus.evaluation
 
 
-def test_each_unrolled_iteration_is_its_own_walrus_evaluation() -> None:
+def test_each_item_binds_the_one_walrus_key_the_latch_reads() -> None:
+    # No rewrite unrolls the loop (#8957): the walrus stands once, in the one
+    # loop statement's body, keyed by its evaluation.  The reduction binds
+    # that key in each item, qualified by the item (``evaluation_here``), and
+    # the latch hands on the latest write of ``t``
+    # (``LiveForRuntimeV1.carried_evaluations``).
     rewritten = _function(
         "def f():\n    for v in [1, 2]:\n        (t := v)\n    return t\n"
     ).substitute({})
-    walruses = _walruses(rewritten)
-    assert len(walruses) == 2
-    assert walruses[0].evaluation != walruses[1].evaluation
-    ret = rewritten.body[-1]
-    assert isinstance(ret, Return)
-    assert isinstance(ret.value, EvaluationRef)
-    assert ret.value.evaluation == walruses[1].evaluation
+    (walrus,) = _walruses(rewritten)
+    assert walrus.evaluation.startswith(EVALUATION_PREFIX)
+    (loop,) = [
+        node for node in rewritten.body if isinstance(node, LoopRecurrenceStatement)
+    ]
+    runtime = loop.construction.loop_runtime
+    _header, writes, _else_writes = runtime.carried_evaluations[
+        runtime.carried_names.index("t")
+    ]
+    assert walrus.evaluation in writes
 
 
 # ---------------------------------------------------------------------------
