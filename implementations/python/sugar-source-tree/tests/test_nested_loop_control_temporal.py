@@ -1,19 +1,22 @@
-"""Nested loop controls are consumed only by their authenticated target loop."""
+"""Nested loop controls are consumed only by their authenticated target loop.
+
+Each file is opened through the one construction door under a workspace
+root, as the lift opens it: a loop run in hand ends at its iterator's own
+``StopIteration``, which cites a workspace-relative locus."""
 
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 
-from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 
 
 def _function(source: str):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
-        handle.write(source)
-        path = handle.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+    root = Path(tempfile.mkdtemp(prefix="nested-loop-control-"))
+    path = root / "subject.py"
+    path.write_text(source, encoding="utf-8")
+    return next(open_source_file_for_construction(path, root=root).functions())
 
 
 def _returned_int(source: str) -> int:

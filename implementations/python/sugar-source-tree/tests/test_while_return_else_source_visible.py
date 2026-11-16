@@ -3,7 +3,8 @@ from __future__ import annotations
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue
-from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.outcome.exit_set import _is_true
 from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 
@@ -107,4 +108,20 @@ def test_symbolic_while_retains_distinct_return_and_else_faces(tmp_path) -> None
     )
 
     assert isinstance(outcome, ExitSet), outcome
-    assert len(outcome.exits) == 2
+    # Two distinct completed faces -- the body's ``return 7`` and the else's
+    # ``return 9`` -- and, beside them, the halt of the test's truth:
+    # ``bool(condition)`` on a formal can raise, so the ``while`` test's halt
+    # is kept as the third face (#7757 NEW-1), never dropped.
+    assert len(outcome.exits) == 3, outcome.exits
+    completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    returned = sorted(
+        entry.value.value
+        for face in completed
+        for entry in face.value.record.statements
+        if isinstance(entry, ReturnValue)
+    )
+    assert returned == [7, 9], completed
+    halts = outcome.halts()
+    assert len(halts) == 1, halts
+    assert isinstance(halts[0].effect, UndeterminedRaiseEffect)
+    assert halts[0].effect.producer_node_owner == "LoopRecurrenceSugar.while-test"

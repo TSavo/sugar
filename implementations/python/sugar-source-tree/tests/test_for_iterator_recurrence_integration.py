@@ -38,7 +38,9 @@ def _completed_post(outcome):
 
 
 def test_retained_list_iterates_to_named_exhaustion_then_runs_else() -> None:
-    values = tuple(range(1, 130))
+    # Within the one unroll budget (``LOOP_UNROLL_BUDGET``): the members are
+    # in hand, so the loop runs item by item to its named exhaustion (#8957).
+    values = tuple(range(1, 11))
     display = ", ".join(str(value) for value in values)
     source = (
         "def helper():\n"
@@ -57,7 +59,8 @@ def test_retained_list_iterates_to_named_exhaustion_then_runs_else() -> None:
 
 
 def test_break_bypasses_later_next_calls_and_loop_else() -> None:
-    values = ", ".join(str(value) for value in range(129))
+    # Within the one unroll budget, as above.
+    values = ", ".join(str(value) for value in range(10))
     source = (
         "def helper():\n"
         "    total = 0\n"
@@ -121,12 +124,16 @@ def test_loop_control_state_accepts_only_the_exact_iteration_binding_identity() 
 
     bindings = (("item", "blake3-512:" + "a" * 128, value),)
     exact_record = record(exact)
-    assert (
-        LoopRecurrenceSugar._require_loop_control_state(
-            exact_record, target_bindings=bindings
-        )
-        is exact_record
+    # The authenticated record is the one the loop goes on from
+    # (``function_universe_sugar.resumed``): the same entries, in exactly the
+    # context the statement received, and it falls through to what follows.
+    goes_on = LoopRecurrenceSugar._require_loop_control_state(
+        exact_record, target_bindings=bindings
     )
+    assert isinstance(goes_on, _ReducedBlock)
+    assert goes_on.entries == exact_record.entries
+    assert goes_on.context is exact
+    assert goes_on.can_fall_through
     with pytest.raises(TypeError, match="exact iteration target identity"):
         LoopRecurrenceSugar._require_loop_control_state(
             record(ambient), target_bindings=bindings

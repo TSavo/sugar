@@ -188,7 +188,7 @@ def test_downstream_binding_read_stays_loud_without_exact_guard_formulas():
         _construct_binding_projection(projection)
 
 
-def test_seal_runtime_state_seals_guarded_join_and_stays_loud_on_projected():
+def test_seal_runtime_state_seals_guarded_join_and_partitions_projected():
     # A branch-joined GuardedBinding carried into a loop pre-state must seal
     # through the ONE recursive projection -- not stay loud as a Node-only
     # special case did (the pandas frame/indexing/blocks loop crashes).
@@ -236,9 +236,14 @@ def test_seal_runtime_state_seals_guarded_join_and_stays_loud_on_projected():
     )
     assert _seal_runtime_state(single) == _seal_runtime_state(node_true)
 
-    # Bad twin: a MULTI-face projection (a loop that can break) is a genuine
-    # multi-way completion join whose folding is unbuilt -- it stays LOUD,
-    # never silently folds to a wrong fallthrough value.
+    # A MULTI-face projection (a loop that can break) is a genuine multi-way
+    # completion join. It seals AS a partition over the loop's own completion
+    # routes (#6430, ``LoopProjectedBindingStateV1``): each face keeps its own
+    # kind, the guard CID its producer minted and its own state, and none is
+    # folded into another or named the fallthrough -- never a single wrong
+    # value.
+    from sugar_source_tree.binding_provenance import LoopProjectedBindingStateV1
+
     multi = LoopProjectedBinding(
         target_cid,
         (
@@ -250,8 +255,21 @@ def test_seal_runtime_state_seals_guarded_join_and_stays_loud_on_projected():
             ),
         ),
     )
-    with pytest.raises(BindingStateWireGap, match="multi-face"):
-        _seal_runtime_state(multi)
+    partition = _seal_runtime_state(multi)
+    assert isinstance(partition, LoopProjectedBindingStateV1)
+    assert partition.target_cid == target_cid
+    by_kind = {face.completion_kind: face for face in partition.faces}
+    assert set(by_kind) == {"BreakExit", "NormalExhaustion"}
+    assert by_kind["BreakExit"].guard_formula_cid == cid_of_json({"g": "b"})
+    assert by_kind["NormalExhaustion"].guard_formula_cid == cid_of_json({"g": "x"})
+    assert by_kind["BreakExit"].state_cid == cid_of_json(
+        _state_wire(_seal_runtime_state(node_true))
+    )
+    assert by_kind["NormalExhaustion"].state_cid == cid_of_json(
+        _state_wire(_seal_runtime_state(node_false))
+    )
+    assert partition != _seal_runtime_state(node_true)
+    assert partition != _seal_runtime_state(node_false)
 
 
 def test_conserve_unique_records_collapses_identical_keeps_distinct():
@@ -300,5 +318,10 @@ def test_binding_state_read_node_reads_through_single_face_projection():
             ),
         ),
     )
-    with pytest.raises(TypeError):
+    # The multi-face join has no single read: it is refused by name
+    # (``SugarNotWritten``, C3), never a backend ``TypeError`` and never one
+    # arm picked silently.
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(SugarNotWritten, match="binding_state_read_node"):
         binding_state_read_node(multi, make_read=lambda s: sentinel)
