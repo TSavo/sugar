@@ -17,7 +17,12 @@ reach the declared stored value without self/name shifting:
   - the value is the variadic pack (TupleValue / DictValue) the binder packs
   - no phantom self/name formal steals the pack slot
 
-Getter-only property stays named AttributeError (store path, not read).
+What a caller supplies is stored through the same door: on a source
+instance the store is ``type(obj).__setattr__`` (#7757 H1b).  Where the
+instance's class names no join symbol (these trees have no workspace root)
+it is the one unanswered call, two-faced and owed, carrying the pack as the
+stored value.  The lift decides neither the plain store nor a getter-only
+property's ``AttributeError``: prove does, and the call's halt is kept.
 """
 
 from __future__ import annotations
@@ -202,34 +207,103 @@ def test_helper_alone_is_not_completed_discrimination() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _setattr_calls(exits: ExitSet):
+    """Every ``call:Widget.__setattr__(<receiver>, <name>, <value>)`` term
+    the completed faces' guards name: the one call the store is."""
+
+    def walk(node, depth=0):
+        if getattr(node, "name", None) == "call:Widget.__setattr__":
+            yield node
+        if depth > 64:
+            return
+        for child in (
+            *(getattr(node, "args", ()) or ()),
+            *(getattr(node, "operands", ()) or ()),
+        ):
+            yield from walk(child, depth + 1)
+
+    calls = [
+        call
+        for face in exits.exits
+        if isinstance(face, Completed)
+        for call in walk(face.guard)
+    ]
+    assert calls, exits
+    return calls
+
+
+def _the_store_is_the_call(exits, value, site) -> None:
+    """``receiver.field = value`` on a ``Widget`` whose class names no join
+    symbol is ``type(receiver).__setattr__``, the one unanswered call
+    (``ObjectValue.field_store_call``, #7757 H1b): two-faced, every face
+    owed.  The value the binder packed reaches the call as its stored value,
+    under the static name.  The lift never decides the plain store -- no
+    completed face holds the instance with ``field`` stored -- nor a
+    property's ``AttributeError`` -- no halt names it; the halt is kept."""
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+
+    assert isinstance(exits, ExitSet), type(exits)
+    assert exits.halts(), exits
+    for halt in exits.halts():
+        assert getattr(halt.effect, "exception_name", None) != "AttributeError", (
+            halt.effect
+        )
+        assert getattr(
+            halt.effect, "exception_type_coordinate", None
+        ) != _identity("AttributeError"), halt.effect
+        assert halt.owed, halt
+    for face in exits.exits:
+        assert face.owed, face
+        if not isinstance(face, Completed):
+            continue
+        stored = face.value
+        assert not (
+            isinstance(stored, ObjectValue)
+            and contents_current(stored)
+            and any(f.name == "field" and f.value == value for f in stored.fields)
+        ), stored
+    owner = str(site)
+    for call in _setattr_calls(exits):
+        assert call.args[1:3] == (
+            StringValue("field").to_term(owner=owner),
+            value.to_term(owner=owner),
+        ), call
+
+
 def test_star_values_reach_declared_stored_value() -> None:
+    """Expected verdict changed (#7757 H1b, #9065): the pack reaches the
+    store's call, not a field the lift decided stored."""
     helper, receiver = _source_class_and_helper("    pass\n", HELPER_STAR)
     pack = TupleValue((TermValue(1), TermValue(2)))
-    exits = _stored(helper, receiver, pack)
-    assert isinstance(exits, ExitSet)
-    assert isinstance(exits.exits[0], Completed)
-    stored = exits.exits[0].value
-    assert isinstance(stored, ObjectValue)
-    assert stored.fields[-1].name == "field"
-    assert stored.fields[-1].value == pack
+    _the_store_is_the_call(
+        _stored(helper, receiver, pack), pack, helper.body[0].fragment
+    )
 
 
 def test_kw_values_reach_declared_stored_value() -> None:
     helper, receiver = _source_class_and_helper("    pass\n", HELPER_KW)
     mapping = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
-    exits = _stored(helper, receiver, mapping)
-    assert isinstance(exits.exits[0], Completed)
-    stored = exits.exits[0].value
-    assert isinstance(stored, ObjectValue)
-    assert stored.fields[-1].name == "field"
-    assert stored.fields[-1].value == mapping
+    _the_store_is_the_call(
+        _stored(helper, receiver, mapping), mapping, helper.body[0].fragment
+    )
 
 
 def test_empty_star_stores_honest_empty_tuple() -> None:
     helper, receiver = _source_class_and_helper("    pass\n", HELPER_STAR)
-    exits = _stored(helper, receiver, TupleValue(()))
-    assert isinstance(exits.exits[0], Completed)
-    assert exits.exits[0].value.fields[-1].value == TupleValue(())
+    _the_store_is_the_call(
+        _stored(helper, receiver, TupleValue(())),
+        TupleValue(()),
+        helper.body[0].fragment,
+    )
+
+
+def test_a_star_pack_is_not_the_store_s_name_discrimination() -> None:
+    """Bite: the pack is the call's stored value, never its name operand."""
+    helper, receiver = _source_class_and_helper("    pass\n", HELPER_STAR)
+    pack = TupleValue((TermValue(1), TermValue(2)))
+    owner = str(helper.body[0].fragment)
+    for call in _setattr_calls(_stored(helper, receiver, pack)):
+        assert call.args[1] != pack.to_term(owner=owner), call
 
 
 def _applied_frame(program: str):
@@ -309,42 +383,43 @@ def test_bind_actuals_packs_kw_without_self_name_shift() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Getter-only stays named AttributeError
+# Getter-only: the call, its halt kept; never a lift AttributeError
 # ---------------------------------------------------------------------------
 
 
-def test_getter_only_property_named_attributeerror_with_star_pack() -> None:
+def test_getter_only_property_store_with_star_pack_is_the_call() -> None:
+    """Python's store raises ``AttributeError`` on a getter-only property.
+    Expected verdict changed (#7757 H1b, #9065): the lift no longer names
+    that halt (``ObjectValue.setattr``'s lift-decided ``AttributeError`` is
+    deleted); the store is the call, its halt kept and owed, decided at
+    prove.  The helper's own store halt keeps the block's record as its
+    state (``_undecided_store`` in ``_source_class_and_helper``)."""
     helper, receiver = _source_class_and_helper(
         "    @property\n" "    def field(self):\n" "        return 1\n",
         HELPER_STAR,
     )
-    exits = _stored(helper, receiver, TupleValue((TermValue(9),)))
-    halted = exits.exits[0]
-    assert isinstance(halted, Halted)
-    assert not isinstance(halted, Completed)
-    assert halted.effect.exception_type_coordinate == _identity("AttributeError")
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    pack = TupleValue((TermValue(9),))
+    _the_store_is_the_call(
+        _stored(helper, receiver, pack), pack, helper.body[0].fragment
     )
-    # The carrier's pre-effect state is gone with the carrier (#7757 NEW-1):
-    # the helper's own store halt keeps the block's record as its state
-    # (``_undecided_store`` in ``_source_class_and_helper``).
 
 
 def test_getter_only_discrimination_not_completed() -> None:
+    """Bite: the getter licenses no completed store -- no face holds the
+    instance with the mapping stored."""
     helper, receiver = _source_class_and_helper(
         "    @property\n" "    def field(self):\n" "        return 1\n",
         HELPER_KW,
     )
-    exits = _stored(
-        helper, receiver, fresh(DictValue, ((StringValue("a"), TermValue(1)),))
-    )
+    mapping = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
+    exits = _stored(helper, receiver, mapping)
     with pytest.raises(AssertionError):
-        assert isinstance(exits.exits[0], Completed)
+        assert any(
+            isinstance(face, Completed)
+            and isinstance(face.value, ObjectValue)
+            and any(f.name == "field" for f in face.value.fields)
+            for face in exits.exits
+        )
 
 
 def test_no_self_name_shift_receiver_discrimination() -> None:

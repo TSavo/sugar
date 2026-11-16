@@ -23,24 +23,21 @@ Acceptance (each with a discrimination twin where noted):
 
   1. Bound ``self`` is not the store's receiver: the store names ``obj``.
   2. Method alone is the undecided store, its halt kept, owed.
-  3. Writable receiver completes.
-  4. Getter-only property → named AttributeError; a wrong boundary retains
-     the halt.
-  5. Off-by-one self-binding and read-authorizes-write twins fail.
+  3. On a receiver a caller supplies, the store is ``type(obj).__setattr__``
+     (#7757 H1b): where the instance's class names no join symbol (these
+     trees have no workspace root), the one unanswered call, two-faced and
+     owed, carrying ``obj``'s value and the stored value.  The lift decides
+     neither a plain store (no completed face holds the field stored) nor a
+     getter-only property's ``AttributeError`` (no halt names it): prove
+     does, and the call's halt is kept.
+  4. Off-by-one self-binding and read-authorizes-write twins fail.
 """
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.context_manager_contract import (
-    AuthenticatedRaiseMatcher,
-    EffectBoundaryDisposition,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
-from sugar_lift_py_tests.effect.expectation_not_met_effect import (
-    ExpectationNotMetEffect,
-)
-from sugar_lift_py_tests.floor import ObjectValue, TermValue
+from sugar_lift_py_tests.floor import ObjectValue, StringValue, TermValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
@@ -176,38 +173,68 @@ def _stored(method, receiver, value):
     )
 
 
-def _assert_named_halt(outcome) -> Halted:
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity("AttributeError")
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
-    )
-    return halted
+def _setattr_calls(exits: ExitSet, class_name: str):
+    """Every ``call:<class_name>.__setattr__(<receiver>, <name>, <value>)``
+    term the completed faces' guards name: the one call the store is."""
+    target = f"call:{class_name}.__setattr__"
+
+    def walk(node, depth=0):
+        if getattr(node, "name", None) == target:
+            yield node
+        if depth > 64:
+            return
+        for child in (
+            *(getattr(node, "args", ()) or ()),
+            *(getattr(node, "operands", ()) or ()),
+        ):
+            yield from walk(child, depth + 1)
+
+    calls = [
+        call
+        for face in exits.exits
+        if isinstance(face, Completed)
+        for call in walk(face.guard)
+    ]
+    assert calls, exits
+    return calls
 
 
-class _Expected:
-    def __init__(self, name: str):
-        self.identity = _identity(name)
+def _the_store_is_the_call(exits, value, site, class_name: str = "Target") -> None:
+    """``receiver.field = value`` on an instance whose class names no join
+    symbol is ``type(receiver).__setattr__``, the one unanswered call
+    (``ObjectValue.field_store_call``, #7757 H1b): two-faced, every face
+    owed.  The lift never decides the plain store -- no completed face
+    holds the instance with ``field`` stored -- nor a property's
+    ``AttributeError`` -- no halt names it; the call's halt is kept.  The
+    call carries the static name and the value the store hands it."""
+    from sugar_lift_py_tests.floor.object_identity import contents_current
 
-    def exception_type_identity(self):
-        return self.identity
-
-
-def _route(exits: ExitSet, expected: str) -> ExitSet:
-    return exits.and_exit(
-        ExitSet.completed(object()),
-        disposition=EffectBoundaryDisposition(
-            matcher=AuthenticatedRaiseMatcher(expected=_Expected(expected)),
-            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
-        ),
-    )
+    assert isinstance(exits, ExitSet), type(exits)
+    assert exits.halts(), exits
+    for halt in exits.halts():
+        assert getattr(halt.effect, "exception_name", None) != "AttributeError", (
+            halt.effect
+        )
+        assert getattr(
+            halt.effect, "exception_type_coordinate", None
+        ) != _identity("AttributeError"), halt.effect
+        assert halt.owed, halt
+    for face in exits.exits:
+        assert face.owed, face
+        if not isinstance(face, Completed):
+            continue
+        stored = face.value
+        assert not (
+            isinstance(stored, ObjectValue)
+            and contents_current(stored)
+            and any(f.name == "field" and f.value == value for f in stored.fields)
+        ), stored
+    owner = str(site)
+    for call in _setattr_calls(exits, class_name):
+        assert call.args[1:3] == (
+            StringValue("field").to_term(owner=owner),
+            value.to_term(owner=owner),
+        ), call
 
 
 # ---------------------------------------------------------------------------
@@ -259,65 +286,54 @@ def test_discrimination_method_alone_is_not_completed() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_writable_receiver_completes_through_the_door() -> None:
+def test_writable_receiver_store_is_the_call_through_the_door() -> None:
+    """Expected verdict changed (#7757 H1b, #9065): the store on a writable
+    instance no longer completes with the field stored as the lift decided
+    it; it is ``type(obj).__setattr__``, owed, which prove decides."""
     _, method, _outcome = _method_definition()
     target = _construct_class(TARGET_CLASS, "Target")
     assert target.methods == ()
-    exits = _stored(method, target, TermValue(7))
-    assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
-    stored = exits.exits[0].value
-    assert isinstance(stored, ObjectValue)
-    assert stored.fields[-1].name == "field"
-    assert stored.fields[-1].value == TermValue(7)
+    _the_store_is_the_call(
+        _stored(method, target, TermValue(7)),
+        TermValue(7),
+        method.body[0].fragment,
+    )
 
 
-def test_getter_only_property_named_attribute_error_retained_by_wrong_boundary() -> (
-    None
-):
-    """The store on a getter-only property halts with the named
-    ``AttributeError``; a wrong boundary retains the identical halt.
-
-    Expected verdict changed (#7757 NEW-1): the carrier's pre-effect state
-    identity (``halted.state is pending.pre_effect_state.state``) has
-    nothing to compare against now -- the carrier is deleted.  The state
-    the method's own store halt keeps is the block's record
-    (``_undecided_store``)."""
+def test_getter_only_property_store_is_the_call_its_halt_kept() -> None:
+    """A getter-only property: Python's store raises ``AttributeError``.
+    Expected verdict changed (#7757 H1b, #9065): the lift no longer names
+    that halt (``ObjectValue.setattr``'s lift-decided ``AttributeError`` is
+    deleted); the store is the call, whose halt is kept, owed, and decided at
+    prove.  The wrong-boundary retention of the lift's named halt has no
+    named halt left to retain (as #9065 deleted for the formal caller); the
+    method's own store halt keeps the block's record (``_undecided_store``)."""
     _, method, outcome = _method_definition()
     _undecided_store(outcome)
     target = _construct_class(PROPERTY_TARGET, "Target")
     assert any(
         m.name == "field" and m.descriptor_kind == "property" for m in target.methods
     )
-    exits = _stored(method, target, TermValue(7))
-    halted = _assert_named_halt(exits)
-    assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
-    site = method.body[0].fragment
-    assert halted.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
-
-    # Wrong boundary retains the identical effect and state.
-    retained = _route(exits, "ValueError")
-    assert len(retained.exits) == 1
-    face = retained.exits[0]
-    assert isinstance(face, Halted)
-    assert face.effect is halted.effect
-    assert face.state is halted.state
+    _the_store_is_the_call(
+        _stored(method, target, TermValue(7)),
+        TermValue(7),
+        method.body[0].fragment,
+    )
 
 
 def test_read_does_not_authorize_completed_store_on_getter_only_property() -> None:
-    """Lying twin: property is readable but store must not complete."""
+    """Lying twin: the property is readable, but the read licenses no
+    completed store: no face holds the instance with the field stored."""
     _, method, _outcome = _method_definition()
     target = _construct_class(PROPERTY_TARGET, "Target")
     # Readable property is enrolled.
     assert any(
         m.name == "field" and m.descriptor_kind == "property" for m in target.methods
     )
-    exits = _stored(method, target, TermValue(99))
-    assert isinstance(exits.exits[0], Halted)
-    assert not isinstance(exits.exits[0], Completed)
-    assert exits.exits[0].effect.exception_type_coordinate == _identity(
-        "AttributeError"
+    _the_store_is_the_call(
+        _stored(method, target, TermValue(99)),
+        TermValue(99),
+        method.body[0].fragment,
     )
 
 

@@ -127,6 +127,64 @@ def _store(receiver, value, log, site, attr: str = "attr"):
     )
 
 
+def _setattr_calls(outcome, class_name: str):
+    """Every ``call:<class_name>.__setattr__(<receiver>, <name>, <value>)``
+    term the completed faces' guards name: the one unanswered call a store
+    on an instance naming no class is (``ObjectValue.field_store_call``)."""
+    target = f"call:{class_name}.__setattr__"
+
+    def walk(node, depth=0):
+        if getattr(node, "name", None) == target:
+            yield node
+        if depth > 64:
+            return
+        for child in (
+            *(getattr(node, "args", ()) or ()),
+            *(getattr(node, "operands", ()) or ()),
+        ):
+            yield from walk(child, depth + 1)
+
+    calls = [
+        call
+        for arm in outcome.exits
+        if isinstance(arm, Completed)
+        for call in walk(arm.guard)
+    ]
+    assert calls, outcome
+    return calls
+
+
+def _the_store_is_the_call(outcome, class_name: str, value) -> None:
+    """A store on an instance naming no class: ``type(o).__setattr__``, the
+    one unanswered call, two-faced and owed (#7757 H1b).  The lift decides
+    neither the plain store (no completed face holds the instance with the
+    field stored, no ``ReceiverFieldStoreValue``) nor a property's
+    ``AttributeError`` (no halt names it); the call's halt is kept."""
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert outcome.halts(), outcome
+    for halt in outcome.halts():
+        assert getattr(halt.effect, "exception_name", None) != "AttributeError", (
+            halt.effect
+        )
+        assert "AttributeError" not in repr(
+            getattr(halt.effect, "exception_type_coordinate", None)
+        ), halt.effect
+        assert halt.owed, halt
+    for arm in outcome.exits:
+        assert arm.owed, arm
+        if not isinstance(arm, Completed):
+            continue
+        assert not isinstance(arm.value, ReceiverFieldStoreValue), arm.value
+        assert not (
+            isinstance(arm.value, ObjectValue)
+            and contents_current(arm.value)
+            and any(f.name == "name" and f.value == value for f in arm.value.fields)
+        ), arm.value
+    _setattr_calls(outcome, class_name)
+
+
 def _formal(site) -> FormalParameterCoordinateV1:
     span = site.line_col_span
     owner = SourceFragmentCoordinateV1(
@@ -179,14 +237,26 @@ def test_attribute_store_evaluates_rhs_and_receiver_once_in_python_order(tmp_pat
     receiver = ObjectValue(
         "R", (ObjectField("attr", TermValue(1)),), allocation=FRAME_FRESH
     )
-    outcome = _store(receiver, TermValue(7), log, _site(tmp_path)).desugar()
+    site = _site(tmp_path)
+    outcome = _store(receiver, TermValue(7), log, site).desugar()
 
+    # Python order, each operand once: the value, then the receiver.
     assert log == ["value", "receiver"]
-    stored = outcome.completed_value()
-    assert isinstance(stored, ReceiverFieldStoreValue)
-    assert stored.receiver == receiver
-    assert stored.attr == "attr"
-    assert stored.value == TermValue(7)
+    # Expected verdict changed (#7757 H1b, #9065): ``R`` names no class, so
+    # the store is ``type(o).__setattr__``, the one unanswered call, never a
+    # completion the lift decided plain.  It is handed the receiver and the
+    # value evaluated above, once each; both faces are kept.
+    assert outcome.halts(), outcome
+    assert not any(
+        isinstance(getattr(arm, "value", None), ReceiverFieldStoreValue)
+        for arm in outcome.exits
+    ), outcome
+    owner = str(site)
+    for call in _setattr_calls(outcome, "R"):
+        assert call.args[1:3] == (
+            StringValue("attr").to_term(owner=owner),
+            TermValue(7).to_term(owner=owner),
+        ), call
 
 
 def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
@@ -616,16 +686,25 @@ def _stored(store, receiver):
 
 
 def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
-    """The exact pandas store owns completion, AttributeError, and
-    occurrence, on each receiver whose type is decided."""
+    """The exact pandas store on each receiver whose type is decided: an
+    immutable builtin's own ``AttributeError`` at the occurrence; on a
+    source instance naming no class, ``type(o).__setattr__``, the one
+    unanswered call, both faces kept and owed.
+
+    Expected verdict changed (#7757 H1b, #9065): the lift no longer decides
+    that the store on ``WritableIndex`` completes plain, nor that the store
+    on ``GetterOnlyIndex``'s getter-only property raises ``AttributeError``
+    (``ObjectValue.setattr``'s lift-decided halt is deleted).  Prove decides
+    both; the call's halt is kept.  The wrong-boundary law stands on the
+    tuple's named halt."""
     store, _outcome = _real_pandas_name_store()
 
     writable = ObjectValue(
         "WritableIndex", (ObjectField("name", NoneValue()),), allocation=FRAME_FRESH
     )
-    completed = _stored(store, writable)
-    assert len(completed.exits) == 1
-    assert isinstance(completed.exits[0], Completed)
+    _the_store_is_the_call(
+        _stored(store, writable), "WritableIndex", StringValue("foo")
+    )
 
     @dataclass(frozen=True)
     class _GetterBody(Sugar):
@@ -653,35 +732,37 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
         ),
         allocation=FRAME_FRESH,
     )
-    getter_halt = _stored(store, getter_only).exits[0]
-    immutable_halt = _stored(store, TupleValue((TermValue(1),))).exits[0]
-    for halt, owner in (
-        (getter_halt, "ObjectValue.setattr"),
-        (immutable_halt, "TupleValue.setattr"),
-    ):
-        assert isinstance(halt, Halted)
-        assert "AttributeError" in repr(halt.effect.exception_type_coordinate)
-        assert (
-            isinstance(halt.effect.occurrence_id, str)
-            and ":" in halt.effect.occurrence_id
-        ), (
-            "authenticated raise locus must be a file:line:col occurrence id, "
-            f"not presence-only; got {halt.effect.occurrence_id!r}"
-        )
-        assert halt.effect.occurrence_id.startswith(
-            f"{CORPUS_RELATIVE}:{CORPUS_LINE}:"
-        ), halt.effect.occurrence_id
+    _the_store_is_the_call(
+        _stored(store, getter_only), "GetterOnlyIndex", StringValue("foo")
+    )
+    _the_store_is_the_call(
+        getter_only.setattr("name", StringValue("foo"), store.site, None),
+        "GetterOnlyIndex",
+        StringValue("foo"),
+    )
 
-    for receiver, owner in (
-        (getter_only, "ObjectValue.setattr"),
-        (TupleValue((TermValue(1),)), "TupleValue.setattr"),
-    ):
-        direct = receiver.setattr("name", StringValue("foo"), store.site, None)
-        assert len(direct.exits) == 1 and direct.halts() == direct.exits
-        (direct_halt,) = direct.halts()
-        assert isinstance(direct_halt.effect, RaiseEffect)
-        assert direct_halt.effect.exception_name == "AttributeError"
-        assert direct_halt.effect.producer_node_owner == owner
+    immutable_halt = _stored(store, TupleValue((TermValue(1),))).exits[0]
+    assert isinstance(immutable_halt, Halted)
+    assert "AttributeError" in repr(immutable_halt.effect.exception_type_coordinate)
+    assert (
+        isinstance(immutable_halt.effect.occurrence_id, str)
+        and ":" in immutable_halt.effect.occurrence_id
+    ), (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {immutable_halt.effect.occurrence_id!r}"
+    )
+    assert immutable_halt.effect.occurrence_id.startswith(
+        f"{CORPUS_RELATIVE}:{CORPUS_LINE}:"
+    ), immutable_halt.effect.occurrence_id
+
+    direct = TupleValue((TermValue(1),)).setattr(
+        "name", StringValue("foo"), store.site, None
+    )
+    assert len(direct.exits) == 1 and direct.halts() == direct.exits
+    (direct_halt,) = direct.halts()
+    assert isinstance(direct_halt.effect, RaiseEffect)
+    assert direct_halt.effect.exception_name == "AttributeError"
+    assert direct_halt.effect.producer_node_owner == "TupleValue.setattr"
 
     # A getter spelling is neither store authority nor permission to invent a
     # readable value.  Expected value changed (#7757 steps 6 and 8, #8751,
@@ -699,8 +780,6 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
         for exit_ in read.exits
         if isinstance(exit_, Completed)
     ), read
-    assert isinstance(getter_halt, Halted)
-    assert not isinstance(getter_halt, Completed)
 
     from sugar_lift_py_tests.context_manager_contract import (
         AuthenticatedRaiseMatcher,
@@ -716,7 +795,7 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
                 [str_const("builtins"), str_const("ValueError")],
             )
 
-    produced = ExitSet((getter_halt,))
+    produced = ExitSet((immutable_halt,))
     routed = produced.and_exit(
         ExitSet.completed(object()),
         disposition=EffectBoundaryDisposition(
@@ -724,9 +803,9 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
             unmet=ExpectationNotMetEffect("raise", store.site),
         ),
     )
-    assert routed.exits == (getter_halt,)
-    assert routed.exits[0].state is getter_halt.state
-    assert routed.exits[0].effect is getter_halt.effect
+    assert routed.exits == (immutable_halt,)
+    assert routed.exits[0].state is immutable_halt.state
+    assert routed.exits[0].effect is immutable_halt.effect
 
 
 def test_real_pandas_name_store_waits_on_no_provider() -> None:
