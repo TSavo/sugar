@@ -1662,23 +1662,20 @@ def _global_after_call(ctx, name: str, keys):
 
     slot = ("global", name)
     keys = frozenset(keys)
-    record = None
+    after = None
     for binding in reversed(temporal.bindings):
         if binding.name in keys:
-            if record is None:
+            if after is None:
                 return None
             held = bound_value_read(binding.value)
             return SymbolicValue(
-                object_after_call(record.result, record.formal_of(slot)),
-                formal_coordinate=getattr(held, "formal_coordinate", None),
+                after, formal_coordinate=getattr(held, "formal_coordinate", None)
             )
         value = binding.value
-        if (
-            record is None
-            and isinstance(value, AfterCallRecordValue)
-            and value.formal_of(slot) is not None
-        ):
-            record = value
+        if after is None and isinstance(value, AfterCallRecordValue):
+            formal = value.formal_of(slot)
+            if formal is not None:
+                after = object_after_call(value.result, formal)
     return None
 
 
