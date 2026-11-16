@@ -136,7 +136,16 @@ def _finite_equality_face(value, peer, *, matches: bool):
 
 
 def _equals_and_refine(left, right, site, ctx, left_coordinate):
-    outcome = _equals_with_undecided_edges(left, right, site, ctx)
+    # A parameter operand is not deferred to a caller: ``==`` is
+    # ``type(left).__eq__``, then the reflection after ``NotImplemented``
+    # (the subclass rule first), then identity, which no one dispatched
+    # method states.  The floor answers it whole: decided where it decides,
+    # else the undecided equality's two faces (``equality_atom.
+    # answered_equality``), never a halt patched on afterwards (#7757,
+    # audit row NEW-1).  A call's result is its coordinate (#7757 step 6):
+    # no callee body is read here for a residue; what the call returns is
+    # joined at prove.
+    outcome = left.equals(right, site, ctx)
     from sugar_lift_py_tests.floor import PredicateValue
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -174,28 +183,4 @@ def _equals_and_refine(left, right, site, ctx, left_coordinate):
                 *remaining_binding,
             ),
         )
-    )
-
-
-def _equals_with_undecided_edges(left, right, site, ctx):
-    from sugar_lift_py_tests.sugar.comparison_op_sugar import (
-        publish_undecided_equality_edges,
-    )
-
-    # A parameter operand is not deferred to a caller: ``==`` is
-    # ``type(left).__eq__``, then the reflection after ``NotImplemented``
-    # (the subclass rule first), then identity, which no one dispatched
-    # method states.  The floor answers it, and an undecided operand
-    # dual-edges below (#7757, audit row NEW-1).
-    # A call's result is its coordinate (#7757 step 6): no callee body is
-    # read here for a residue; what the call returns is joined at prove.
-    outcome = left.equals(right, site, ctx)
-
-    # Equality law: dual-edge when either operand type is undecided.
-    return publish_undecided_equality_edges(
-        left,
-        right,
-        site,
-        "Eq",
-        outcome,
     )

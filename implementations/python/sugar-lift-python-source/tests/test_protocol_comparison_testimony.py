@@ -106,31 +106,30 @@ def test_undecided_comparison_predicate_is_not_native_completion_testimony(
 ):
     comparison = _comparison(operator)
     site = comparison.fragment
-    terms = (
-        SymbolicValue(make_var("left")).term,
-        SymbolicValue(make_var("right")).term,
-    )
-    unproven = ExitSet.completed(PredicateValue(atomic("py.eq", terms), site))
-    left, right = _operands(unproven)
-    # The predicate alone is not testimony that dispatch completes: the
-    # undecided ``__eq__``/``__contains__`` may raise anything.  It completes
-    # only under ``python:compare.completes`` and halts undetermined (no
-    # invented exception type) under the complement -- the #7585 two faces.
+    left = SymbolicValue(make_var("left"))
+    right = SymbolicValue(make_var("right"))
+    # Two operands whose types are undecided: the undecided
+    # ``__eq__``/``__contains__`` may raise anything.  The floor answers
+    # that itself (``equality_atom.answered_equality``,
+    # ``FloorValue.undecided_contains``): it completes only under
+    # ``python:compare.completes`` and halts undetermined (no invented
+    # exception type) under the complement -- the #7585 two faces, never a
+    # bare predicate a later pass patches (#7757).
     result = comparison.sugar().apply_reduced(left, right)
     assert isinstance(result, ExitSet)
     (completed,) = [face for face in result.exits if not isinstance(face, Halted)]
     (halted,) = [face for face in result.exits if isinstance(face, Halted)]
-    # The same predicate, keyed per evaluation at the halt's key (#7757
-    # NEW-1): the truth of the comparison's value, ``python:truth_result(
-    # python:compare_result("Eq", left, right, <key>), <key>)``.
-    stated = unproven.completed_value()
-    assert type(completed.value) is type(stated)
-    assert completed.value.site is stated.site
+    # Keyed per evaluation at the halt's key (#7757 NEW-1): the truth of the
+    # comparison's value, ``python:truth_result(python:compare_result(
+    # "<op>", left, right, <key>), <key>)``, operands in the atom's order
+    # (``left in right`` is item then container).
+    assert type(completed.value) is PredicateValue
+    assert completed.value.site is site
     assert completed.value.formula.name == "python:truth_result"
     compared = completed.value.formula.args[0]
     assert compared.name == "python:compare_result"
-    assert compared.args[0].value == "Eq"
-    assert compared.args[1:-1] == stated.formula.args
+    assert compared.args[0].value == op
+    assert compared.args[1:-1] == (left.term, right.term)
     assert compared.args[-1].value == halted.effect.occurrence
     assert completed.value.formula.args[-1].value == halted.effect.occurrence
     assert completed.guard.name == "python:compare.completes"

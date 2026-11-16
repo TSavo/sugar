@@ -971,15 +971,27 @@ class FloorValue:
                 requested="authenticated reflected/subclass equality dispatch",
                 fix="invoke the native reflected method before emitting equality",
             )
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+
+        if isinstance(other, GuardedValue):
+            # ``x == (a if c else b)`` compares ``x`` to the one arm the
+            # guard selects: each arm's own equality, rejoined
+            # (``GuardedValue.predicate_from_left``), an arm that is the
+            # undecided equality kept two-faced under its polarity.
+            return other.predicate_from_left(
+                lambda arm: self.equals(arm, site, ctx), site, operation="equals"
+            )
         # Equality vocabulary is resolved here, once, from construction-time
         # sort testimony. Ill-sorted bare equality cannot leave this door.
-        from sugar_lift_py_tests.floor.equality_atom import resolve_equality_atom
+        from sugar_lift_py_tests.floor.equality_atom import (
+            answered_equality,
+            resolve_equality_atom,
+        )
         from sugar_lift_py_tests.floor.object_identity import (
             holds_stale,
             identity_term,
         )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import ExitSet
 
         if holds_stale(self) or holds_stale(other):
             # ``==`` reads both operands' contents all the way down; a
@@ -1003,14 +1015,23 @@ class FloorValue:
                 operand_callsites=(*self.callsites(), *other.callsites()),
             )
             return undecided_dispatch_faces(predicate, site, "Eq")
+        # The stated equality is the whole answer only where neither
+        # operand's ``==`` runs code this frame did not read; anything else
+        # -- a formal, a call result, a class object, an effect slot, a
+        # container holding one -- is the one undecided equality, two-faced,
+        # answered here and never patched afterwards (``answered_equality``,
+        # #7757).
         formula, bridges = resolve_equality_atom(self, other, owner=str(site))
-        return ExitSet.completed(
+        return answered_equality(
+            self,
+            other,
             PredicateValue(
                 formula,
                 site,
                 operand_callsites=(*self.callsites(), *other.callsites()),
                 derived_formulas=bridges,
-            )
+            ),
+            site,
         )
 
     def is_identical(self, other, site):
