@@ -404,10 +404,9 @@ def test_a_chained_target_store_keeps_its_completed_face() -> None:
 
     assert completed == 1
     # The store's halted face is the one undetermined raise its producer
-    # names (``store_faces``).
+    # names (the one undecided attribute mutation, #7757 NEW-4).
     assert "UndeterminedRaiseEffect" in halts
     assert any(
-        getattr(face.effect, "producer_node_owner", None)
-        == "AttributeStoreRuntimeEffect"
+        getattr(face.effect, "producer_node_owner", None) == "UndecidedSetattr"
         for face in outcome.halts()
     )

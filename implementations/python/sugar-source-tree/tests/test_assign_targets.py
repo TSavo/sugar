@@ -11,10 +11,7 @@ import tempfile
 
 import pytest
 
-from sugar_lift_py_tests.effect import (
-    AttributeStoreRuntimeEffect,
-    UndeterminedRaiseEffect,
-)
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
@@ -101,18 +98,24 @@ def test_chained_names_receive_distinct_runtime_binding_coordinates():
     assert entries["renamed"].coordinate.cid != entries["other"].coordinate.cid
 
 
+def _undecided_store_halts(src):
+    """The halts of the one undecided attribute mutation (#7757 NEW-4) in
+    ``src``'s first function: ``o`` is a name only an unread star import may
+    bind, so nothing decides its type."""
+    outcome = _fn("from unread_module import *\n" + src).sugar().desugar()
+    return [
+        halt
+        for halt in outcome.halts()
+        if halt.effect.producer_node_owner == "UndecidedSetattr"
+    ]
+
+
 def test_mixed_chain_sequences_existing_store_obligation_and_name_binding():
-    entries = _completed_entries(
+    red = _undecided_store_halts(
         "def arbitrary():\n    renamed = o.field = 5\n    return renamed\n"
     )
-    red = [
-        halt
-        for entry in entries
-        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
-        for halt in entry.halts()
-    ]
     assert len(red) == 1
-    assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
+    assert isinstance(red[0].effect, UndeterminedRaiseEffect)
 
 
 def test_mixed_chain_never_fabricates_a_completed_subscript_store():
@@ -242,15 +245,9 @@ def test_mixed_chained_targets_stay_loud():
 
 
 def test_attribute_store_target_lifts_a_typed_red_effect():
-    entries = _completed_entries("def A():\n    o.a = 1\n    return 1\n")
-    red = [
-        halt
-        for e in entries
-        if isinstance(e, ExitSet) and e.halts() == e.exits
-        for halt in e.halts()
-    ]
+    red = _undecided_store_halts("def A():\n    o.a = 1\n    return 1\n")
     assert len(red) == 1
-    assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
+    assert isinstance(red[0].effect, UndeterminedRaiseEffect)
 
 
 def test_subscript_store_target_on_a_formal_is_the_undecided_store():

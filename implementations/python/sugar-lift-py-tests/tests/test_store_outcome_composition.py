@@ -4,7 +4,7 @@ Python assignment to an attribute or a subscript is NOT transactional and NOT
 infallible:
 
     Store(receiver, selector, value)
-        success -> Completed(testimony of the store effect)
+        success -> Completed(under the store's own completes atom)
         failure -> Halted(undetermined raise, prefix temporal state)
 
 Sequential composition of stores must therefore:
@@ -36,11 +36,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.effect import (
-    AttributeStoreRuntimeEffect,
-    UndeterminedRaiseEffect,
-)
-from sugar_lift_py_tests.floor.runtime_effect_testimony import RuntimeEffectTestimony
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -91,10 +87,13 @@ def _subterms(term):
 
 
 def _store_coordinates(formula):
-    """Every distinct store-occurrence coordinate cited by a guard."""
+    """Every distinct store occurrence cited by a guard: the undecided
+    store's operation ``python:setattr(<receiver>, "<attr>", <key>)``
+    (``store_effect_sugar.undecided_attribute_mutation_faces``, #7757
+    NEW-4), keyed per evaluation."""
     found = []
     for term in _terms(formula):
-        if getattr(term, "name", None) == "python:store_completed":
+        if getattr(term, "name", None) == "python:setattr":
             if term not in found:
                 found.append(term)
     return tuple(found)
@@ -102,11 +101,9 @@ def _store_coordinates(formula):
 
 def _selectors(formula):
     """The selector (attr name) of each store coordinate cited by a guard."""
-    out = []
-    for coordinate in _store_coordinates(formula):
-        operation = coordinate.args[1]
-        out.append(operation.args[1].value)
-    return tuple(out)
+    return tuple(
+        coordinate.args[1].value for coordinate in _store_coordinates(formula)
+    )
 
 
 def _polarity(formula, selector):
@@ -129,26 +126,35 @@ def _arms(exits):
     return halted, completed
 
 
-def _store_entries(state):
-    """The attribute stores a record says happened.
+def _store_entries(arm):
+    """The attribute stores an arm says happened.
 
-    A store's completed face leaves ``RuntimeEffectTestimony`` of its own
-    effect in the record (``store_faces``, #7826): the one record entry that
-    says the store ran. A completed record holds no halt, so the testimony is
-    never an all-halted ``ExitSet`` entry.
+    An undecided store leaves no record entry (#7757 NEW-4): it completes
+    only under its own ``python:setattr.completes`` atom, so an arm states
+    each store that ran on it by asserting that atom (read through ``and``;
+    an atom under ``not`` is the store the arm halted at).  The result is
+    each such store's operation, ``python:setattr(<receiver>, "<attr>",
+    <key>)``.
     """
-    return [
-        entry
-        for entry in getattr(state, "entries", ())
-        if isinstance(entry, RuntimeEffectTestimony)
-        and isinstance(entry.effect, AttributeStoreRuntimeEffect)
-    ]
+    completed = []
+
+    def walk(node, positive):
+        kind = getattr(node, "kind", None)
+        if kind == "and":
+            for operand in node.operands:
+                walk(operand, positive)
+        elif kind == "not":
+            walk(node.operands[0], not positive)
+        elif positive and getattr(node, "name", None) == "python:setattr.completes":
+            completed.extend(node.args)
+
+    walk(arm.guard, True)
+    return completed
 
 
-# Free undecided receiver ``o`` (not a formal) retains dual-face
-# AttributeStoreRuntimeEffect. A formal receiver's store is the undecided store
-# (``store_effect_sugar.attribute_mutation``, no carrier); dual-face
-# composition laws stay on this free shape.
+# Free undecided receiver ``o`` (not a formal): its store is the one undecided
+# attribute mutation a formal's is (``store_effect_sugar.attribute_mutation``,
+# #7757 NEW-4); the composition laws stay on this free shape.
 # ``o`` is free only because a star import the lifter cannot read may bind it:
 # a name nothing in the module binds is a NameError halt (#7757 item 30), and
 # its store never runs.
@@ -222,7 +228,7 @@ def test_first_store_halt_has_no_second_store_occurrence(tmp_path: Path) -> None
         "store's outcome -- the second store never ran"
     )
     assert (
-        _store_entries(first.state) == []
+        _store_entries(first) == []
     ), "the first store's halt arm must contain no store occurrence at all"
     assert isinstance(first.effect, UndeterminedRaiseEffect)
 
@@ -236,14 +242,14 @@ def test_first_store_halt_has_no_second_store_occurrence_discrimination(
     first = next(h for h in halted if _polarity(h.guard, "x") is False)
 
     with pytest.raises(AssertionError):
-        assert len(_store_entries(first.state)) == 1, "second target ran anyway"
+        assert len(_store_entries(first)) == 1, "second target ran anyway"
 
 
 def test_second_store_halt_preserves_the_first_store(tmp_path: Path) -> None:
     """Law: never roll back earlier assignment.
 
-    The arm guarded by "first completed AND second did not" must still carry the
-    first store's testimony: ``o.x`` REMAINS assigned.
+    The arm guarded by "first completed AND second did not" must still state
+    the first store ran: ``o.x`` REMAINS assigned.
     """
     halted, _ = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     second = next(h for h in halted if _polarity(h.guard, "y") is False)
@@ -251,10 +257,10 @@ def test_second_store_halt_preserves_the_first_store(tmp_path: Path) -> None:
     assert (
         _polarity(second.guard, "x") is True
     ), "the second store only runs when the first completed"
-    surviving = _store_entries(second.state)
+    surviving = _store_entries(second)
     assert len(surviving) == 1, surviving
     assert (
-        "attr=x" in surviving[0].effect.reason
+        surviving[0].args[1].value == "x"
     ), "the first store must survive on the second store's halt arm"
 
 
@@ -266,7 +272,7 @@ def test_second_store_halt_preserves_the_first_store_discrimination(
     second = next(h for h in halted if _polarity(h.guard, "y") is False)
 
     with pytest.raises(AssertionError):
-        assert _store_entries(second.state) == [], "assignment rolled back"
+        assert _store_entries(second) == [], "assignment rolled back"
 
 
 def test_sequential_completed_arm_requires_every_store_to_complete(
@@ -300,24 +306,25 @@ def test_sequential_completed_arm_requires_every_store_to_complete_discriminatio
 
 
 def test_each_store_occurrence_mints_its_own_coordinate(tmp_path: Path) -> None:
-    """Law: evaluate receiver, selector and value exactly once, and retain all
-    three authenticated coordinates.
+    """Law: evaluate receiver and selector exactly once, and retain both
+    authenticated coordinates.
 
     Two distinct stores must not share one outcome coordinate, and each
-    coordinate must name its own receiver, selector and value.
+    coordinate must name its own receiver and selector, under its own key.
+    An undecided store states nothing about the value it stores (its
+    receiver's ``__setattr__`` is not decided here, #7757 NEW-4).
     """
     _, completed = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
     coordinates = _store_coordinates(completed[0].guard)
 
     assert len(coordinates) == 2, coordinates
-    operations = [c.args[1] for c in coordinates]
-    receivers = {op.args[0].name for op in operations}
-    selectors = {op.args[1].value for op in operations}
-    values = {op.args[2].name for op in operations}
+    receivers = {c.args[0].name for c in coordinates}
+    selectors = {c.args[1].value for c in coordinates}
+    keys = {c.args[2].value for c in coordinates}
 
     assert receivers == {"o"}
     assert selectors == {"x", "y"}
-    assert values == {"p", "q"}
+    assert len(keys) == 2, keys
 
 
 def test_each_store_occurrence_mints_its_own_coordinate_discrimination(
@@ -419,7 +426,7 @@ def test_no_invented_exception_type_on_a_store_halt(tmp_path: Path) -> None:
     for arm in halted:
         assert isinstance(arm.effect, UndeterminedRaiseEffect), type(arm.effect)
         assert arm.effect.exception_type_coordinate is None
-        assert arm.effect.producer_node_owner == "AttributeStoreRuntimeEffect"
+        assert arm.effect.producer_node_owner == "UndecidedSetattr"
 
 
 def test_no_invented_exception_type_on_a_store_halt_discrimination(

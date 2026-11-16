@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import tempfile
 
-from sugar_lift_py_tests.effect import (
-    AttributeStoreRuntimeEffect,
-    UndeterminedRaiseEffect,
-)
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -63,10 +60,11 @@ def test_renamed_alias_has_the_same_single_binding_path():
 
 
 def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():
-    # Free undecided receiver + ground-true branch: dual-face RuntimeEffect.
-    # A formal receiver's store is the undecided store, no carrier
-    # (``store_effect_sugar.attribute_mutation``).
+    # Free undecided receiver (a name only an unread star import may bind) +
+    # ground-true branch: the one undecided attribute mutation, as a formal
+    # receiver's store is (``store_effect_sugar.attribute_mutation``).
     function = _function(
+        "from unread_module import *\n"
         "def arbitrary(constructed_value):\n"
         "    if True:\n"
         "        symbolic_receiver.payload = constructed_value\n"
@@ -83,15 +81,9 @@ def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():
     halted = [face for face in outcome.exits if isinstance(face, Halted)]
     assert len(completed) == 1 and len(halted) == 1, outcome.exits
 
-    def cites_store_outcome(term):
-        if getattr(term, "name", None) == "python:store_completed":
-            return True
-        return any(cites_store_outcome(a) for a in getattr(term, "args", ()) or ())
-
     def store_atom(formula):
-        return getattr(formula, "name", None) == "py.truthy" and any(
-            cites_store_outcome(a) for a in formula.args
-        )
+        # The one undecided attribute mutation's completes atom (#7757 NEW-4).
+        return getattr(formula, "name", None) == "python:setattr.completes"
 
     (done,) = completed
     (stopped,) = halted
@@ -99,19 +91,10 @@ def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():
     assert getattr(stopped.guard, "kind", None) == "not"
     assert store_atom(stopped.guard.operands[0]), "the halted face holds where the store HALTED"
 
-    record = done.value.record.statements
-    stores = [
-        halt
-        for entry in record
-        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
-        for halt in entry.halts()
-        if isinstance(halt.effect, AttributeStoreRuntimeEffect)
-    ]
-    assert len(stores) == 1
-    # The halted face raises something undetermined (``store_faces``); both
-    # faces are the SAME store occurrence by the one coordinate their guards
-    # cite (asserted above).
+    # The halted face raises something undetermined; both faces are the SAME
+    # store occurrence by the one atom their guards cite.
     assert isinstance(stopped.effect, UndeterminedRaiseEffect)
-    assert stopped.effect.producer_node_owner == "AttributeStoreRuntimeEffect"
+    assert stopped.effect.producer_node_owner == "UndecidedSetattr"
     assert stopped.guard.operands[0] == done.guard
+    record = done.value.record.statements
     assert any(type(entry).__name__ == "ReturnValue" for entry in record)

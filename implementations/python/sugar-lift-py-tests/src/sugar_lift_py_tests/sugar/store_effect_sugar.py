@@ -7,7 +7,8 @@ from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
-#: ``(noun, owner)`` of each attribute mutation's undecided faces on a formal.
+#: ``(noun, owner)`` of each attribute mutation's undecided faces, whatever
+#: the undecided receiver.
 _ATTRIBUTE_MUTATIONS = {
     "__setattr__": ("setattr", "UndecidedSetattr"),
     "__delattr__": ("delattr", "UndecidedDelattr"),
@@ -49,9 +50,14 @@ def attribute_mutation(method, receiver, attr: str, operands, site, ctx, *, unit
       delete, every face of it (an ``AttributeError``, a ``TypeError``)
       kept.
     - Any other receiver -- an undecided call result, a free name -- is the
-      store's two faces (``store_faces``: completes with the runtime
-      effect's testimony or raises something undetermined)."""
+      same undecided mutation a formal's is
+      (``undecided_attribute_mutation_faces``, #7757 NEW-4), with no
+      ``plain`` guard: no class input of this proof names its class.  There
+      is one spelling of "an attribute store or delete nothing decides", as
+      there is one of an item store or delete
+      (``undecided_item_mutation_faces``)."""
     noun, owner = _ATTRIBUTE_MUTATIONS[method]
+    plain = None
     if getattr(receiver, "formal_coordinate", None) is not None:
         from sugar_lift_py_tests.floor import StringValue
         from sugar_lift_py_tests.receiver_dispatch import (
@@ -77,60 +83,18 @@ def attribute_mutation(method, receiver, attr: str, operands, site, ctx, *, unit
                     )
 
                 return dispatched.and_then(after)
-        plain = None
         if method == "__setattr__":
             class_input = stored_class_input(receiver, attr, unit)
             if class_input is not None:
                 from sugar_lift_py_tests.ir import make_var
 
                 plain = plain_store_atom(make_var(class_input), attr)
-        return undecided_attribute_mutation_faces(
-            receiver, attr, site, noun=noun, method=method, owner=owner, plain=plain
-        )
-
-    if receiver.runtime_type_is_decided():
+    elif receiver.runtime_type_is_decided():
         if method == "__setattr__":
             return receiver.setattr(attr, *operands, site, ctx)
         return receiver.delattr(attr, site, ctx)
-
-    from sugar_lift_py_tests.effect import (
-        AttributeDeleteRuntimeEffect,
-        AttributeStoreRuntimeEffect,
-        runtime_effect_evidence,
-        runtime_effect_evidence_from_terms,
-    )
-    from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
-    from sugar_lift_py_tests.ir import ctor, str_const
-
-    if method == "__setattr__":
-        (value,) = operands
-        operation = ctor(
-            "python:attribute_store",
-            [
-                receiver.to_term(owner="attribute_mutation.receiver"),
-                str_const(attr),
-                value.to_term(owner="attribute_mutation.value"),
-            ],
-        )
-        return store_faces(
-            AttributeStoreRuntimeEffect(
-                "attribute assignment runtime boundary: attribute store "
-                f"target `.{attr}` -- receiver identity belongs to "
-                "Python's runtime __setattr__/descriptor dispatch; "
-                f"attr={attr} site={site}",
-                **runtime_effect_evidence_from_terms(operation, operation, site),
-            )
-        )
-    operand = ctor(
-        "python:attribute_delete_target",
-        [receiver.to_term(owner="attribute delete"), str_const(attr)],
-    )
-    return store_faces(
-        AttributeDeleteRuntimeEffect(
-            "attribute deletion runtime boundary: Python dispatches "
-            f"__delattr__/descriptor deletion for .{attr}",
-            **runtime_effect_evidence("py.delattr", operand, site),
-        )
+    return undecided_attribute_mutation_faces(
+        receiver, attr, site, noun=noun, method=method, owner=owner, plain=plain
     )
 
 

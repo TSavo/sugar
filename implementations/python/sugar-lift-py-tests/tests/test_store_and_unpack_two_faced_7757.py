@@ -5,8 +5,9 @@ constructor of "completes under this atom, or raises something undetermined
 under its complement", and it owes the operation as the one ``undecided``
 member (reason ``unanswered``).
 
-- A store (``store_faces``: attribute and subscript stores and deletes over
-  an undecided receiver) is decided by the runtime's ``__setattr__`` /
+- A store (``store_faces``: a store at a decided container's runtime
+  boundary; an attribute store or delete over an undecided receiver is the
+  one undecided attribute mutation since #7757 NEW-4) is decided by the runtime's ``__setattr__`` /
   ``__setitem__`` / ``__delattr__`` / ``__delitem__``; its guard is an opaque
   store-occurrence coordinate and its exception class is not one known
   class. So it is two-faced: it completes with the testimony of its own
@@ -30,7 +31,7 @@ import pytest
 import sugar_lift_py_tests.effect as effect_module
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.effect import (
-    AttributeStoreRuntimeEffect,
+    SubscriptStoreRuntimeEffect,
     UndeterminedRaiseEffect,
     runtime_effect_evidence_from_terms,
 )
@@ -98,13 +99,17 @@ def _assert_undetermined_and_owed(outcome, owner: str):
     return done, halt
 
 
-def _attribute_store_effect(site=None):
+def _store_effect(site=None):
+    """A store that answers ``store_faces`` (a list slice assignment's
+    runtime boundary, ``FloorValue.slice_assign_iterable_with``).  An
+    attribute store on an undecided receiver is the one undecided attribute
+    mutation instead (#7757 NEW-4), not this."""
     operation = ctor(
-        "python:attribute_store",
+        "py.setitem",
         [make_var("o"), str_const("x"), make_var("p")],
     )
-    return AttributeStoreRuntimeEffect(
-        "attribute assignment runtime boundary: attribute store target `.x`",
+    return SubscriptStoreRuntimeEffect(
+        "list slice assignment RHS iterability is undecided at lift",
         **runtime_effect_evidence_from_terms(
             operation, operation, site if site is not None else _Site()
         ),
@@ -117,9 +122,9 @@ def _attribute_store_effect(site=None):
 
 
 def test_a_store_is_two_faced_and_owes_its_site() -> None:
-    effect = _attribute_store_effect()
+    effect = _store_effect()
     done, halt = _assert_undetermined_and_owed(
-        store_faces(effect), "AttributeStoreRuntimeEffect"
+        store_faces(effect), "SubscriptStoreRuntimeEffect"
     )
     # The completed face is the testimony that the runtime answered THIS
     # store; its guard is the store-occurrence coordinate.
@@ -130,15 +135,15 @@ def test_a_store_is_two_faced_and_owes_its_site() -> None:
 def test_a_store_halt_is_not_its_typed_runtime_effect() -> None:
     """Discrimination: the halted face no longer carries the store's own
     runtime effect as a second raise-face effect type."""
-    _, halt = _faces(store_faces(_attribute_store_effect()))
-    assert not isinstance(halt.effect, AttributeStoreRuntimeEffect)
+    _, halt = _faces(store_faces(_store_effect()))
+    assert not isinstance(halt.effect, SubscriptStoreRuntimeEffect)
 
 
 def test_two_stores_owe_two_sites() -> None:
     """Discrimination: the debt is the store's own site, not a shared one."""
     other_site = _Site(line=5, line_col_span=_Span(5, 0, 5, 7))
-    first = owed_calls(store_faces(_attribute_store_effect()))
-    second = owed_calls(store_faces(_attribute_store_effect(other_site)))
+    first = owed_calls(store_faces(_store_effect()))
+    second = owed_calls(store_faces(_store_effect(other_site)))
     assert first == _OWED
     assert second == (
         UnansweredCallV1(None, SourceFragmentCoordinateV1(_SRC, 5, 0, 5, 7)),

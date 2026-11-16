@@ -15,10 +15,11 @@ class AttributeDeleteEffectSugar(Sugar):
     (``store_effect_sugar.attribute_mutation``), the same door
     ``receiver.attr = v`` takes: ``type(receiver).__delattr__(receiver,
     "attr")``.  A formal whose class is a class input here is the dispatched
-    ``__delattr__``; any other formal the undecided delete, its halt kept; a
-    decided runtime type its floor's delete (never the read path --
-    readability never authorizes deletion); any other receiver the delete's
-    two faces.  No delete waits on a caller's actual.
+    ``__delattr__``; a decided runtime type its floor's delete (never the
+    read path -- readability never authorizes deletion); any other receiver,
+    formal or not, the one undecided delete
+    (``undecided_attribute_mutation_faces``), its halt kept.  No delete
+    waits on a caller's actual.
 
     Out of scope: Name deletion (``del name`` / DeleteNameSugar).
     """
@@ -27,7 +28,7 @@ class AttributeDeleteEffectSugar(Sugar):
     attr: str
     site: object = dataclass_field(compare=False)
     # The delete's halted face reached nothing inside this statement: the
-    # reducer gives it the prefix (``store_faces``).
+    # reducer gives it the prefix.
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
