@@ -52,6 +52,11 @@ SHARD_COUNT = DEFAULT_SHARD_COUNT
 
 # Relative to repo root. Collected pytest targets are files under this tree.
 TESTS_REL = Path("implementations/python/sugar-lift-py-tests/tests")
+# The sugar-source-tree package's own tests. Not part of the suite roster
+# above (the package suite's number stays comparable); the main scorecard
+# lists them with ``--tests-rel`` and measures them as their own ``tree``
+# number (tools/main_scorecard_suite.sh).
+TREE_TESTS_REL = Path("implementations/python/sugar-source-tree/tests")
 
 # Paths that are never pytest targets (corpus / fixtures, not collected suite).
 _SKIP_DIR_PARTS = frozenset({"vendor", "fixtures", "__pycache__"})
@@ -65,9 +70,9 @@ def repo_root_from(start: Path | None = None) -> Path:
     raise SystemExit(f"cannot find sugar-build.toml above {here}")
 
 
-def list_suite_test_files(repo_root: Path) -> list[str]:
-    """Sorted repo-relative POSIX paths of suite test modules."""
-    root = (repo_root / TESTS_REL).resolve()
+def list_suite_test_files(repo_root: Path, tests_rel: Path = TESTS_REL) -> list[str]:
+    """Sorted repo-relative POSIX paths of the test modules under ``tests_rel``."""
+    root = (repo_root / tests_rel).resolve()
     if not root.is_dir():
         raise SystemExit(f"suite tests tree missing: {root}")
     files: list[str] = []
@@ -161,6 +166,15 @@ def main(argv: list[str] | None = None) -> int:
         help="checkout root (default: walk up to sugar-build.toml)",
     )
     parser.add_argument(
+        "--tests-rel",
+        type=Path,
+        default=TESTS_REL,
+        help=(
+            f"test tree to list, relative to the repo root (default {TESTS_REL}; "
+            f"the main scorecard also lists {TREE_TESTS_REL})"
+        ),
+    )
+    parser.add_argument(
         "--shard-count",
         type=int,
         default=SHARD_COUNT,
@@ -234,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     root = repo_root_from(args.repo_root)
-    files = list_suite_test_files(root)
+    files = list_suite_test_files(root, args.tests_rel)
 
     if args.list_files:
         for path in files:

@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
-# The package suite and the solver twins of the main scorecard (#8416).
+# The package suite, the solver twins and the source-tree tests of the main
+# scorecard (#8416).
 #
 #   main_scorecard_suite.sh plan        every file, packed onto the shards
 #   main_scorecard_suite.sh run <i>     run shard i's files
-#   main_scorecard_suite.sh post        post the suite and twins numbers
+#   main_scorecard_suite.sh post        post the suite, twins and tree numbers
+#
+# THE SOURCE TREE'S TESTS ARE THEIR OWN NUMBER
+#
+# The 183 test files under implementations/python/sugar-source-tree/tests ran
+# in no CI job, so a stale test there was invisible. They are the `tree`
+# population: packed by measured cost onto the same shards as the suite (no
+# serial job), run by their own pytest on each shard after the suite and
+# twins, and posted as `tree=P/T`, so `suite=` keeps counting exactly the
+# files it always counted. The tree runs under its own package config
+# (-c sugar-source-tree/pyproject.toml: its pythonpath, prepend import mode,
+# so its sibling helper modules import), not implementations/python/pytest.ini
+# (importlib mode), with the rootdir kept at implementations/python.
+# Each shard's tree pytest has a wall budget (TREE_SHARD_BUDGET_SECONDS,
+# default 900): a hung tree test is interrupted (SIGINT, so pytest prints
+# where it was) and the tree is marked incomplete, while the shard's suite
+# results, already written, still count.
 #
 # WHY ONE POOL
 #
@@ -70,41 +87,58 @@ count_lines() {
 cmd_plan() {
   set -e
   rm -rf "$results"
-  mkdir -p "$results/suite" "$results/twins" "$plan"
+  mkdir -p "$results/suite" "$results/twins" "$results/tree" "$plan"
   rm -f "$plan"/shard-*.txt "$plan/shards.json"
   cd "$py"
   python "$repo/tools/python_package_suite_shards.py" \
     --repo-root "$repo" --shard-count 1 --shard-index 0 \
     --emit-paths-for-cwd > "$plan/suite-paths.txt"
-  # Every test file that drives a source through the real solver.
+  python "$repo/tools/python_package_suite_shards.py" \
+    --repo-root "$repo" --tests-rel implementations/python/sugar-source-tree/tests \
+    --shard-count 1 --shard-index 0 \
+    --emit-paths-for-cwd > "$plan/tree-paths.txt"
+  # Every test file that drives a source through the real solver. A twin in
+  # the suite or source tree is counted from that population's results; only
+  # the twins outside both run as `twins`.
   git grep -l run_source_through_real_solver -- '*/tests/test_*.py' \
     > "$plan/twins-paths.txt" || true
   grep -Fxf "$plan/suite-paths.txt" "$plan/twins-paths.txt" > "$plan/twins-in-suite.txt" || true
-  grep -Fvxf "$plan/suite-paths.txt" "$plan/twins-paths.txt" > "$plan/twins-extra.txt" || true
+  grep -Fxf "$plan/tree-paths.txt" "$plan/twins-paths.txt" > "$plan/twins-in-tree.txt" || true
+  cat "$plan/twins-in-suite.txt" "$plan/twins-in-tree.txt" > "$plan/twins-counted.txt"
+  grep -Fvxf "$plan/twins-counted.txt" "$plan/twins-paths.txt" > "$plan/twins-extra.txt" || true
   echo "suite files: $(count_lines "$plan/suite-paths.txt");" \
+    "tree files: $(count_lines "$plan/tree-paths.txt");" \
     "twin files: $(count_lines "$plan/twins-paths.txt")" \
     "($(count_lines "$plan/twins-in-suite.txt") counted from the suite's results," \
-    "$(count_lines "$plan/twins-extra.txt") outside the suite tree)"
+    "$(count_lines "$plan/twins-in-tree.txt") from the tree's," \
+    "$(count_lines "$plan/twins-extra.txt") outside both)"
   python "$repo/tools/main_scorecard_shard_plan.py" pack --cwd "$py" \
     --suite "$plan/suite-paths.txt" --twins "$plan/twins-extra.txt" \
+    --tree "$plan/tree-paths.txt" \
     --shard-count "$SUITE_SHARD_COUNT" --out "$plan" --ledger "$ledger"
-  echo "files to run: $(( $(count_lines "$plan/suite-paths.txt") + $(count_lines "$plan/twins-extra.txt") ))" \
+  echo "files to run: $(( $(count_lines "$plan/suite-paths.txt") + $(count_lines "$plan/twins-extra.txt") + $(count_lines "$plan/tree-paths.txt") ))" \
     "over $SUITE_SHARD_COUNT shards"
 }
 
 run_pytest() {
-  # run_pytest <label> <list> <summary> <log>; returns 1 when pytest did not
-  # run its tests (exit other than 0 passed, 1 failed, 5 no tests collected).
-  local label="$1" list="$2" summary="$3" log="$4" rc
-  local -a paths=()
+  # run_pytest <label> <list> <summary> <log> <budget seconds, 0 = none> [pytest args...];
+  # returns 1 when pytest did not run its tests (exit other than 0 passed,
+  # 1 failed, 5 no tests collected).
+  local label="$1" list="$2" summary="$3" log="$4" budget="$5" rc
+  shift 5
+  local -a paths=() limit=()
   [ -f "$list" ] && mapfile -t paths < "$list"
   echo "$label files to run: ${#paths[@]}"
   [ "${#paths[@]}" -gt 0 ] || return 0
+  # Over budget: SIGINT, so pytest reports where it was and writes its
+  # summary (exit 2); KILL a minute later if it does not stop. timeout exits 124.
+  if [ "$budget" -gt 0 ]; then limit=(timeout -s INT -k 60 "$budget"); fi
   PYTHONFAULTHANDLER=1 PYTHONPATH="$repo/tools:$PYTHONPATH" \
-    python -m pytest "${paths[@]}" -v \
+    "${limit[@]}" python -m pytest "${paths[@]}" -v \
     -p no:cacheprovider -p no:randomly \
     -p scorecard_carry_pytest \
     --carry-label "$label" --carry-summary "$summary" \
+    "$@" \
     > "$log" 2>&1
   rc=$?
   echo "$rc" > "${summary%.json}.exit"
@@ -113,6 +147,9 @@ run_pytest() {
   case "$rc" in
     0 | 1 | 5) return 0 ;;
   esac
+  if [ "$rc" -eq 124 ]; then
+    echo "::error::$label pytest ran past its ${budget}s wall budget and was interrupted; the last -v line before KeyboardInterrupt in $(basename "$log") is the test it was running"
+  fi
   if [ "$rc" -gt 128 ]; then
     # Killed by a signal: the test it was running is the -v line the
     # faulthandler dump interrupts; the crashing thread's stack follows.
@@ -124,19 +161,20 @@ run_pytest() {
 }
 
 cmd_run() {
-  local tag suite_list twins_list
+  local tag suite_list twins_list tree_list
   tag="$(printf '%02d' "$1")"
   suite_list="$plan/shard-$tag.suite.txt"
   twins_list="$plan/shard-$tag.twins.txt"
-  if [ ! -f "$suite_list" ] || [ ! -f "$twins_list" ]; then
+  tree_list="$plan/shard-$tag.tree.txt"
+  if [ ! -f "$suite_list" ] || [ ! -f "$twins_list" ] || [ ! -f "$tree_list" ]; then
     echo "::error::no plan for shard $tag in $plan"
     exit 1
   fi
-  mkdir -p "$results/suite" "$results/twins"
+  mkdir -p "$results/suite" "$results/twins" "$results/tree"
   # This shard's results from an earlier attempt are replaced, never kept.
-  rm -f "$results"/suite/shard-"$tag".* "$results"/twins/shard-"$tag".*
+  rm -f "$results"/suite/shard-"$tag".* "$results"/twins/shard-"$tag".* "$results"/tree/shard-"$tag".*
   cd "$py"
-  if [ -s "$suite_list" ] || [ -s "$twins_list" ]; then
+  if [ -s "$suite_list" ] || [ -s "$twins_list" ] || [ -s "$tree_list" ]; then
     SUGAR_BIN="$("$repo/bin/sugarbin" --profile release)"
     export SUGAR_BIN
   fi
@@ -145,8 +183,17 @@ cmd_run() {
   rm -rf "$repo/twin-evidence"
   export SUGAR_WITNESS_EVIDENCE_DIR="$repo/twin-evidence"
   local status=0
-  run_pytest suite "$suite_list" "$results/suite/shard-$tag.json" "$repo/suite.log" || status=1
-  run_pytest twins "$twins_list" "$results/twins/shard-$tag.json" "$repo/twins.log" || status=1
+  run_pytest suite "$suite_list" "$results/suite/shard-$tag.json" "$repo/suite.log" 0 || status=1
+  run_pytest twins "$twins_list" "$results/twins/shard-$tag.json" "$repo/twins.log" 0 || status=1
+  # The source tree under its own package config, last, with a wall budget:
+  # the suite and twins above are already written. The rootdir stays
+  # implementations/python (the cwd) so node IDs are sugar-source-tree/tests/...
+  # like the plan's paths (the ledger, the cost prior and the twins' file
+  # filter key on them); the config's pythonpath entries resolve against the
+  # config file's own directory.
+  run_pytest tree "$tree_list" "$results/tree/shard-$tag.json" "$repo/tree.log" \
+    "${TREE_SHARD_BUDGET_SECONDS:-900}" \
+    -c sugar-source-tree/pyproject.toml --rootdir . || status=1
   return "$status"
 }
 
@@ -154,26 +201,32 @@ cmd_post() {
   cd "$repo"
   local -a filtered=()
   local f
-  for f in "$results"/suite/*.json; do
+  for f in "$results"/suite/*.json "$results"/tree/*.json; do
     [ -f "$f" ] && filtered+=(--filtered "$f")
   done
   python3 tools/scorecard_carry.py summarize --label suite \
     --out "$RUNNER_TEMP/suite-totals.json" \
     --result "$RUNNER_TEMP/suite-result.json" \
     "$results"/suite/*.json
+  python3 tools/scorecard_carry.py summarize --label tree \
+    --out "$RUNNER_TEMP/tree-totals.json" \
+    --result "$RUNNER_TEMP/tree-result.json" \
+    "$results"/tree/*.json
   python3 tools/scorecard_carry.py summarize --label twins \
     --out "$RUNNER_TEMP/twins-totals.json" \
     --result "$RUNNER_TEMP/twins-result.json" \
-    --only-files "$plan/twins-in-suite.txt" "${filtered[@]}" \
+    --only-files "$plan/twins-counted.txt" "${filtered[@]}" \
     "$results"/twins/*.json
   # A planned shard that left no results makes its measure unmeasured.
   python3 tools/main_scorecard_shard_plan.py check --plan "$plan" --results "$results" \
     --result "suite=$RUNNER_TEMP/suite-result.json" \
     --result "twins=$RUNNER_TEMP/twins-result.json" \
+    --result "tree=$RUNNER_TEMP/tree-result.json" \
     --ledger "$ledger"
   python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
     --put "suite=$RUNNER_TEMP/suite-result.json" \
-    --put "twins=$RUNNER_TEMP/twins-result.json"
+    --put "twins=$RUNNER_TEMP/twins-result.json" \
+    --put "tree=$RUNNER_TEMP/tree-result.json"
 }
 
 case "${1:-}" in
