@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Pack the scorecard's test files onto its shards, and check every shard reported.
 
-    main_scorecard_shard_plan.py pack  --cwd PY --suite F --twins F [--tree F] --shard-count N --out PLAN
-    main_scorecard_shard_plan.py check --plan PLAN --results DIR --result suite=F --result twins=F [--result tree=F]
+    main_scorecard_shard_plan.py pack  --cwd PY --suite F --twins F [--tree F] [--source F] --shard-count N --out PLAN
+    main_scorecard_shard_plan.py check --plan PLAN --results DIR --result suite=F --result twins=F [--result tree=F] [--result source=F]
 
 WHY THIS EXISTS (#8416)
 
@@ -24,10 +24,14 @@ estimated from their size, as lpt_file_shards does.
 The ``tree`` population is implementations/python/sugar-source-tree/tests,
 which ran in no CI job before: its files are packed onto the same shards by
 the same prior (no serial job) and posted as their own ``tree`` number, so
-the suite's number keeps counting what it always counted.
+the suite's number keeps counting what it always counted. The ``source``
+population is implementations/python/sugar-lift-python-source/tests, which
+likewise ran in no CI job (only ``make test-python``): packed and posted the
+same way, as its own ``source`` number.
 
 Writes, for each shard i, ``<out>/shard-<ii>.suite.txt``,
-``<out>/shard-<ii>.twins.txt`` and ``<out>/shard-<ii>.tree.txt`` (paths
+``<out>/shard-<ii>.twins.txt``, ``<out>/shard-<ii>.tree.txt`` and
+``<out>/shard-<ii>.source.txt`` (paths
 relative to implementations/python, one per line; any may be empty), and
 ``<out>/shards.json``: how many
 shards the plan made and, per shard and population, how many files and about
@@ -48,8 +52,9 @@ collected), or that ran nothing while
 tests were planned, did not measure. That population's result is then
 rewritten as unmeasured with an ``incomplete:`` note naming the shards. The
 twins in the suite tree are counted from the suite's results, so a lost suite
-shard makes the twins unmeasured too (and a lost tree shard does, when a twin
-lives in the source tree: ``<plan>/twins-in-tree.txt``). A population whose
+shard makes the twins unmeasured too (and a lost tree or source shard does,
+when a twin lives in that package: ``<plan>/twins-in-tree.txt``,
+``<plan>/twins-in-source.txt``). A population whose
 every shard reported updates the ledger.
 """
 
@@ -61,7 +66,7 @@ import os
 import sys
 from pathlib import Path
 
-POPULATIONS = ("suite", "twins", "tree")
+POPULATIONS = ("suite", "twins", "tree", "source")
 # pytest exit statuses after which the shard's tests ran: 0 all passed,
 # 1 some failed, 5 no tests collected.
 RAN = {0, 1, 5}
@@ -94,7 +99,12 @@ def cmd_pack(args: argparse.Namespace) -> int:
 
     keys: list[str] = []
     resolver: dict[str, Path] = {}
-    listings = (("suite", args.suite), ("twins", args.twins), ("tree", args.tree))
+    listings = (
+        ("suite", args.suite),
+        ("twins", args.twins),
+        ("tree", args.tree),
+        ("source", args.source),
+    )
     for population, listing in listings:
         if listing is None:
             continue
@@ -142,7 +152,7 @@ def cmd_pack(args: argparse.Namespace) -> int:
         print(
             f"SCORECARD SHARD PLAN shard={index} suite_files={len(by_population['suite'])} "
             f"twins_files={len(by_population['twins'])} tree_files={len(by_population['tree'])} "
-            f"tests_planned~{tests_planned} "
+            f"source_files={len(by_population['source'])} tests_planned~{tests_planned} "
             f"estimated_s={load:.1f} mode={assignment.mode}",
             flush=True,
         )
@@ -207,6 +217,10 @@ def cmd_check(args: argparse.Namespace) -> int:
         lost["twins"].append("suite shards lost (the twins in the suite tree are counted from them)")
     if lost["tree"] and read_lines(args.plan / "twins-in-tree.txt"):
         lost["twins"].append("tree shards lost (the twins in the source tree are counted from them)")
+    if lost["source"] and read_lines(args.plan / "twins-in-source.txt"):
+        lost["twins"].append(
+            "source shards lost (the twins in sugar-lift-python-source are counted from them)"
+        )
 
     shard_count = plan.get("shardCount") if plan else "?"
     for population in POPULATIONS:
@@ -266,6 +280,9 @@ def main(argv: list[str] | None = None) -> int:
     pack.add_argument("--suite", type=Path, required=True, help="suite files to run")
     pack.add_argument("--twins", type=Path, required=True, help="twin files to run")
     pack.add_argument("--tree", type=Path, default=None, help="source-tree test files to run")
+    pack.add_argument(
+        "--source", type=Path, default=None, help="sugar-lift-python-source test files to run"
+    )
     pack.add_argument("--shard-count", type=int, required=True)
     pack.add_argument("--out", type=Path, required=True)
     pack.add_argument("--ledger", type=Path, default=None, help="per-file test counts")

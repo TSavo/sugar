@@ -12,32 +12,34 @@ import repo_root_test_support  # noqa: F401 -- puts tools/ on sys.path
 
 import main_scorecard_post as post
 
-FAST = ("suite", "twins", "federation", "rust", "tree")
+FAST = ("suite", "twins", "federation", "rust", "tree", "source")
 
 
 def board_row(sha: str, run: str, done: int, cpanic: int, total: int = 1421) -> str:
     return (
         f"OK\n\nsha={sha} prev=x run={run} suite=-/- twins=-/- federation=- "
-        f"rust=-/- tree=-/- board={done}/{total} cpanic={cpanic} issues=1 prs= pending=none\n"
+        f"rust=-/- tree=-/- source=-/- board={done}/{total} cpanic={cpanic} issues=1 prs= pending=none\n"
     )
 
 
 def fast_row(sha: str, run: str, suite: str, twins: str = "10/10", fed: str = "PASS",
-             rust: str = "5/5", tree: str = "3/3") -> str:
+             rust: str = "5/5", tree: str = "3/3", source: str | None = "4/4") -> str:
+    # source=None writes a row from before the `source` population existed.
+    source_cell = "" if source is None else f"source={source} "
     return (
         f"OK\n\nsha={sha} prev=x run={run} suite={suite} twins={twins} federation={fed} "
-        f"rust={rust} tree={tree} board=-/- cpanic=- issues=1 prs= pending=none\n"
+        f"rust={rust} tree={tree} {source_cell}board=-/- cpanic=- issues=1 prs= pending=none\n"
     )
 
 
 def board_now(done: int, cpanic: int, total: int = 1421) -> dict[str, str]:
-    return {"suite": "-/-", "twins": "-/-", "rust": "-/-", "tree": "-/-",
+    return {"suite": "-/-", "twins": "-/-", "rust": "-/-", "tree": "-/-", "source": "-/-",
             "board": f"{done}/{total}", "cpanic": str(cpanic), "federation": "-"}
 
 
 def fast_now(suite: str, twins: str = "10/10", fed: str = "PASS",
-             rust: str = "5/5", tree: str = "3/3") -> dict[str, str]:
-    return {"suite": suite, "twins": twins, "rust": rust, "tree": tree,
+             rust: str = "5/5", tree: str = "3/3", source: str = "4/4") -> dict[str, str]:
+    return {"suite": suite, "twins": twins, "rust": rust, "tree": tree, "source": source,
             "board": "-/-", "cpanic": "-", "federation": fed}
 
 
@@ -93,7 +95,7 @@ def test_baseline_marker_resets_best():
     assert [r["sha"] for r in window["board"]] == ["7d757bcb9dddd", "9bd3d4dddcccc"]
     line = status(bodies, board_now(1237, 179), set(FAST))
     assert line.startswith("OK ")
-    assert "baseline suite,twins,federation,board,rust,tree@9bd3d4ddd" in line
+    assert "baseline suite,twins,federation,board,rust,tree,source@9bd3d4ddd" in line
     # Without the marker the same row is still regressed.
     assert status(bodies[:-1], board_now(1237, 179), set(FAST)).startswith("STILL REGRESSED: ")
 
@@ -176,3 +178,48 @@ def test_own_run_rows_are_not_history():
     earlier, window, _ = post.read_history(bodies, "now")
     assert [r["sha"] for r in earlier] == ["b1aaaaaaa"]
     assert [r["sha"] for r in window["board"]] == ["b1aaaaaaa"]
+
+
+# `source` is the sugar-lift-python-source package's own tests, a new
+# population: rows written before it existed have no `source=` key.
+
+
+def test_rows_before_source_parse_and_leave_it_unmeasured():
+    old = fast_row("f1aaaaaaa", "1", "100/100", source=None)
+    row = post.parse_row(old)
+    assert row is not None and "source" not in row
+    assert not post.row_measured(row, "source")
+    # The first measured source number has nothing to compare with.
+    line = status([old], fast_now("100/100", source="80/114"), {"board"})
+    assert line.startswith("OK ")
+    assert "source" not in line
+
+
+def test_source_failing_rise_is_regression_then_still_regressed():
+    bodies = [fast_row("f1aaaaaaa", "1", "100/100", source="110/114")]
+    line = status(bodies, fast_now("100/100", source="108/114"), {"board"})
+    assert line.startswith("REGRESSION: source failing 4 -> 6")
+    assert "STILL REGRESSED" not in line
+    bodies.append(fast_row("f2aaaaaaa", "2", "100/100", source="108/114"))
+    line = status(bodies, fast_now("100/100", source="108/114"), {"board"})
+    assert line.startswith("STILL REGRESSED: source failing 6 > best 4 @f1aaaaaaa")
+    assert status(bodies, fast_now("100/100", source="110/114"), {"board"}).startswith("OK ")
+
+
+def test_source_unmeasured_or_total_lost_is_regression():
+    bodies = [fast_row("f1aaaaaaa", "1", "100/100", source="110/114")]
+    line = status(bodies, fast_now("100/100", source="?/?"), {"board"})
+    assert line.startswith("REGRESSION: source unmeasured (was 4 failing)")
+    line = status(bodies, fast_now("100/100", source="60/60"), {"board"})
+    assert line.startswith("REGRESSION: source total 114 -> 60 (shard lost?)")
+
+
+def test_board_lane_writes_source_as_not_its_number():
+    bodies = [fast_row("f1aaaaaaa", "1", "100/100", source="110/114")]
+    assert status(bodies, board_now(1420, 0), set(FAST)).startswith("OK ")
+
+
+def test_baseline_marker_can_name_source():
+    assert post.parse_baselines("scorecard-baseline: 9bd3d4ddd source") == [
+        ("9bd3d4ddd", ("source",))
+    ]

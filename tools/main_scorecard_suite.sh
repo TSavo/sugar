@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# The package suite, the solver twins and the source-tree tests of the main
-# scorecard (#8416).
+# The package suite, the solver twins, the source-tree tests and the
+# sugar-lift-python-source tests of the main scorecard (#8416).
 #
 #   main_scorecard_suite.sh plan        every file, packed onto the shards
 #   main_scorecard_suite.sh run <i>     run shard i's files
-#   main_scorecard_suite.sh post        post the suite, twins and tree numbers
+#   main_scorecard_suite.sh post        post the suite, twins, tree and source numbers
 #
 # THE SOURCE TREE'S TESTS ARE THEIR OWN NUMBER
 #
@@ -21,6 +21,21 @@
 # default 900): a hung tree test is interrupted (SIGINT, so pytest prints
 # where it was) and the tree is marked incomplete, while the shard's suite
 # results, already written, still count.
+#
+# THE LIFTER PACKAGE'S TESTS ARE THEIR OWN NUMBER TOO
+#
+# The 114 test files under implementations/python/sugar-lift-python-source/tests
+# ran only under `make test-python`, which no workflow calls. They are the
+# `source` population, the same way as the tree: packed by measured cost onto
+# the same shards, run by their own pytest last on each shard under
+# SOURCE_SHARD_BUDGET_SECONDS (default 900), posted as `source=P/T`. The
+# package has no pytest table of its own, so `make test-python`'s pytest in
+# the package directory resolves implementations/python/pytest.ini (importlib
+# mode, rootdir implementations/python); the shard names that same config
+# (-c pytest.ini). Its tests/conftest.py pins the package's src, its sibling
+# srcs and its tests directory on sys.path (tests/checkout_resolution.py), so
+# its helper modules import. The two twin files in that package are counted
+# from the source results (<plan>/twins-in-source.txt), not run twice.
 #
 # WHY ONE POOL
 #
@@ -107,7 +122,7 @@ count_lines() {
 cmd_plan() {
   set -e
   rm -rf "$results"
-  mkdir -p "$results/suite" "$results/twins" "$results/tree" "$plan"
+  mkdir -p "$results/suite" "$results/twins" "$results/tree" "$results/source" "$plan"
   rm -f "$plan"/shard-*.txt "$plan/shards.json"
   cd "$py"
   python "$repo/tools/python_package_suite_shards.py" \
@@ -117,26 +132,34 @@ cmd_plan() {
     --repo-root "$repo" --tests-rel implementations/python/sugar-source-tree/tests \
     --shard-count 1 --shard-index 0 \
     --emit-paths-for-cwd > "$plan/tree-paths.txt"
+  python "$repo/tools/python_package_suite_shards.py" \
+    --repo-root "$repo" --tests-rel implementations/python/sugar-lift-python-source/tests \
+    --shard-count 1 --shard-index 0 \
+    --emit-paths-for-cwd > "$plan/source-paths.txt"
   # Every test file that drives a source through the real solver. A twin in
-  # the suite or source tree is counted from that population's results; only
-  # the twins outside both run as `twins`.
+  # the suite, the source tree or the lifter package is counted from that
+  # population's results; only the twins outside all three run as `twins`.
   git grep -l run_source_through_real_solver -- '*/tests/test_*.py' \
     > "$plan/twins-paths.txt" || true
   grep -Fxf "$plan/suite-paths.txt" "$plan/twins-paths.txt" > "$plan/twins-in-suite.txt" || true
   grep -Fxf "$plan/tree-paths.txt" "$plan/twins-paths.txt" > "$plan/twins-in-tree.txt" || true
-  cat "$plan/twins-in-suite.txt" "$plan/twins-in-tree.txt" > "$plan/twins-counted.txt"
+  grep -Fxf "$plan/source-paths.txt" "$plan/twins-paths.txt" > "$plan/twins-in-source.txt" || true
+  cat "$plan/twins-in-suite.txt" "$plan/twins-in-tree.txt" "$plan/twins-in-source.txt" \
+    > "$plan/twins-counted.txt"
   grep -Fvxf "$plan/twins-counted.txt" "$plan/twins-paths.txt" > "$plan/twins-extra.txt" || true
   echo "suite files: $(count_lines "$plan/suite-paths.txt");" \
     "tree files: $(count_lines "$plan/tree-paths.txt");" \
+    "source files: $(count_lines "$plan/source-paths.txt");" \
     "twin files: $(count_lines "$plan/twins-paths.txt")" \
     "($(count_lines "$plan/twins-in-suite.txt") counted from the suite's results," \
     "$(count_lines "$plan/twins-in-tree.txt") from the tree's," \
-    "$(count_lines "$plan/twins-extra.txt") outside both)"
+    "$(count_lines "$plan/twins-in-source.txt") from the source's," \
+    "$(count_lines "$plan/twins-extra.txt") outside all three)"
   python "$repo/tools/main_scorecard_shard_plan.py" pack --cwd "$py" \
     --suite "$plan/suite-paths.txt" --twins "$plan/twins-extra.txt" \
-    --tree "$plan/tree-paths.txt" \
+    --tree "$plan/tree-paths.txt" --source "$plan/source-paths.txt" \
     --shard-count "$SUITE_SHARD_COUNT" --out "$plan" --ledger "$ledger"
-  echo "files to run: $(( $(count_lines "$plan/suite-paths.txt") + $(count_lines "$plan/twins-extra.txt") + $(count_lines "$plan/tree-paths.txt") ))" \
+  echo "files to run: $(( $(count_lines "$plan/suite-paths.txt") + $(count_lines "$plan/twins-extra.txt") + $(count_lines "$plan/tree-paths.txt") + $(count_lines "$plan/source-paths.txt") ))" \
     "over $SUITE_SHARD_COUNT shards"
 }
 
@@ -197,22 +220,27 @@ run_pytest() {
 }
 
 cmd_run() {
-  local tag suite_list twins_list tree_list
+  local tag suite_list twins_list tree_list source_list
   tag="$(printf '%02d' "$1")"
   suite_list="$plan/shard-$tag.suite.txt"
   twins_list="$plan/shard-$tag.twins.txt"
   tree_list="$plan/shard-$tag.tree.txt"
-  if [ ! -f "$suite_list" ] || [ ! -f "$twins_list" ] || [ ! -f "$tree_list" ]; then
+  source_list="$plan/shard-$tag.source.txt"
+  if [ ! -f "$suite_list" ] || [ ! -f "$twins_list" ] || [ ! -f "$tree_list" ] \
+    || [ ! -f "$source_list" ]; then
     echo "::error::no plan for shard $tag in $plan"
     exit 1
   fi
-  mkdir -p "$results/suite" "$results/twins" "$results/tree"
+  mkdir -p "$results/suite" "$results/twins" "$results/tree" "$results/source"
   # This shard's results from an earlier attempt are replaced, never kept.
-  rm -f "$results"/suite/shard-"$tag".* "$results"/twins/shard-"$tag".* "$results"/tree/shard-"$tag".*
+  rm -f "$results"/suite/shard-"$tag".* "$results"/twins/shard-"$tag".* \
+    "$results"/tree/shard-"$tag".* "$results"/source/shard-"$tag".*
   # A crash log is this run's only (the self-hosted workspace persists).
-  rm -f "$repo/suite.crash.log" "$repo/twins.crash.log" "$repo/tree.crash.log"
+  rm -f "$repo/suite.crash.log" "$repo/twins.crash.log" "$repo/tree.crash.log" \
+    "$repo/source.crash.log"
   cd "$py"
-  if [ -s "$suite_list" ] || [ -s "$twins_list" ] || [ -s "$tree_list" ]; then
+  if [ -s "$suite_list" ] || [ -s "$twins_list" ] || [ -s "$tree_list" ] \
+    || [ -s "$source_list" ]; then
     SUGAR_BIN="$("$repo/bin/sugarbin" --profile release)"
     export SUGAR_BIN
   fi
@@ -232,6 +260,13 @@ cmd_run() {
   run_pytest tree "$tree_list" "$results/tree/shard-$tag.json" "$repo/tree.log" \
     "${TREE_SHARD_BUDGET_SECONDS:-900}" \
     -c sugar-source-tree/pyproject.toml --rootdir . || status=1
+  # The lifter package's tests, under the config `make test-python` resolves
+  # for them (implementations/python/pytest.ini: the package has no pytest
+  # table), with their own wall budget; node IDs are
+  # sugar-lift-python-source/tests/... like the plan's paths.
+  run_pytest source "$source_list" "$results/source/shard-$tag.json" "$repo/source.log" \
+    "${SOURCE_SHARD_BUDGET_SECONDS:-900}" \
+    -c pytest.ini --rootdir . || status=1
   return "$status"
 }
 
@@ -239,7 +274,7 @@ cmd_post() {
   cd "$repo"
   local -a filtered=()
   local f
-  for f in "$results"/suite/*.json "$results"/tree/*.json; do
+  for f in "$results"/suite/*.json "$results"/tree/*.json "$results"/source/*.json; do
     [ -f "$f" ] && filtered+=(--filtered "$f")
   done
   python3 tools/scorecard_carry.py summarize --label suite \
@@ -250,6 +285,10 @@ cmd_post() {
     --out "$RUNNER_TEMP/tree-totals.json" \
     --result "$RUNNER_TEMP/tree-result.json" \
     "$results"/tree/*.json
+  python3 tools/scorecard_carry.py summarize --label source \
+    --out "$RUNNER_TEMP/source-totals.json" \
+    --result "$RUNNER_TEMP/source-result.json" \
+    "$results"/source/*.json
   python3 tools/scorecard_carry.py summarize --label twins \
     --out "$RUNNER_TEMP/twins-totals.json" \
     --result "$RUNNER_TEMP/twins-result.json" \
@@ -260,11 +299,13 @@ cmd_post() {
     --result "suite=$RUNNER_TEMP/suite-result.json" \
     --result "twins=$RUNNER_TEMP/twins-result.json" \
     --result "tree=$RUNNER_TEMP/tree-result.json" \
+    --result "source=$RUNNER_TEMP/source-result.json" \
     --ledger "$ledger"
   python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
     --put "suite=$RUNNER_TEMP/suite-result.json" \
     --put "twins=$RUNNER_TEMP/twins-result.json" \
-    --put "tree=$RUNNER_TEMP/tree-result.json"
+    --put "tree=$RUNNER_TEMP/tree-result.json" \
+    --put "source=$RUNNER_TEMP/source-result.json"
 }
 
 case "${1:-}" in
