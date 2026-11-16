@@ -11,16 +11,7 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
-from native_carrier_testimony import authenticated_function_value, native_carrier_for
-
-
-def _inv(src: str):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
-        path = f.name
-    function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
-    # Deleted expectation: an undecided formal equality was already completed.
-    return authenticated_function_value(function, operator="equals").invs()[0]
+from native_carrier_testimony import native_carrier_for
 
 
 def _carrier(src: str, operator: str):
@@ -33,9 +24,12 @@ def _carrier(src: str, operator: str):
 
 
 def test_not_equal_is_equals_negated():
-    inv = _inv("def A(z):\n    assert z != 2\n    return z\n")
-    assert inv.kind == "not"
-    assert inv.operands[0].name == "py.eq"
+    """Deleted expectation: the formal ``!=`` completed as ``not py.eq`` with an
+    actual the test supplied. It waits as the ``equals`` operation."""
+    carrier = _carrier("def A(z):\n    assert z != 2\n    return z\n", "equals")
+    left, right = carrier.operands
+    assert left.to_term(owner="not-equal carrier tooth").name == "z"
+    assert right.value == 2
 
 
 def test_ordering_operators_emit_their_atoms():

@@ -442,67 +442,6 @@ class DependencyArtifactGraph:
         )
 
 
-# packages_distributions() walks every installed dist's file list (measured
-# ~0.5s+ per call). Content of the install map — not a projection memo — so a
-# process cache is legitimate. Top-level graph answers reuse the same map.
-_PACKAGES_DISTRIBUTIONS_CACHE: Mapping[str, list[str]] | None = None
-_TOP_LEVEL_GRAPH_CACHE: dict[str, "DependencyArtifactGraph"] = {}
-
-
-def clear_top_level_authentication_caches() -> None:
-    """Drop top-level auth memos (tests / hermetic process reuse)."""
-    global _PACKAGES_DISTRIBUTIONS_CACHE
-    _PACKAGES_DISTRIBUTIONS_CACHE = None
-    _TOP_LEVEL_GRAPH_CACHE.clear()
-
-
-def _packages_distributions() -> Mapping[str, list[str]]:
-    global _PACKAGES_DISTRIBUTIONS_CACHE
-    if _PACKAGES_DISTRIBUTIONS_CACHE is None:
-        _PACKAGES_DISTRIBUTIONS_CACHE = importlib.metadata.packages_distributions()
-    return _PACKAGES_DISTRIBUTIONS_CACHE
-
-
-def authenticate_dependency_top_level(
-    top_level: str,
-    *,
-    distribution_index: Mapping[str, importlib.metadata.Distribution] | None = None,
-) -> DependencyArtifactGraph:
-    """Authenticate a distribution or stdlib module through one graph door."""
-    if distribution_index is not None and top_level in distribution_index:
-        return DependencyArtifactGraph.authenticate(distribution_index[top_level])
-    # Ambient install map only — never share with an explicit distribution_index.
-    if _AUTHENTICATE_CACHE_ENABLED:
-        cached = _TOP_LEVEL_GRAPH_CACHE.get(top_level)
-        if cached is not None:
-            return cached
-    # Fast path: many top-levels share the distribution name (pandas, numpy, …).
-    # ``packages_distributions()`` walks every installed dist (~0.2s measured);
-    # try the direct door first and only pay the install-map walk on miss
-    # (e.g. dateutil → python-dateutil) or multi-owner conflict.
-    graph: DependencyArtifactGraph | None = None
-    try:
-        graph = DependencyArtifactGraph.authenticate(
-            importlib.metadata.distribution(top_level)
-        )
-    except importlib.metadata.PackageNotFoundError:
-        packages = _packages_distributions()
-        distributions = tuple(packages.get(top_level, ()))
-        if len(distributions) == 1:
-            graph = DependencyArtifactGraph.authenticate(
-                importlib.metadata.distribution(distributions[0])
-            )
-        elif distributions:
-            raise DependencyArtifactAuthenticationError(
-                "top-level module belongs to multiple installed distributions"
-            )
-        else:
-            graph = DependencyArtifactGraph.authenticate_stdlib_module(top_level)
-    if _AUTHENTICATE_CACHE_ENABLED:
-        _TOP_LEVEL_GRAPH_CACHE[top_level] = graph
-    return graph
-
-
 def _module_name(path: PurePosixPath) -> str | None:
     # PEP 484 stubs are defining Python source for names and class ancestry.
     # Wheels with native extension modules commonly ship the callable runtime

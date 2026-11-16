@@ -163,7 +163,7 @@ class SourceResolutionSession:
         self.enrolled_distributions = enrolled_distributions
         # top_level -> DependencyArtifactGraph for this session (and walk). Call
         # sites used to mint a fresh ``dependency_graphs={}`` per frame /
-        # prefix / populate path, re-entering authenticate_dependency_top_level
+        # prefix / populate path, re-authenticating the same top-level graph
         # 21× for the same warnings/re/inspect tops on one test_pandas open
         # (65 total across 5 unique tops). Process cache makes each hit cheap;
         # session ownership makes the ask once per content under the walk.

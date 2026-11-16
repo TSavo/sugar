@@ -10,7 +10,6 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_source_tree.tree import SourceFile
 
 from native_carrier_testimony import (
-    authenticated_function_value,
     completed_function_value,
     native_carrier_for,
 )
@@ -43,13 +42,15 @@ def test_method_chains_compose():
 
 
 def test_assert_consumes_the_coordinate():
-    # Deleted expectation: the formal equality completed before its caller bound s.
-    inv = authenticated_function_value(
+    # Deleted expectation: the formal equality completed with an actual the
+    # test supplied for s. It waits as ``equals`` over the method coordinate.
+    carrier = native_carrier_for(
         _fn("def A(s):\n    assert s.upper() == s\n    return s\n"),
         operator="equals",
-    ).invs()[0]
-    assert inv.name == "py.eq"
-    assert inv.args[0].name == "call:upper"
+    )
+    left, right = carrier.operands
+    assert left.to_term(owner="method equality carrier tooth").name == "call:upper"
+    assert right.to_term(owner="method equality carrier tooth").name == "s"
 
 
 def test_keyword_args_lift():
