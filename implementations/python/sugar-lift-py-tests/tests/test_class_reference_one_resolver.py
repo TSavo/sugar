@@ -60,6 +60,14 @@ def _test_line(module: str) -> int:
 # - ``with Box(3) as box``: ``box`` is ``__enter__``'s result, and
 #   ``box.value`` reads a field of it, which no contract states
 #   (``__enter__`` returns ``self``, a receiver that arrived by binding).
+#   Equating the returned object's fields with the manager's constructed
+#   fields at prove (``out = self`` and ``python:leaves("self")``) is not
+#   sound on its own: the lift does not know ``box`` and the manager are one
+#   object, so a store through another name of the manager (``b = Box(3);
+#   with b as box: b.value = 9``) rebinds that name and never ``box``, and
+#   the read would be the constructed 3.  It stays owed until the lift
+#   names ``as box`` as the manager's own object where nothing else holds
+#   the manager (#7757, carried on #7661).
 # - ``raise Boom()`` / ``except Boom``: the lie is refuted (#8831).  The
 #   raise already carries ``Boom``'s class (``Raise._raised_operand_sugar``
 #   stamps the call with it), so the truthful half is not held open by the

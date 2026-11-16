@@ -763,8 +763,8 @@ def class_input_formals(unit) -> frozenset:
     return answer
 
 
-# Module -> (module, {coordinate CID: {field: ContractInputV1}}), the last
-# few typed modules read.
+# Module -> (module, {coordinate CID: {field: ContractInputV1}},
+# {coordinate CID: super calls}), the last few typed modules read.
 _FIELD_INPUTS: dict = {}
 
 
@@ -774,6 +774,16 @@ def field_inputs(unit) -> dict:
     function's contract (``nodes._receiver_field_inputs``): the
     ``field:<param>.<field>`` input (``ContractInputV1``) a read of that
     field of that parameter is.  Read once per typed module."""
+    return _field_input_tables(unit)[0]
+
+
+def _field_input_tables(unit) -> tuple:
+    """``(field_inputs, super_calls)``: ``field_inputs`` as
+    ``field_inputs`` answers it, and ``{coordinate CID: calls}`` for each
+    such parameter whose function's body runs a base's method on it through
+    a zero-argument ``super()`` (``nodes._receiver_super_calls``: each
+    ``(end, method, call)``, in source order).  Read once per typed
+    module."""
     from sugar_lift_py_tests.contract_input import FIELD_INPUT, ContractInputV1
     from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
     from sugar_source_tree.nodes import (
@@ -781,15 +791,17 @@ def field_inputs(unit) -> dict:
         FunctionDef,
         Lambda,
         _receiver_field_inputs,
+        _receiver_super_calls,
     )
 
     module = getattr(unit, "typed_module", None)
     if module is None:
-        return {}
+        return {}, {}
     held = _FIELD_INPUTS.get(id(module))
     if held is not None and held[0] is module:
-        return held[1]
+        return held[1], held[2]
     found: dict = {}
+    supers: dict = {}
     for statement in module.body:
         for node in statement.walk():
             if not isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
@@ -798,6 +810,7 @@ def field_inputs(unit) -> dict:
             if not reads:
                 continue
             owner_cid = node.fragment.seal().cid
+            calls = _receiver_super_calls(node) or ()
             for formal in node.formal_coordinates():
                 if not isinstance(formal, FormalParameterCoordinateV1):
                     continue
@@ -811,10 +824,56 @@ def field_inputs(unit) -> dict:
                             name=f"{parameter}.{field}",
                         )
                     )
+                    if calls:
+                        supers[formal.coordinate_cid] = calls
     if len(_FIELD_INPUTS) >= 8:
         _FIELD_INPUTS.clear()
-    _FIELD_INPUTS[id(module)] = (module, found)
-    return found
+    _FIELD_INPUTS[id(module)] = (module, found, supers)
+    return found, supers
+
+
+def _super_calls_left_before(calls, receiver, site):
+    """``python:call_leaves(<call>, "0")`` for each zero-argument
+    ``super().<m>()`` of ``calls`` (``nodes._receiver_super_calls``) that
+    ran before the field read at ``site``: its statement, one of the body's
+    top-level statements, ends before the read starts, so it ran exactly
+    once on every path that reaches the read, and nothing of the read's own
+    statement ran before it.  ``<call>`` is the dispatched call's coordinate
+    (``dispatch_term``) as ``BuiltinSuperValue._dispatched`` makes it: on
+    the receiver, its class input riding as ``py.class("0", class:<p>)``,
+    the lookup starting after the class the frame's ``__class__`` cell holds
+    (``py.lookup``).  Prove decides each where the method it resolves to
+    states ``python:leaves`` of its receiver
+    (``consistency::call_leaves_holds``): the object's ``__dict__`` is then
+    still the one it arrived with.
+
+    None where one of them ran before the read and its coordinate is not
+    the dispatched one (the cell not decided, a class with no join symbol,
+    a receiver whose class is no input): the call is then the one
+    unanswered call, which may store any field, and nothing is read through
+    the field input."""
+    if not calls:
+        return ()
+    from sugar_lift_py_tests.floor.builtin_super_value import formal_class_input
+    from sugar_lift_py_tests.floor.universe_value import CALL_LEAVES
+    from sugar_lift_py_tests.ir import atomic, str_const
+
+    span = site.line_col_span
+    at = (span.start_line, span.start_col)
+    atoms = []
+    for end, method, call in calls:
+        if tuple(end) > at:
+            continue
+        decided, cell = call.unit.frame_class_cell(call.line_col_span())
+        after = None if not decided or cell is None else cell.bridge_source_symbol()
+        receiver_class = formal_class_input(receiver, call.fragment)
+        if not after or receiver_class is None:
+            return None
+        term = dispatch_term(
+            method, receiver, receiver_class, (), (), call.fragment, after=after
+        )
+        atoms.append(atomic(CALL_LEAVES, [term, str_const(DISPATCH_RECEIVER_LABEL)]))
+    return tuple(atoms)
 
 
 def receiver_field_read(receiver, name, site):
@@ -836,11 +895,20 @@ def receiver_field_read(receiver, name, site):
     where nothing binds a decided class it stands, and neither face is
     chosen.  In a dynamic module (``module_attribute_names``) nothing is
     read through a field input: a computed store may have changed the
-    object's ``__dict__`` or its class unseen."""
+    object's ``__dict__`` or its class unseen.
+
+    A read after a zero-argument ``super().<m>()`` the body ran on the
+    receiver (``_super_calls_left_before``) reads the input only where that
+    call also leaves the receiver unchanged: the guard conjoins
+    ``python:call_leaves(<call>, "0")`` for each such call, decided at prove
+    from the contract of the method the lookup resolves to (#7757).  Where
+    the base's method stores on the receiver, or nothing decides which
+    method runs, the guard stands or fails and the read is the undecided
+    read: never the value the object arrived with."""
     from sugar_lift_py_tests.contract_input import CLASS_INPUT, input_formal
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
-    from sugar_lift_py_tests.ir import atomic, make_var, not_, str_const
+    from sugar_lift_py_tests.ir import and_, atomic, make_var, not_, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.outcome.exit_set import partition
@@ -855,8 +923,14 @@ def receiver_field_read(receiver, name, site):
     ):
         return None
     unit = site.unit
-    item = field_inputs(unit).get(coordinate.coordinate_cid, {}).get(name)
+    found, supers = _field_input_tables(unit)
+    item = found.get(coordinate.coordinate_cid, {}).get(name)
     if item is None or module_attribute_names(unit)[1]:
+        return None
+    leaving = _super_calls_left_before(
+        supers.get(coordinate.coordinate_cid, ()), receiver, site
+    )
+    if leaving is None:
         return None
     guard = atomic(
         PLAIN_READ,
@@ -865,6 +939,8 @@ def receiver_field_read(receiver, name, site):
             str_const(name),
         ],
     )
+    if leaving:
+        guard = and_([guard, *leaving])
     plain, other = partition(("receiver_field_read", occurrence_key(site), name))
     read = ExitSet.completed(item.value()).guarded(guard, plain)
     from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
@@ -943,13 +1019,9 @@ def dispatch_edge_call(
     (``python:leaves``, ``tree_enumerate.parameters_left_unchanged``) or the
     operand's class holds nothing a call could change; anything else stays
     owed (``consistency::dispatch_answer``)."""
-    from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.floor.object_identity import call_operand_terms
-    from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
-    owner = str(site)
     target = DISPATCH_TARGET_PREFIX + (DISPATCH_READ_MARK if read else "") + name
     # The operands: the receiver first where there is one (a lookup on a
     # class object has none), then the written actuals.
@@ -966,6 +1038,57 @@ def dispatch_edge_call(
             *kw_values,
         )
     )
+    callsite = CallSiteValue(
+        target_name=target,
+        arg_values=(*received, *positional, *(value for _name, value in kw_values)),
+        parameters=(),
+        term=dispatch_term(
+            name,
+            receiver,
+            receiver_class,
+            positional,
+            kw_values,
+            site,
+            read=read,
+            on_class=on_class,
+            after=after,
+        ),
+        body=None,
+        keyword_names=tuple(keyword for keyword, _value in kw_values),
+        site=site,
+        authenticated_target_symbol=symbol,
+        runtime_dispatch_receiver=receiver,
+    )
+    return UnknownCalleeCallV1(target).faces(callsite, site, halted_at=halted_at)
+
+
+def dispatch_term(
+    name,
+    receiver,
+    receiver_class,
+    positional,
+    kw_values,
+    site,
+    *,
+    read=False,
+    on_class=None,
+    after=None,
+):
+    """The coordinate of THE dispatched method call (``dispatch_edge_call``):
+    ``call:dispatch:<name>(<receiver>, <positional>..., py.kwarg(...)...,
+    py.lookup(...), py.class("0", <receiver_class>), py.class(...)...)``.
+    The one builder of that term: the edge carries it, and a guard that asks
+    what such a call leaves (``python:call_leaves``, ``receiver_field_read``)
+    names the call by it.  It is keyed on no occurrence: the method, its
+    operands, where the lookup starts and the receiver's class are the
+    call."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.floor.object_identity import call_operand_terms
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    owner = str(site)
+    target = DISPATCH_TARGET_PREFIX + (DISPATCH_READ_MARK if read else "") + name
+    received = () if on_class is not None else (receiver,)
     # Each operand as the call finds it (``object_identity.identity_term``):
     # a container whose contents are not current by its identity, never by
     # contents prove would read on the method's formal (#7757 H7).
@@ -983,18 +1106,7 @@ def dispatch_edge_call(
         )
         + class_arguments(tuple(positional), tuple(kw_values), shift=len(received))
     )
-    callsite = CallSiteValue(
-        target_name=target,
-        arg_values=(*received, *positional, *(value for _name, value in kw_values)),
-        parameters=(),
-        term=ctor(call_symbol(target), arguments, symbol_kind="coordinate"),
-        body=None,
-        keyword_names=tuple(keyword for keyword, _value in kw_values),
-        site=site,
-        authenticated_target_symbol=symbol,
-        runtime_dispatch_receiver=receiver,
-    )
-    return UnknownCalleeCallV1(target).faces(callsite, site, halted_at=halted_at)
+    return ctor(call_symbol(target), arguments, symbol_kind="coordinate")
 
 
 #: The label a dispatched call's receiver is read by after the call:

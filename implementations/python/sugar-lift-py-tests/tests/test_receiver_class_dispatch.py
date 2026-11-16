@@ -205,6 +205,16 @@ def test_a_method_call_on_a_receiver_whose_class_is_an_input_is_dispatched() -> 
         ("        del self.k\n        return self.n", ()),
         # The object handed to code: no class input, so no field input.
         ("        helper(self)\n        return self.n", ()),
+        # A zero-argument ``super().m()`` as a whole top-level statement: a
+        # base's method runs on the object there, and a read after it is
+        # the input only under ``python:call_leaves`` (#7757).
+        ("        state = super().check()\n        return self.n", (("self", "n"),)),
+        ("        super().check()\n        return self.n", (("self", "n"),)),
+        # A ``super()`` no read can be placed after -- an operand, a
+        # branch's, a bare ``super`` -- leaves no field an input.
+        ("        x = [super().check()]\n        return self.n", ()),
+        ("        if other:\n            super().check()\n        return self.n", ()),
+        ("        s = super\n        return self.n", ()),
     ],
 )
 def test_a_field_read_of_a_parameter_is_an_input_where_its_dict_is_as_it_arrived(
