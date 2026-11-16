@@ -1192,20 +1192,10 @@ def _initial_sealed_state(state: BindingState) -> SealedBindingStateV1 | None:
 def _semantic_value_cid_for_bound_node(node: "Node") -> str:
     """Content CID of one bound Node's actual value.
 
-    Prefers an already-authenticated construction testimony on the node, then
-    the closed constructed-value envelope of its sugar. A sugar that refuses,
+    The closed constructed-value envelope of its sugar. A sugar that refuses,
     or a value that does not canonicalize, propagates as itself; the node
     shape CID is never a stand-in for the value's content.
     """
-    construction = getattr(node, "construction_testimony", None)
-    if construction is not None:
-        semantic = getattr(construction, "semantic_value_cid", None)
-        if isinstance(semantic, str) and semantic.startswith("blake3-512:"):
-            return semantic
-        cid = getattr(construction, "cid", None)
-        if isinstance(cid, str) and cid.startswith("blake3-512:"):
-            # construction_testimony may itself be ConstructedValueTestimonyV1.
-            return construction.semantic_value_cid
     constructed = node.sugar()
     return cid_of_json(_constructed_preimage(constructed))
 

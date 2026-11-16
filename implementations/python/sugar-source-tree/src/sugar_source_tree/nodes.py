@@ -4767,52 +4767,6 @@ class SourceUnit:
             )
         return matches[0]
 
-    def source_allocation_definition_for_call(self, call: "Call") -> "ClassDef | None":
-        """Resolve one source allocation definition at an exact call use-site.
-
-        The callee is the binding its read reaches
-        (``module_definition_at``: CPython's scope classification at the read,
-        then the unique module binding), never its spelling.  A
-        local/free/nonlocal shadow or competing module binding keeps the
-        allocation definition unauthenticated, and a module ``def`` of that
-        name is no allocation.  Behavior is checked separately; it never
-        participates in identity admission.  A unit with no typed root
-        refuses by name (``_require_typed_module``): a call is read only
-        through the door that binds its tree.
-
-        Which class the callee denotes is the one resolver's
-        (``module_definition_denoted_by``), whatever form the callee's read
-        takes after the rewrite (a ``Name``, or the read of the class
-        statement's key, ``DecoratedDefinitionRef``, #7757 item 21): the
-        callee's spelling never decides the allocation.
-
-        The allocation definition is not the object's identity.  Which
-        object a construction made is the evaluation that made it
-        (``Assign._object_place_state``: the assignment's evaluation key), so
-        two evaluations of this one call -- two unrolled iterations, two
-        calls of the enclosing function -- make two objects.
-        """
-        self._require_typed_module(
-            "SourceUnit.source_allocation_definition_for_call", blame=self.filename
-        )
-        span = call.line_col_span()
-        definition = self.module_definition_denoted_by(call.func, span)
-        if not isinstance(definition, ClassDef):
-            return None
-        # Constructing the allocation definition requires constructing its
-        # methods. A call occurrence inside that same definition therefore
-        # cannot use the definition as already-constructed testimony without a
-        # cycle; it remains an opaque occurrence until recursive allocation has
-        # its own construction rule.
-        definition_span = definition.line_col_span()
-        if (
-            (definition_span.start_line, definition_span.start_col)
-            <= (span.start_line, span.start_col)
-            <= (definition_span.end_line, definition_span.end_col)
-        ):
-            return None
-        return definition
-
     def module_definition_at(
         self, name: str, span
     ) -> "FunctionDef | AsyncFunctionDef | ClassDef | None":
@@ -7689,15 +7643,14 @@ def _evaluation_reference_kind(node) -> Optional[str]:
 
     A name an assignment binds to a call's result is bound to the object
     that call made (``Assign._object_place_state``: ``OpaqueObjectStateV1``,
-    or ``ObjectPlaceStateV1`` for a class of this file), which carries the
-    statement's evaluation key and is read through it, exactly as the
+    whatever the callee), which carries the statement's evaluation key and is read through it, exactly as the
     reference it refines (``EvaluationRefSugar``): a reference to that
     evaluation, ``"evaluation"``.  Read as anything else, every module
     global bound to a call (``_dtype_obj = np.dtype(object)``) was cited
     undecided wherever a function read it."""
     if isinstance(node, EvaluationRef):
         return "member" if getattr(node, "member", False) else "evaluation"
-    if isinstance(node, (OpaqueObjectStateV1, ObjectPlaceStateV1)):
+    if isinstance(node, OpaqueObjectStateV1):
         return "evaluation"
     if isinstance(node, ImportBindingRef):
         return "import"
@@ -14064,20 +14017,6 @@ def _receiver_field_store(
     )
 
 
-def _occurrence_testimony(node):
-    """The identity testimony of the expression ``node``: a key reference's
-    ``of`` (#7958), the right-hand side a name or a field was given.  It
-    names the expression (its source fragment and node shape), never a value
-    computed for it here: the statement evaluates it once, at reduce, and
-    every read reads that statement's key."""
-    from .binding_provenance import ConstructedValueTestimonyV1
-    from .binding_state import node_construction_shape_cid
-
-    return ConstructedValueTestimonyV1.mint(
-        node.fragment, node_construction_shape_cid(node)
-    )
-
-
 def _keyed_target_binding(statement, binding, keys: dict, targets) -> dict:
     """``binding`` (each target name to the value node substitution gave it)
     with every name in ``keys`` bound instead to a reference to its key, at
@@ -15248,27 +15187,12 @@ class Assign(Statement):
         entry = binding.get(self.targets[0].id)
         if not isinstance(entry, BindingEntryV1):
             return binding
-        if isinstance(entry.state, ObjectPlaceStateV1):
-            return {
-                **binding,
-                self.targets[0].id: replace(
-                    entry.with_testimony(entry.state.construction_testimony),
-                    state=entry.state,
-                ),
-            }
         if isinstance(entry.state, OpaqueObjectStateV1):
             return binding
         state = self._object_place_state(entry)
         if state is None:
             return binding
-        if isinstance(state, OpaqueObjectStateV1):
-            return {**binding, self.targets[0].id: replace(entry, state=state)}
-        return {
-            **binding,
-            self.targets[0].id: replace(
-                entry.with_testimony(state.construction_testimony), state=state
-            ),
-        }
+        return {**binding, self.targets[0].id: replace(entry, state=state)}
 
     def _object_place_state(self, entry: BindingEntryV1):
         if not isinstance(self.value, Call):
@@ -15287,82 +15211,37 @@ class Assign(Statement):
         # statement was substituted for (``Statement._evaluation_key``), so
         # two evaluations of one source call -- two unrolled iterations, two
         # calls of the enclosing function -- make two objects, never one
-        # keyed by the call's fragment.
+        # keyed by the call's fragment.  Whatever the callee is -- a class of
+        # this file or anything else -- the state is this one: what the
+        # callee denotes is never asked here, so no second answer to it can
+        # disagree with the call's own (#7757).
         evaluation = reference.evaluation
-        definition = self.unit.source_allocation_definition_for_call(self.value)
-        if definition is None:
-            from .backend import Child, Leaf, materialize
-            from .object_identity import OpaqueObjectCoordinateV1
-            from .shadow import ShadowNode, _handle_of
+        from .backend import Child, Leaf, materialize
+        from .object_identity import OpaqueObjectCoordinateV1
+        from .shadow import ShadowNode, _handle_of
 
-            coordinate = OpaqueObjectCoordinateV1.mint(
-                call_occurrence=self.value.fragment,
-                construction_evaluation=evaluation,
-                source_cid=self.unit.source_cid,
-                artifact_cid=self.unit.source_cid,
-            )
-            # The object state is the name's binding, a value of the block's
-            # scope and no source node: a binding nothing reads, or reads
-            # only through a later state (the object after a call that may
-            # have changed it, ``container_mutation._havoc``), is constructed
-            # by nothing.  It answers where it is minted
-            # (``_minted_binding_reference``), as the reference it refines
-            # does; a read that reaches it constructs it and answers again.
-            return _minted_binding_reference(
-                materialize(
-                    self.unit,
-                    ShadowNode(
-                        "OpaqueObjectStateV1",
-                        self.targets[0].span,
-                        (
-                            ("object_coordinate", Leaf(coordinate)),
-                            ("base", Child(_handle_of(self.value))),
-                            ("evaluation", Leaf(reference.evaluation)),
-                            ("name", Leaf(reference.name)),
-                        ),
-                    ),
-                    self.reporter,
-                )
-            )
-        if not self.unit.source_class_has_authenticated_default_attribute_behavior(
-            definition
-        ):
-            return None
-        # The construction testimony names the right-hand side the name was
-        # given (the reference's ``of``): the constructor call at this
-        # statement, never its value computed here.  The statement evaluates
-        # the call once, at reduce; every read of the object reads its key.
-        constructor = getattr(reference, "of", None)
-        if not isinstance(constructor, Node):
-            return None
-        testimony = _occurrence_testimony(constructor)
-        from .object_identity import SourceObjectCoordinateV1
-
-        object_coordinate = SourceObjectCoordinateV1.mint(
-            allocation_definition=definition.fragment,
+        coordinate = OpaqueObjectCoordinateV1.mint(
             call_occurrence=self.value.fragment,
             construction_evaluation=evaluation,
             source_cid=self.unit.source_cid,
             artifact_cid=self.unit.source_cid,
         )
-        from .backend import Child, Leaf, materialize
-        from .shadow import ShadowNode, _handle_of
-
-        # The name's binding, as the opaque state above is: it answers where
-        # it is minted.
+        # The object state is the name's binding, a value of the block's
+        # scope and no source node: a binding nothing reads, or reads
+        # only through a later state (the object after a call that may
+        # have changed it, ``container_mutation._havoc``), is constructed
+        # by nothing.  It answers where it is minted
+        # (``_minted_binding_reference``), as the reference it refines
+        # does; a read that reaches it constructs it and answers again.
         return _minted_binding_reference(
             materialize(
                 self.unit,
                 ShadowNode(
-                    "ObjectPlaceStateV1",
+                    "OpaqueObjectStateV1",
                     self.targets[0].span,
                     (
-                        ("object_coordinate", Leaf(object_coordinate)),
-                        ("construction_testimony", Leaf(testimony)),
-                        ("object_identity_cid", Leaf(object_coordinate.cid)),
-                        ("base", Child(_handle_of(constructor))),
-                        # The testimony above names the call; a read of the
-                        # object reads this assignment's key.
+                        ("object_coordinate", Leaf(coordinate)),
+                        ("base", Child(_handle_of(self.value))),
                         ("evaluation", Leaf(reference.evaluation)),
                         ("name", Leaf(reference.name)),
                     ),
@@ -23502,73 +23381,6 @@ class OpaqueObjectStateV1(Expression):
         return EvaluationRefSugar(
             evaluation=self.evaluation, name=self.name, site=self.fragment
         )
-
-
-class ObjectPlaceStateV1(Expression):
-    """The object a constructor call built, carried only inside runtime
-    BindingEntryV1.
-
-    This is a constructed Node value, not a binding resolver or heap.  Its sole
-    identity source is ``object_coordinate.cid``, authenticated from the exact
-    construction occurrence and the evaluation that made it (the
-    assignment's evaluation key): two evaluations of one call are two
-    objects.
-
-    ``construction_testimony`` names the constructor call (``base``, the
-    reference's ``of``): its source fragment and node shape, never a value
-    computed for it at substitution (``_occurrence_testimony``).
-
-    A read of the object reads the value its constructor call completed with
-    at the assignment, through the assignment's key (``evaluation``, the
-    reference the name was bound to).  It keeps no fields of its own: a
-    field store on the object is the one receiver field store
-    (``Assign._receiver_field_store_state``), and every later read of the
-    object, or of one of its fields, reads the receiver's post-state
-    (``ReceiverFieldStoreState``) over this state.  Nothing is evaluated
-    again at a read.
-    """
-
-    object_coordinate: object
-    construction_testimony: object
-    object_identity_cid: str
-    base: Expression
-    evaluation: str
-    name: str
-    _child_fields = ("base",)
-
-    def substitute(self, scope):
-        del scope
-        return self
-
-    def _construct_sugar(self):
-        self.validate_identity()
-        return self._object_sugar()
-
-    def _object_sugar(self):
-        """The value the constructor call completed with at its assignment,
-        read through the assignment's key: the same read the name's
-        reference makes.  The call is never evaluated again here."""
-        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
-            EvaluationRefSugar,
-        )
-
-        return EvaluationRefSugar(
-            evaluation=self.evaluation, name=self.name, site=self.fragment
-        )
-
-    def validate_identity(self) -> None:
-        from .binding_provenance import (
-            BindingProvenanceGap,
-            ConstructedValueTestimonyV1,
-        )
-        from .object_identity import decode_object_coordinate_v1
-
-        coordinate = decode_object_coordinate_v1(self.object_coordinate.wire())
-        ConstructedValueTestimonyV1.decode(self.construction_testimony.wire())
-        if self.construction_testimony.cid != _occurrence_testimony(self.base).cid:
-            raise BindingProvenanceGap("object construction testimony mismatch")
-        if coordinate.cid != self.object_identity_cid:
-            raise BindingProvenanceGap("object place identity CID mismatch")
 
 
 class Attribute(Expression):

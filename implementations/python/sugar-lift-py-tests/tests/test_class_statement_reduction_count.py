@@ -142,9 +142,9 @@ def test_a_class_statement_is_reduced_once_however_often_it_is_called(
 
 
 # ---------------------------------------------------------------------------
-# A class statement that is not one completion.  No object place state is
-# built for it (``Assign._object_place_state`` returned ``None`` through the
-# deleted ``_constructed_floor_value`` before the address was read), and the statement
+# A class statement that is not one completion.  Each call assigned is the one
+# object state (``Assign._object_place_state``, whatever the callee), and the
+# statement
 # is still reduced once however often the class is called: by the module's
 # one run, which is where Python runs it.
 #
@@ -182,7 +182,7 @@ _BODY_ALWAYS_RAISES = {"field-int-of-text": "ValueError"}
 
 @pytest.mark.parametrize("body", sorted(_NOT_ONE_COMPLETION))
 @pytest.mark.parametrize("use", sorted(_USES))
-def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
+def test_a_class_statement_that_is_not_one_completion_is_reduced_once(
     body: str, use: str, monkeypatch
 ) -> None:
     from sugar_lift_python_source.canonical import blake3_512_of
@@ -224,7 +224,10 @@ def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
     )
     outcome = function_universe_outcome(function)
 
-    assert place_states == [None] * class_calls
+    # Every assignment of a call is the one object state, whatever the callee
+    # (#7757): building it reduces nothing.
+    assert len(place_states) == class_calls
+    assert all(state.kind == "OpaqueObjectStateV1" for state in place_states)
     assert reductions["Box"] == 1
     assert isinstance(outcome, ExitSet), outcome
     if body in _BODY_ALWAYS_RAISES:

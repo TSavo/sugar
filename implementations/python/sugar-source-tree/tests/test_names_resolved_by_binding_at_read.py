@@ -1,7 +1,7 @@
 """A name is resolved by the binding its read reaches, never by its spelling
 (#7757).
 
-``source_allocation_definition_for_call``, ``exception_type_identity`` and
+``module_definition_denoted_by``, ``exception_type_identity`` and
 ``ClassDef._inherits_default_exception_constructor`` each read a name through
 ``SourceUnit.module_definition_at`` (a module ``def``/``class``), the builtin
 namespace nothing rebinds (``builtin_reference_at``) or the one import table,
@@ -57,7 +57,7 @@ def _call_of(source_file, name, line):
     )
 
 
-def test_an_allocation_callee_shadowed_by_a_parameter_is_the_parameter():
+def test_a_class_callee_shadowed_by_a_parameter_is_the_parameter():
     source_file = _source_file(
         "class C:\n"  # 1
         "    pass\n"  # 2
@@ -70,13 +70,13 @@ def test_an_allocation_callee_shadowed_by_a_parameter_is_the_parameter():
         "        pass\n"  # 9
         "    return C()\n"  # 10
     )
-    def allocation(line):
+    def callee(line):
         call = _call_of(source_file, "C", line)
-        return call.unit.source_allocation_definition_for_call(call)
+        return call.unit.module_definition_denoted_by(call.func, call.line_col_span())
 
-    assert allocation(4) is None
-    assert allocation(10) is None
-    module_class = allocation(6)
+    assert callee(4) is None
+    assert callee(10) is None
+    module_class = callee(6)
     assert isinstance(module_class, ClassDef)
     assert module_class.line_col_span().start_line == 1
 

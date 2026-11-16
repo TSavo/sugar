@@ -63,88 +63,6 @@ def _checked(preimage: dict[str, Any], observed: object, field: str) -> str:
 
 
 @dataclass(frozen=True)
-class SourceObjectCoordinateV1:
-    allocation_definition: dict[str, Any]
-    call_occurrence: dict[str, Any]
-    construction_evaluation: str
-    source_cid: str
-    artifact_cid: str
-    cid: str
-
-    @property
-    def preimage(self) -> dict[str, Any]:
-        return {
-            "kind": "source-object-coordinate",
-            "schemaVersion": "1",
-            "allocationDefinition": self.allocation_definition,
-            "callOccurrence": self.call_occurrence,
-            "constructionEvaluation": self.construction_evaluation,
-            "sourceCid": self.source_cid,
-            "artifactCid": self.artifact_cid,
-        }
-
-    def wire(self) -> dict[str, Any]:
-        return {**self.preimage, "objectCoordinateCid": self.cid}
-
-    @classmethod
-    def mint(
-        cls,
-        *,
-        allocation_definition: SourceFragment,
-        call_occurrence: SourceFragment,
-        construction_evaluation: str,
-        source_cid: str,
-        artifact_cid: str,
-    ) -> "SourceObjectCoordinateV1":
-        preimage = {
-            "kind": "source-object-coordinate",
-            "schemaVersion": "1",
-            "allocationDefinition": allocation_definition.seal().to_dict(),
-            "callOccurrence": call_occurrence.seal().to_dict(),
-            "constructionEvaluation": _evaluation(construction_evaluation),
-            "sourceCid": _cid(source_cid, "sourceCid"),
-            "artifactCid": _cid(artifact_cid, "artifactCid"),
-        }
-        return cls(
-            preimage["allocationDefinition"],
-            preimage["callOccurrence"],
-            construction_evaluation,
-            source_cid,
-            artifact_cid,
-            cid_of_json(preimage),
-        )
-
-    @classmethod
-    def decode(cls, raw: object) -> "SourceObjectCoordinateV1":
-        raw = _exact(
-            raw,
-            {
-                "kind",
-                "schemaVersion",
-                "allocationDefinition",
-                "callOccurrence",
-                "constructionEvaluation",
-                "sourceCid",
-                "artifactCid",
-                "objectCoordinateCid",
-            },
-            cls.__name__,
-        )
-        if raw["kind"] != "source-object-coordinate" or raw["schemaVersion"] != "1":
-            raise BindingProvenanceGap("unsupported SourceObjectCoordinateV1")
-        allocation = _memento(raw["allocationDefinition"], "allocationDefinition")
-        occurrence = _memento(raw["callOccurrence"], "callOccurrence")
-        evaluation = _evaluation(raw["constructionEvaluation"])
-        source = _cid(raw["sourceCid"], "sourceCid")
-        artifact = _cid(raw["artifactCid"], "artifactCid")
-        preimage = {
-            key: value for key, value in raw.items() if key != "objectCoordinateCid"
-        }
-        cid = _checked(preimage, raw["objectCoordinateCid"], "object coordinate CID")
-        return cls(allocation, occurrence, evaluation, source, artifact, cid)
-
-
-@dataclass(frozen=True)
 class OpaqueObjectCoordinateV1:
     call_occurrence: dict[str, Any]
     construction_evaluation: str
@@ -236,14 +154,12 @@ class OpaqueObjectCoordinateV1:
         return result
 
 
-ObjectCoordinateV1: TypeAlias = SourceObjectCoordinateV1 | OpaqueObjectCoordinateV1
+ObjectCoordinateV1: TypeAlias = OpaqueObjectCoordinateV1
 
 
 def decode_object_coordinate_v1(raw: object) -> ObjectCoordinateV1:
     if not isinstance(raw, dict):
         raise BindingProvenanceGap("malformed ObjectCoordinateV1")
-    if raw.get("kind") == "source-object-coordinate":
-        return SourceObjectCoordinateV1.decode(raw)
     if raw.get("kind") == "opaque-object-coordinate":
         return OpaqueObjectCoordinateV1.decode(raw)
     raise BindingProvenanceGap("unsupported ObjectCoordinateV1")

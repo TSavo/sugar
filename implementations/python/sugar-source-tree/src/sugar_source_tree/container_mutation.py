@@ -324,8 +324,8 @@ def _ref(node):
 
     A read of a formal is re-spanned to its use site (``Name.substitute``), so
     every read is a fresh node over the same ``coordinate``.  Every read of
-    an object place is the one object its construction made
-    (``object_identity_cid``); the receiver an active
+    an object state is the one object its evaluation made (the state node,
+    whose coordinate is that evaluation); the receiver an active
     ``__init__`` constructs is its binding coordinate.  A read of an
     assigned name is the object its assignment was given (``_identity``);
     a name's object after a mutation is the object before it (``_object``).
@@ -358,8 +358,11 @@ def _denoted_ref(node):
     kind = getattr(node, "kind", None)
     if kind in _FORMAL_KINDS and hasattr(node, "coordinate"):
         return ("formal", node.kind, _coordinate_key(node.coordinate))
-    if kind == "ObjectPlaceStateV1":
-        return ("object-place", node.object_identity_cid)
+    if kind == "OpaqueObjectStateV1":
+        # The object an assignment's call made: its coordinate (the call
+        # occurrence and the evaluation that made it), whichever mint of
+        # the state a scope holds.
+        return ("object-state", node.object_coordinate.cid)
     if kind == "ConstructedReceiverRef":
         return ("constructed-receiver", node.binding_coordinate_cid)
     return getattr(node, "ref", node)
@@ -1383,7 +1386,6 @@ _EXPOSED_KINDS = frozenset(
         "ReceiverAfterCall",
         "OpaqueObjectStateV1",
         "ReceiverFieldStoreState",
-        "ObjectPlaceStateV1",
         "ConstructedReceiverRef",
         *_FORMAL_KINDS,
     }
@@ -1720,7 +1722,6 @@ _PATH_ROOT_KINDS = frozenset(
         "Call",
         "Attribute",
         "Subscript",
-        "ObjectPlaceStateV1",
         "OpaqueObjectStateV1",
         "BuiltinContainerProjection",
         "ReceiverAfterCall",
@@ -2411,7 +2412,7 @@ def field_store_rule(method) -> "tuple[str, bool] | None":
 def _reads_again(node) -> bool:
     """Whether evaluating ``node`` again after its statement runs nothing: a
     read of a value an earlier evaluation made (``_READ_KINDS``), the
-    receiver an active ``__init__`` constructs, an object place, or one of
+    receiver an active ``__init__`` constructs, an object state, or one of
     those after field stores (``ReceiverFieldStoreState``, whose stored
     value is a key's read).  Only such a read is a rule's subject at reduce
     (``_havoc``): a temporary (``f().x = v``) or a path (``a.b.x = v``) is
@@ -2422,7 +2423,7 @@ def _reads_again(node) -> bool:
         seen += 1
     return getattr(node, "kind", None) in _READ_KINDS or getattr(
         node, "kind", None
-    ) in ("ConstructedReceiverRef", "ObjectPlaceStateV1")
+    ) in ("ConstructedReceiverRef", "OpaqueObjectStateV1")
 
 
 def name_mutation_statement(

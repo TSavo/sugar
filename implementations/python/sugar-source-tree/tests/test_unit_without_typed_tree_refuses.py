@@ -101,12 +101,6 @@ def _unit_without_typed_tree() -> SourceUnit:
             lambda unit: unit.module_execution_site(SimpleNamespace()),
         ),
         (
-            "SourceUnit.source_allocation_definition_for_call",
-            lambda unit: unit.source_allocation_definition_for_call(
-                SimpleNamespace()
-            ),
-        ),
-        (
             "GeneratorExp._consumed_whole_in_place",
             lambda unit: GeneratorExp._consumed_whole_in_place(
                 SimpleNamespace(unit=unit, fragment="(y for y in x)")

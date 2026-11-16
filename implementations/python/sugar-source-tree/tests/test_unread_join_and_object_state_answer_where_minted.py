@@ -3,7 +3,7 @@
 A ``try``'s or a live loop's join of a name builds a phi (``If._make_ifexp``,
 its condition a ``BranchResultRef``), and ``x = f(...)`` refines the name's
 binding to its object state (``Assign._object_place_state``:
-``OpaqueObjectStateV1``, ``ObjectPlaceStateV1``).  Each is a binding, no source
+``OpaqueObjectStateV1``).  Each is a binding, no source
 node: where nothing reads the name after it (a module-level ``try``, a loop's
 write after the loop, an object read only through a later state), nothing
 constructs it, and it never answered (the board's first absentees
@@ -20,7 +20,7 @@ from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.roll_call import discharge
 from sugar_source_tree.tree import SourceFile
 
-_MINTED = ("IfExp", "BranchResultRef", "OpaqueObjectStateV1", "ObjectPlaceStateV1")
+_MINTED = ("IfExp", "BranchResultRef", "OpaqueObjectStateV1")
 
 
 def _absent_minted(source: str):

@@ -16,8 +16,7 @@ from sugar_source_tree.panic import SourceTreePanic
 from sugar_source_tree.binding_provenance import BindingProvenanceGap
 from sugar_source_tree.binding_state import SubstitutionTraceBuilderV1
 from sugar_source_tree.nodes import _SUBSTITUTION_TRACE_BUILDER
-from sugar_source_tree.backend import Child, Leaf, materialize
-from sugar_source_tree.shadow import ShadowNode, _handle_of
+from sugar_source_tree.object_identity import decode_object_coordinate_v1
 
 FIXTURES = Path(__file__).parent / "fixtures" / "object_field_flow"
 MATRIX = json.loads((FIXTURES / "verdict_matrix.json").read_text())
@@ -286,33 +285,34 @@ def _object_states(path: Path, function_name: str):
     substituted = function.substitute(
         {_SUBSTITUTION_TRACE_BUILDER: SubstitutionTraceBuilderV1(owner)}
     )
-    return [node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"]
+    return [node for node in substituted.walk() if node.kind == "OpaqueObjectStateV1"]
 
 
 def test_object_identities_reresolve_and_distinct_objects_do_not_collide():
-    # An object place keeps no field versions of its own: a field store on it
-    # is the one receiver field store, read through the receiver's post-state.
+    # The object an assignment's call made -- a class of this file's
+    # included -- is the one object state (#7757): its identity is its
+    # coordinate, the call occurrence and the evaluation that made it.  It
+    # keeps no field versions of its own: a field store on it is the one
+    # receiver field store, read through the receiver's post-state.
     first = _object_states(FIXTURES / "version_flow.py", "truthful")
     second = _object_states(FIXTURES / "version_flow.py", "truthful")
     assert first and second
-    assert first[-1].object_identity_cid == second[-1].object_identity_cid
-    first[-1].validate_identity()
-    second[-1].validate_identity()
+    assert first[-1].object_coordinate.cid == second[-1].object_coordinate.cid
+    for state in (first[-1], second[-1]):
+        coordinate = state.object_coordinate
+        assert decode_object_coordinate_v1(coordinate.wire()) == coordinate
 
     distinct = _object_states(FIXTURES / "distinct_version_flow.py", "truthful")
-    identities = {state.object_identity_cid for state in distinct}
     coordinates = {state.object_coordinate.cid for state in distinct}
-    assert len(identities) == 2
     assert len(coordinates) == 2
 
 
 def test_a_type_name_does_not_admit_a_lying_object_identity():
     state = _object_states(FIXTURES / "store_then_read.py", "truthful")[0]
-    forged = _forge_state(state, object_identity_cid="blake3-512:stale")
-    with pytest.raises(
-        BindingProvenanceGap, match="object place identity CID mismatch"
-    ):
-        forged.validate_identity()
+    forged = dict(state.object_coordinate.wire())
+    forged["objectCoordinateCid"] = "blake3-512:" + "0" * 128
+    with pytest.raises(BindingProvenanceGap, match="object coordinate CID mismatch"):
+        decode_object_coordinate_v1(forged)
 
 
 def test_branch_join_projects_both_authenticated_field_faces(tmp_path):
@@ -430,8 +430,8 @@ def test_opaque_call_leaves_every_object_of_a_reachable_class_undecided(
     # lift.)
     assert returned.value.kind == "Attribute"
     assert _claims_no_field_value(_outcome_or_panic(path, "boundary"))
-    states = [node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"]
-    assert len({state.object_identity_cid for state in states}) == 2
+    states = [node for node in substituted.walk() if node.kind == "OpaqueObjectStateV1"]
+    assert len({state.object_coordinate.cid for state in states}) == 2
     # The exposed object's name is rebound by the one exposure rule
     # (``container_mutation.havoc_after``): its later read is its value after
     # the call, which the value decides at reduce.  No place has its own
@@ -736,29 +736,3 @@ def test_stored_expression_constructs_once_then_projects_testimony(
     outcome = _outcome_or_panic(path, "boundary")
     assert not _is_typed_loud(outcome)
     assert constructions == 1
-
-
-def _forge_state(state, **overrides):
-    values = {
-        "object_coordinate": state.object_coordinate,
-        "construction_testimony": state.construction_testimony,
-        "object_identity_cid": state.object_identity_cid,
-        "base": state.base,
-    }
-    values.update(overrides)
-    return materialize(
-        state.unit,
-        ShadowNode(
-            "ObjectPlaceStateV1",
-            state.span,
-            (
-                ("object_coordinate", Leaf(values["object_coordinate"])),
-                ("construction_testimony", Leaf(values["construction_testimony"])),
-                ("object_identity_cid", Leaf(values["object_identity_cid"])),
-                ("base", Child(_handle_of(values["base"]))),
-                ("evaluation", Leaf(state.evaluation)),
-                ("name", Leaf(state.name)),
-            ),
-        ),
-        state.reporter,
-    )
