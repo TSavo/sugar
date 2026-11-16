@@ -251,7 +251,6 @@ def dispatch_method_call(
     source_call_frame=None,
     exception_type_coordinate=None,
     exception_type_mro=None,
-    may_defer=True,
     unit=None,
 ):
     """``receiver.name(*positional, **kw_values)`` selected by the receiver.
@@ -266,12 +265,17 @@ def dispatch_method_call(
     dispatch_on_receiver``, #7757 step 8).  Any other source-class instance
     is ``o.m`` read through the one attribute lookup, then that value called
     (``_source_instance_method_call``).  Otherwise a floor of the
-    receiver answers first (a closed builtin method).  When none does and the receiver or an operand is a
-    formal, the caller's actual selects the method: the call defers through
-    ``NativeOperationExitCarrierV1`` with the ``method_call`` operator, whose
-    projector re-runs this dispatch on the resolved actuals.  A built-in
-    container whose method no floor decided, and a receiver this frame holds
-    (a call's result, a builtin scalar), are two-faced (#7585)."""
+    receiver answers first (a closed builtin method).  When none does, a
+    receiver whose class is a class input here (a formal of the function
+    whose own proof this is) or a same-file class's call result is the
+    dispatched edge (``dispatch_on_receiver``).  A built-in container whose
+    method no floor decided is two-faced under its own atom
+    (``_container_method_call``), and any other receiver -- a formal whose
+    class is no input, a call's result, a builtin scalar -- is the one
+    unanswered call, two-faced and owed (#7585).  No call waits for a
+    caller's actual: a formal receiver or operand is never deferred (#7757
+    NEW-1; the ``method_call`` carrier, which production discharged with no
+    actuals into the same owed ``undecided`` member, is deleted)."""
     if not kw_values and source_call_frame is None:
         from sugar_lift_py_tests.source_call_resolution import (
             cited_container_method,
@@ -380,10 +384,6 @@ def dispatch_method_call(
         )
         if dispatched is not None:
             return dispatched
-    if may_defer:
-        deferred = _defer_formal_method_call(name, receiver, positional, kw_values, site)
-        if deferred is not None:
-            return deferred
     from sugar_lift_py_tests.floor import builtin_container_method as law
 
     kind = law.container_kind(receiver)
@@ -391,8 +391,12 @@ def dispatch_method_call(
         return _container_method_call(
             kind, name, receiver, positional, kw_values, site, ctx
         )
-    # No floor of the receiver answered the method and no formal defers it
-    # to a caller: what runs was not looked at.  A method call is the plain
+    # No floor of the receiver answered the method and no class input
+    # dispatches it: what runs was not looked at.  A formal whose class is no
+    # input lands here too: nothing would ever bind its class, so a
+    # ``call:dispatch:`` over it, or a carrier waiting for its actual, would
+    # be this same owed debt written a second way (#7757 NEW-1, #8960
+    # decision 1).  A method call is the plain
     # call with the receiver bound first, so this is the plain call to a
     # callee the lifter does not have, with its two faces (#7585, #7756).
     # With or without a site it is never a completion (#7757: a halt is never
@@ -543,25 +547,3 @@ def _container_method_call(kind, name, receiver, positional, kw_values, site, ct
         return ExitSet.completed(pair)
 
     return decided.and_then(result)
-
-
-def _defer_formal_method_call(name, receiver, positional, kw_values, site):
-    """The ``method_call`` carrier when the receiver or an operand is a formal."""
-    from sugar_lift_py_tests.floor.string_value import StringValue
-    from sugar_lift_py_tests.floor.tuple_value import TupleValue
-
-    operands = (receiver, *positional, *(value for _, value in kw_values))
-    coordinates = tuple(getattr(value, "formal_coordinate", None) for value in operands)
-    if all(coordinate is None for coordinate in coordinates):
-        return None
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    keyword_names = TupleValue(tuple(StringValue(key) for key, _ in kw_values))
-    return NativeOperationExitCarrierV1.mint(
-        site=site,
-        operator="method_call",
-        operands=(receiver, StringValue(name), keyword_names, *operands[1:]),
-        coordinates=(coordinates[0], None, None, *coordinates[1:]),
-    )

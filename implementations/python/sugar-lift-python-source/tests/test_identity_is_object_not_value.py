@@ -14,7 +14,6 @@ from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
-from frame_fresh import fresh
 from test_builtin_container_mutation import _only_return, _returns
 
 
@@ -278,14 +277,12 @@ def test_an_arrived_tuple_names_no_construction():
 
 def test_a_formal_after_its_own_mutation_is_itself(tmp_path):
     # A formal is the caller's object: its identity with itself stays one term.
-    # The formal's method waits for the caller's actual (``method_call``).
-    from test_assignment_evaluates_rhs import _rows
-    from test_formal_method_call_defers import _carrier, _discharge
-    from sugar_lift_py_tests.floor import ListValue
-
+    # ``a`` is read bare, so its class is no input: its ``append`` is the one
+    # unanswered call, never a carrier waiting for the caller's actual
+    # (#7757 NEW-1).
     source = "def f(a):\n    a.append(1)\n    return a is a\n"
-    exits = _discharge(_carrier(tmp_path, source), fresh(ListValue, ()))
-    (value,) = [payload for kind, payload, _ in _rows(exits) if kind == "return"]
+    returns, _halts = _returns(tmp_path, source)
+    (value,) = returns
     assert type(value) is PredicateValue
     left, right = value.formula.args
     assert left == right

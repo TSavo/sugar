@@ -643,27 +643,6 @@ def _project_unary_truth(value, unit, site, ctx):
     return truth_of(value, site, owner="UnaryOpSugar.not")
 
 
-def _project_method_call(receiver, name, keyword_names, *operands_site_and_ctx):
-    """``receiver.<name>(*args, **kwargs)`` re-dispatched on resolved actuals.
-
-    ``name`` is a StringValue; ``keyword_names`` a TupleValue of StringValues
-    naming the trailing operands that are keyword actuals.  The receiver's
-    actual selects the method exactly as MethodCallSugar does (a floor's
-    method body, the container law, or the #7616 two faces); an actual that
-    is still a formal defers again to its own caller.  The selected method
-    applies under the caller's context.  The receiver is the caller's actual,
-    with the caller's currency (``object_identity.contents_current``):
-    currency belongs to the object, never to how it reached the callee."""
-    from sugar_lift_py_tests.sugar.method_call_sugar import dispatch_method_call
-
-    *operands, site, ctx = operands_site_and_ctx
-    names = tuple(element.value for element in keyword_names.elements)
-    split = len(operands) - len(names)
-    positional = tuple(operands[:split])
-    kw_values = tuple(zip(names, operands[split:]))
-    return dispatch_method_call(name.value, receiver, positional, kw_values, site, ctx)
-
-
 def _project_subscript(receiver, index, site, ctx):
     """``receiver[index]`` re-dispatched on resolved actuals through the one
     subscript door (``discharge_subscript``), exactly as ``SubscriptSugar``
@@ -692,8 +671,6 @@ def _project_slice(lower, upper, step, site, ctx):
 
 
 _NATIVE_OPERATION_PROJECTORS = {
-    # Receiver-selected method call (formal receiver or operand).
-    "method_call": _project_method_call,
     # Truth questions: each through the one truth rule.
     "truth": _project_truth,
     "boolop_truth": _project_boolop_truth,
@@ -741,24 +718,10 @@ _NATIVE_OPERATION_PROJECTORS = {
 
 
 def _native_operation_projector_arity(projector) -> int:
-    """Operand count named by an explicit projector (``site, ctx`` always last).
-
-    A projector whose trailing parameter is variadic (``method_call``'s
-    arguments, then the site and the context) names its minimum: the fixed
-    operands."""
+    """Operand count named by an explicit projector (``site, ctx`` always last)."""
     import inspect
 
-    parameters = len(inspect.signature(projector).parameters)
-    if _native_operation_projector_is_variadic(projector):
-        return parameters - 1
-    return parameters - 2
-
-
-def _native_operation_projector_is_variadic(projector) -> bool:
-    import inspect
-
-    parameters = tuple(inspect.signature(projector).parameters.values())
-    return bool(parameters) and parameters[-1].kind is inspect.Parameter.VAR_POSITIONAL
+    return len(inspect.signature(projector).parameters) - 2
 
 
 def _conjoin_guards(guards):
@@ -1235,11 +1198,7 @@ class NativeOperationExitCarrierV1:
             )
 
         expected_arity = _native_operation_projector_arity(projector)
-        if (
-            len(actual_operands) < expected_arity
-            if _native_operation_projector_is_variadic(projector)
-            else len(actual_operands) != expected_arity
-        ):
+        if len(actual_operands) != expected_arity:
             return undischarged(
                 "native operation arity is unavailable for projector "
                 f"{self.demand.operator!r} "

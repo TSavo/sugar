@@ -21,7 +21,6 @@ from dataclasses import dataclass
 
 import pytest
 
-from frame_fresh import fresh
 from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.outcome import ExitSet
@@ -59,25 +58,6 @@ def _statements(out):
             rows.extend(exit_.value.record.statements)
     assert rows
     return tuple(rows)
-
-
-def _discharged_dict_method(out):
-    """A dict method on a formal receiver waits for the caller's actual (the
-    ``method_call`` carrier); discharge it with a dict and ground operands."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.floor import TermValue
-    from sugar_lift_py_tests.floor.dict_value import DictValue
-
-    assert isinstance(out, NativeOperationExitCarrierV1)
-    assert out.demand.operator == "method_call"
-    receiver, *operands = out.demand.operand_coordinate_cids
-    actuals = {receiver: fresh(DictValue, ())}
-    for index, cid in enumerate(operands):
-        if cid is not None:
-            actuals[cid] = TermValue(index)
-    return out.discharge(None, actuals)
 
 
 @dataclass(frozen=True)
@@ -144,7 +124,7 @@ def test_conditional_expression_of_two_values_stays_one_guarded_value() -> None:
 def test_collection_element_that_partitions_lifts() -> None:
     """POSITIVE. A store inside a collection element partitions the element."""
     out = _out("def f(d, k, v):\n return [1, d.setdefault(k, v)]\n")
-    assert _statements(_discharged_dict_method(out))
+    assert _statements(out)
 
 
 def test_collection_of_plain_elements_is_one_completed_value() -> None:
@@ -175,7 +155,7 @@ def test_dict_display_pairs_keys_with_their_own_values() -> None:
 def test_fstring_over_a_partitioning_part_lifts() -> None:
     """POSITIVE. An f-string interpolation whose value partitions."""
     out = _out('def f(d, k, v):\n return f"x={d.setdefault(k, v)}"\n')
-    assert _statements(_discharged_dict_method(out))
+    assert _statements(out)
 
 
 def test_boolean_operator_over_a_partitioning_operand_lifts() -> None:
@@ -407,7 +387,7 @@ def test_loop_outward_face_returning_a_partition_lifts() -> None:
         "   return d.setdefault(k, v)\n"
         " return 0\n"
     )
-    assert _statements(_discharged_dict_method(out))
+    assert _statements(out)
 
 
 def test_loop_outward_face_with_a_plain_return_stays_one_completed_face() -> None:

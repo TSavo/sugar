@@ -593,9 +593,10 @@ def class_input_formals(unit) -> frozenset:
     """The coordinate CIDs of every parameter of a function of the module
     ``unit`` holds whose class is an input of that function's contract
     (``nodes._receiver_class_parameters``): the formals a method call on
-    which is dispatched.  A formal with no such input keeps the path it took
-    before (the ``method_call`` operation waiting for an actual), since
-    nothing would ever bind its class.  Each captured cell whose class is an
+    which is dispatched.  A method call on a formal with no such input is
+    the one unanswered call (``UnknownCalleeCallV1``), two-faced and owed,
+    never a dispatched edge, since nothing would ever bind its class (#7757
+    NEW-1, #8960 decision 1).  Each captured cell whose class is an
     input (``nodes._receiver_class_cells``) is named so too, by the
     coordinate of its ``cell:<name>`` input (#7757 step 7).  Read once per
     typed module."""

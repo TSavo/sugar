@@ -29,7 +29,6 @@ from sugar_lift_py_tests.floor import (
 )
 
 from frame_fresh import FRAME_FRESH, fresh
-from test_assignment_evaluates_rhs import _rows
 from test_builtin_container_mutation import _only_return, _returns
 
 
@@ -349,14 +348,12 @@ def test_an_augmented_add_on_an_int_keeps_its_aliases(tmp_path):
 
 
 def test_a_parameter_reads_the_post_state_of_its_append(tmp_path):
-    # A formal takes the one door too: once the caller's list is supplied,
-    # ``xs`` reads the object after the call (unknown here: the call ran on
-    # the formal), never the pre-call ``[]``.
-    from test_formal_method_call_defers import _carrier, _discharge
-
+    # A formal takes the one door too: ``xs`` reads the object after the call
+    # (unknown here: the call ran on the formal, the one unanswered call,
+    # never a carrier waiting for the caller's actual, #7757 NEW-1), never
+    # the pre-call ``[]``.
     source = "def f(xs):\n    xs.append(1)\n    return xs\n"
-    exits = _discharge(_carrier(tmp_path, source), fresh(ListValue, ()))
-    returns = [payload for kind, payload, _ in _rows(exits) if kind == "return"]
+    returns, _halts = _returns(tmp_path, source)
     assert returns
     assert fresh(ListValue, ()) not in returns
     assert all(
