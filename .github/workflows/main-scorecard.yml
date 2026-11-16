@@ -105,6 +105,21 @@ name: Main scorecard
 # dependencies (tools/main_scorecard_env.sh wheels sugar-source-tree) and the
 # managed PYTHONPATH already has its src.
 #
+# THE LIFTER PACKAGE'S TESTS (2026-11-16)
+#
+# The 114 test files under implementations/python/sugar-lift-python-source/tests
+# ran only under `make test-python`, which no workflow calls. They are the
+# `source` population, exactly like the tree: packed onto the same shards by
+# the same prior, run in their own pytest last on each shard (the config
+# `make test-python` resolves for them, implementations/python/pytest.ini,
+# under SOURCE_SHARD_BUDGET_SECONDS), posted as `source=P/T`; a lost source
+# shard is `incomplete:`, and the alarm fires when source failing rises or
+# its total falls (REGRESSION against the previous row, STILL REGRESSED
+# against the best). The two twin files in that package are now counted from
+# the source results instead of running as `twins`. The venv already holds
+# the package's dependencies (tools/main_scorecard_env.sh wheels
+# sugar-lift-python-source) and the managed PYTHONPATH already has its src.
+#
 # A LOST SHARD IS NEVER A SMALLER TOTAL (#8416, run 43832361876)
 #
 # Shard 2 failed in its toolchain step (rustup re-fetched the 1.96.0 channel
@@ -146,10 +161,14 @@ env:
   # The numbers this workflow reports; the board is main-scorecard-board.yml.
   # `tree` is implementations/python/sugar-source-tree/tests, run on the
   # suite shards but posted as its own number so `suite` stays comparable.
-  SCORECARD_MEASURES: "suite,twins,federation,rust,tree"
+  # `source` is implementations/python/sugar-lift-python-source/tests, the
+  # same way.
+  SCORECARD_MEASURES: "suite,twins,federation,rust,tree,source"
   # Each shard's source-tree pytest is interrupted past this wall (a hung
   # tree test marks the tree incomplete; the shard's suite still counts).
   TREE_SHARD_BUDGET_SECONDS: "900"
+  # The same for each shard's sugar-lift-python-source pytest.
+  SOURCE_SHARD_BUDGET_SECONDS: "900"
   GH_TOKEN: ${{ github.token }}
   GH_REPO: ${{ github.repository }}
 
@@ -270,9 +289,11 @@ jobs:
             suite.log
             twins.log
             tree.log
+            source.log
             suite.crash.log
             twins.crash.log
             tree.crash.log
+            source.crash.log
             twin-evidence/**
           if-no-files-found: ignore
       - name: Job wall time
@@ -299,7 +320,7 @@ jobs:
       - name: Scorecard environment (persistent venv, gh)
         shell: bash
         run: bash tools/main_scorecard_env.sh
-      - name: Post the suite, twins and tree numbers
+      - name: Post the suite, twins, tree and source numbers
         shell: bash
         run: bash tools/main_scorecard_suite.sh post
 

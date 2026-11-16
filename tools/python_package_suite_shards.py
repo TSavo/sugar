@@ -57,6 +57,9 @@ TESTS_REL = Path("implementations/python/sugar-lift-py-tests/tests")
 # lists them with ``--tests-rel`` and measures them as their own ``tree``
 # number (tools/main_scorecard_suite.sh).
 TREE_TESTS_REL = Path("implementations/python/sugar-source-tree/tests")
+# The sugar-lift-python-source package's own tests, listed the same way and
+# measured as their own ``source`` number.
+SOURCE_TESTS_REL = Path("implementations/python/sugar-lift-python-source/tests")
 
 # Paths that are never pytest targets (corpus / fixtures, not collected suite).
 _SKIP_DIR_PARTS = frozenset({"vendor", "fixtures", "__pycache__"})
@@ -171,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         default=TESTS_REL,
         help=(
             f"test tree to list, relative to the repo root (default {TESTS_REL}; "
-            f"the main scorecard also lists {TREE_TESTS_REL})"
+            f"the main scorecard also lists {TREE_TESTS_REL} and {SOURCE_TESTS_REL})"
         ),
     )
     parser.add_argument(
