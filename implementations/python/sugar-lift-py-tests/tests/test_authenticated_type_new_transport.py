@@ -39,7 +39,7 @@ _METACLASS = (
 )
 
 
-def _super_value():
+def _metaclass():
     # ``super()`` in a metaclass's ``__new__`` binds the metaclass itself, a
     # class whose own MRO (Meta, type, object) it walks.
     tree = SourceFile(
@@ -49,6 +49,10 @@ def _super_value():
     definition = next(node for node in tree.root.body if isinstance(node, ClassDef))
     meta = definition.sugar().desugar(ReduceContext.root(owner="test")).completed_value()
     assert meta is not None
+    return meta
+
+
+def _super_value(meta):
     return BuiltinSuperValue(current_class=meta, receiver=meta)
 
 
@@ -73,11 +77,12 @@ def test_super_new_over_type_is_the_one_call_never_a_class_built_here() -> None:
         allocation=FRAME_FRESH,
     )
 
+    meta = _metaclass()
     _the_one_call(
-        _super_value().call_method_value(
+        _super_value(meta).call_method_value(
             "__new__",
             (
-                TermValue("metaclass"),
+                meta,
                 StringValue("Made"),
                 TupleValue(()),
                 namespace,
@@ -91,14 +96,15 @@ def test_super_new_over_type_is_the_one_call_never_a_class_built_here() -> None:
 def test_super_new_over_type_never_refuses_a_namespace_shape() -> None:
     # ``type.__new__`` decides what it accepts; the lift no longer reads its
     # operands to refuse them.
+    meta = _metaclass()
     _the_one_call(
-        _super_value().call_method_value(
+        _super_value(meta).call_method_value(
             "__new__",
             (
-                TermValue("metaclass"),
+                meta,
                 StringValue("Made"),
                 TupleValue(()),
-                TermValue("not-a-namespace"),
+                StringValue("not-a-namespace"),
             ),
             owner="test",
             blame="new-site",

@@ -9,7 +9,8 @@ Pins:
 * constructed list/tuple answer once with authenticated iterators
 * ``__next__`` yields ``NextResult(value, advanced)`` or named StopIteration
 * exhaustion cites authenticated operation occurrence + builtin type coordinate
-* missing authority is the construction-gap default (loud)
+* missing authority is the construction-gap default (loud); an
+  ObjectValue member its roster binds no value for is the unanswered call
 * ObjectValue routes through real ``__iter__`` / ``__next__`` coordinates
 * no second dispatch table / admission ladder
 * synthetic string sites cannot mint StopIteration identity from spelling
@@ -278,21 +279,37 @@ def test_list_has_no_next_authority() -> None:
     assert "next_with" in str(caught.value)
 
 
-def test_object_without_iter_method_is_loud() -> None:
-    """ObjectValue without constructor-bound ``__iter__`` cannot invent one."""
-    bare = ObjectValue("Bare", (), allocation=FRAME_FRESH)
-    with pytest.raises(ConstructionPanic) as caught:
-        _iter_op(owner="iterator-surface-iter").submit(bare, None)
-    text = str(caught.value)
-    assert "__iter__" in text or "Bare.__iter__" in text
+def _the_unanswered_member_call(outcome, target: str) -> None:
+    """``type(o).<member>(o)`` on an instance whose roster binds no such
+    member: the lift never decides the member absent (#7757 L3, #9039/
+    #9043), and an instance that names no class has no edge to dispatch, so
+    it is the one unanswered call (``ObjectValue.unanswered_method_call``):
+    a completion under its guard and an undetermined halt (owner
+    ``UnknownCallee:<target>``), both owing it -- never a value invented
+    here and never a halt dropped."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
+    assert halt.effect.producer_node_owner == f"UnknownCallee:{target}"
+    assert done.owed and done.owed == halt.owed
+    assert outcome.completed_value() is None
 
 
-def test_object_without_next_method_is_loud() -> None:
+def test_object_without_iter_method_is_the_unanswered_call() -> None:
+    """ObjectValue without a constructor-bound ``__iter__`` invents none:
+    ``iter(bare)`` is the one unanswered ``Bare.__iter__`` call, owed."""
     bare = ObjectValue("Bare", (), allocation=FRAME_FRESH)
-    with pytest.raises(ConstructionPanic) as caught:
-        _next_op(owner="iterator-surface-next").submit(bare, None)
-    text = str(caught.value)
-    assert "__next__" in text or "Bare.__next__" in text
+    outcome = _iter_op(owner="iterator-surface-iter").submit(bare, None)
+    _the_unanswered_member_call(outcome, "Bare.__iter__")
+
+
+def test_object_without_next_method_is_the_unanswered_call() -> None:
+    bare = ObjectValue("Bare", (), allocation=FRAME_FRESH)
+    outcome = _next_op(owner="iterator-surface-next").submit(bare, None)
+    _the_unanswered_member_call(outcome, "Bare.__next__")
 
 
 # ---------------------------------------------------------------------------
