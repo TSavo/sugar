@@ -228,15 +228,7 @@ _TWINS = {
 # ``append``, the item replaced for ``xs[i] = v``, the key stored for ``d[k] =
 # v``) and reads ``len`` and the item through the same theory.
 #
-# What a callee leaves unchanged is stated too: ``peek`` never changes the
-# list or dict it is handed, so its contract states ``python:leaves("xs")``,
-# and prove's join reads the caller's ``python:after(<call result>, "xs")``
-# as the operand the call bound (``consistency::left_unchanged_states``,
-# #7757 step 7).  Open on both halves before: the caller's read of its own
-# list after the call was a term no contract stated.
 _STATED_BY_THE_CALLEE = {
-    "list-left-by-a-parameter": (_LIST_LEFT_BY_A_PARAMETER, "1", "2"),
-    "dict-left-by-a-parameter": (_DICT_LEFT_BY_A_PARAMETER, "5", "6"),
     "global-rebound": (_GLOBAL_REBOUND, "5", "0"),
     "nonlocal-rebound": (_NONLOCAL_REBOUND_THROUGH_THE_VALUE, "1", "0"),
     "direct-nonlocal-rebound": (_DIRECT_NONLOCAL_REBOUND, "1", "0"),
@@ -266,6 +258,25 @@ _OPEN_WHILE_THE_TEST_MAY_RUN_CODE = {
         "1",
         "0",
     ),
+}
+
+# What a callee leaves unchanged is stated too: ``peek`` never changes the
+# list or dict it is handed, so its contract states ``python:leaves("xs")``,
+# and prove's join reads the caller's ``python:after(<call result>, "xs")``
+# as the operand the call bound (``consistency::left_unchanged_states``,
+# #7757 step 7, #9117).  That alone decides nothing here: the caller's
+# subscript of that term (``ys[0]``,
+# ``e["k"]``) is the one undecided read at the assert's line, and no joined
+# contract answers it (no ``__getitem__`` call is joined, unlike the store
+# shapes above, whose dispatched store's law answers the read): its rows stay
+# ``owed: no contract for test_witness.py:8`` in both halves, so the claim's
+# completion atoms stay free and neither half is decided.  Measured so on
+# main c0785ffcf (scorecard 43946664351): the truthful consistency row
+# ``discharged``, both verdicts ``open``.  The lie is never ``sat`` and the
+# truth never ``unsat``; the read is carried undecided, never guessed.
+_LEFT_UNCHANGED_BY_THE_CALLEE = {
+    "list-left-by-a-parameter": (_LIST_LEFT_BY_A_PARAMETER, "1", "2"),
+    "dict-left-by-a-parameter": (_DICT_LEFT_BY_A_PARAMETER, "5", "6"),
 }
 
 # The called function's own contract (its body lifted alone, never the
@@ -364,6 +375,30 @@ def test_a_cell_the_callee_rebinds_is_decided_by_its_contract(
     assert _claim_statuses(truthful.prove_doc) == ["discharged"], truthful.prove_doc
     assert truthful.verdict != "unsat", truthful.prove_doc
     assert lying.verdict == "unsat", lying.prove_doc
+
+
+@pytest.mark.parametrize("shape", sorted(_LEFT_UNCHANGED_BY_THE_CALLEE))
+def test_an_operand_the_callee_leaves_is_never_read_as_a_lie(
+    shape: str, tmp_path: Path
+) -> None:
+    source, true, false = _LEFT_UNCHANGED_BY_THE_CALLEE[shape]
+    truthful = run_source_through_real_solver(
+        tmp_path / "t", source.format(claim=true)
+    )
+    lying = run_source_through_real_solver(tmp_path / "l", source.format(claim=false))
+    print(
+        json.dumps(
+            {"truthful": truthful.verdict, "lying": lying.verdict}, sort_keys=True
+        )
+    )
+    # The truthful claim is consistent; the caller's read of the operand
+    # after the call is owed at the assert's line, so neither half is
+    # decided: the lie never ``sat``, the truth never ``unsat``.
+    assert _claim_statuses(truthful.prove_doc) == ["discharged"], truthful.prove_doc
+    assert truthful.verdict != "unsat", truthful.prove_doc
+    assert lying.verdict != "sat", lying.prove_doc
+    assert truthful.verdict == "open", truthful.prove_doc
+    assert lying.verdict == "open", lying.prove_doc
 
 
 @pytest.mark.parametrize("shape", sorted(_OPEN_WHILE_THE_TEST_MAY_RUN_CODE))

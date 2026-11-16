@@ -294,6 +294,18 @@ def _raised(outcome) -> list:
     return [face.effect.exception_name for face in outcome.halts()]
 
 
+def _fragment(source: str, kind: str):
+    """The source fragment of the one ``kind`` node of ``source``: a ground
+    exit cites source it can re-read (a filename and the unit holding its
+    text, ``ground_exit.ground_raise_effect``), never a bare string."""
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.tree import SourceFile
+
+    tree = SourceFile((source, "bytes_floor.py", blake3_512_of(source.encode())))
+    (fragment,) = (node.fragment for node in tree.nodes() if node.kind == kind)
+    return fragment
+
+
 def test_bytes_membership_is_decided_where_ground() -> None:
     from sugar_lift_py_tests.floor import StringValue, TermValue
     from sugar_lift_py_tests.floor.bytes_value import BytesValue
@@ -301,16 +313,17 @@ def test_bytes_membership_is_decided_where_ground() -> None:
         TrueBoolLiteralSugar,
     )
 
+    site = _fragment("x in b'a'\n", "Compare")
     haystack = BytesValue(b"a\nb")
-    assert _bool(haystack.contains(BytesValue(b"\n"), "in")) is True
-    assert _bool(haystack.contains(BytesValue(b"z"), "in")) is False
-    assert _bool(haystack.contains(TermValue(98), "in")) is True
-    assert _bool(haystack.contains(TermValue(99), "in")) is False
-    assert _bool(BytesValue(b"\x01").contains(TrueBoolLiteralSugar(site="t"), "in"))
-    assert _raised(haystack.contains(TermValue(256), "in")) == ["ValueError"]
-    assert _raised(haystack.contains(TermValue(-1), "in")) == ["ValueError"]
-    assert _raised(haystack.contains(StringValue("a"), "in")) == ["TypeError"]
-    assert _raised(haystack.contains(TermValue(1.5), "in")) == ["TypeError"]
+    assert _bool(haystack.contains(BytesValue(b"\n"), site)) is True
+    assert _bool(haystack.contains(BytesValue(b"z"), site)) is False
+    assert _bool(haystack.contains(TermValue(98), site)) is True
+    assert _bool(haystack.contains(TermValue(99), site)) is False
+    assert _bool(BytesValue(b"\x01").contains(TrueBoolLiteralSugar(site="t"), site))
+    assert _raised(haystack.contains(TermValue(256), site)) == ["ValueError"]
+    assert _raised(haystack.contains(TermValue(-1), site)) == ["ValueError"]
+    assert _raised(haystack.contains(StringValue("a"), site)) == ["TypeError"]
+    assert _raised(haystack.contains(TermValue(1.5), site)) == ["TypeError"]
 
 
 def test_bytes_membership_of_an_undecided_needle_is_the_undecided_form() -> None:
@@ -331,14 +344,15 @@ def test_bytes_index_is_decided_where_ground() -> None:
     from sugar_lift_py_tests.floor.bytes_value import BytesValue
     from sugar_lift_py_tests.floor.slice_value import SliceValue
 
+    site = _fragment("b'abc'[i]\n", "Subscript")
     value = BytesValue(b"abc")
-    assert value.subscript(TermValue(1), "i").completed_value() == TermValue(98)
-    assert value.subscript(TermValue(-1), "i").completed_value() == TermValue(99)
-    assert _raised(value.subscript(TermValue(3), "i")) == ["IndexError"]
+    assert value.subscript(TermValue(1), site).completed_value() == TermValue(98)
+    assert value.subscript(TermValue(-1), site).completed_value() == TermValue(99)
+    assert _raised(value.subscript(TermValue(3), site)) == ["IndexError"]
     assert value.subscript(
-        SliceValue(TermValue(1), None, None), "i"
+        SliceValue(TermValue(1), None, None), site
     ).completed_value() == BytesValue(b"bc")
-    assert _raised(value.subscript(SliceValue(None, None, TermValue(0)), "i")) == [
+    assert _raised(value.subscript(SliceValue(None, None, TermValue(0)), site)) == [
         "ValueError"
     ]
-    assert _raised(value.subscript(StringValue("a"), "i")) == ["TypeError"]
+    assert _raised(value.subscript(StringValue("a"), site)) == ["TypeError"]
