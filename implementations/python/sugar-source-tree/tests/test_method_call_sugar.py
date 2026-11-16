@@ -61,12 +61,14 @@ def test_keyword_args_lift():
 
 
 def _attribute_operations(node, found, depth=0):
-    """Every ``python:attribute(<receiver>, "<name>", <key>)`` in ``node``:
-    ``(receiver name, attribute name)``."""
+    """Every ``python:attribute_result("<name>", <receiver>, <key>)`` in
+    ``node`` -- a parameter's read, keyed per evaluation
+    (``floor_value.undecided_attribute_result``): ``(receiver name,
+    attribute name)``."""
     if depth > 64:
         return found
-    if getattr(node, "name", None) == "python:attribute":
-        found.append((getattr(node.args[0], "name", None), node.args[1].value))
+    if getattr(node, "name", None) == "python:attribute_result":
+        found.append((getattr(node.args[1], "name", None), node.args[0].value))
     for child in (
         *(getattr(node, "args", ()) or ()),
         *(getattr(node, "operands", ()) or ()),

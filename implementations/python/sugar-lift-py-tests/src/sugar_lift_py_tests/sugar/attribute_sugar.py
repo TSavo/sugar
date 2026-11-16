@@ -69,7 +69,8 @@ class AttributeSugar(ConstructedTermSugar):
            undecided read of arm 3: a read is ``__getattribute__`` then
            ``__getattr__`` and the descriptors they find, a protocol no one
            dispatched method states, so it waits on no caller's actual and
-           is no dispatched call (#7757)
+           is no dispatched call, its value keyed per evaluation
+           (``floor_value.undecided_attribute_result``, #7757)
         2. Authenticated CallSiteValue body → ``force_floor`` then attribute
         3. Else Floor ``receiver.attribute(name, site, ctx)`` (a property
            getter applies under the reading caller's ``ctx``; a symbolic

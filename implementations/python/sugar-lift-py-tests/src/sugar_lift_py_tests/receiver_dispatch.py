@@ -717,9 +717,9 @@ def receiver_field_read(receiver, name, site):
       the ``field:<param>.<name>`` input: the value the ``__dict__`` the
       object arrived with holds, which the caller binds at prove where it
       states it, and which is free otherwise;
-    - under the complement it is the one two-faced undecided read
-      (``FloorValue.undecided_attribute``): its completion owes the
-      ``undecided`` member, and its halt is kept.
+    - under the complement it is the one two-faced undecided read, keyed per
+      evaluation (``floor_value.undecided_attribute_result``): its
+      completion owes the ``undecided`` member, and its halt is kept.
 
     The guard is decided at prove on the namespace rows of the class the
     caller binds ``class:<param>`` to (``consistency::plain_read_holds``);
@@ -757,8 +757,10 @@ def receiver_field_read(receiver, name, site):
     )
     plain, other = partition(("receiver_field_read", occurrence_key(site), name))
     read = ExitSet.completed(item.value()).guarded(guard, plain)
-    undecided = receiver.undecided_attribute(
-        name, site, owner="receiver_dispatch.receiver_field_read"
+    from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+
+    undecided = undecided_attribute_result(
+        receiver, name, site, owner="receiver_dispatch.receiver_field_read"
     ).guarded(not_(guard), other)
     return read.union(undecided)
 

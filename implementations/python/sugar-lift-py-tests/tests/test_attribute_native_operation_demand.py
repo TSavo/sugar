@@ -153,7 +153,9 @@ def test_formal_attribute_read_is_the_two_faced_unanswered_read() -> None:
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     assert type(halt.effect) is UndeterminedRaiseEffect
     assert halt.effect.producer_node_owner == "SymbolicValue.attribute"
-    assert "python:attribute.completes" in repr(done.guard)
+    # Keyed per evaluation (``floor_value.undecided_attribute_result``).
+    assert "python:attribute_op.completes" in repr(done.guard)
+    assert "python:attribute_result" in repr(done.value.to_term(owner="test"))
     assert any(item.site is not None for item in owed_calls(outcome))
 
 

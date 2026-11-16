@@ -90,12 +90,14 @@ def test_bare_operands_refuse_undecided_truth():
 
 
 def _attribute_operations(node, found, depth=0):
-    """Every ``python:attribute(<receiver>, "<name>", <key>)`` in ``node``:
-    ``(receiver name, attribute name)``."""
+    """Every ``python:attribute_result("<name>", <receiver>, <key>)`` in
+    ``node`` -- a parameter's read, keyed per evaluation
+    (``floor_value.undecided_attribute_result``): ``(receiver name,
+    attribute name)``."""
     if depth > 64:
         return found
-    if getattr(node, "name", None) == "python:attribute":
-        receiver, name = node.args[0], node.args[1]
+    if getattr(node, "name", None) == "python:attribute_result":
+        name, receiver = node.args[0], node.args[1]
         found.append((getattr(receiver, "name", None), name.value))
     for child in (
         *(getattr(node, "args", ()) or ()),

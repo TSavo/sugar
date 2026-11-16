@@ -1493,6 +1493,74 @@ def undecided_binary_terms(operator: str, left_term, right_term, key: str):
     return term, completes
 
 
+def undecided_result_terms(name: str, operands, key: str):
+    """The one form of an undecided read keyed per evaluation, as
+    ``undecided_binary_terms`` is for a binary operation: its result term
+    ``python:<name>_result(<operands>..., <key>)`` and its completes atom
+    ``python:<name>_op.completes(python:<name>_op(<result>, <key>))``.
+
+    ``key`` is ``occurrence_key(site)`` taken where the read evaluates, so
+    inside a live loop item it carries that item's occurrence path: two
+    evaluations are two terms, never one (a counting ``__getattr__`` read
+    twice is two values), and the completes atom names the read it is
+    about, operands and all."""
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+
+    term = ctor(f"python:{name}_result", (*operands, str_const(key)))
+    completes = atomic(
+        f"python:{name}_op.completes",
+        [ctor(f"python:{name}_op", (term, str_const(key)))],
+    )
+    return term, completes
+
+
+def undecided_attribute_result(receiver, name: str, site, *, owner: str):
+    """``receiver.name`` on an input of the function whose own proof this is
+    (a parameter, a captured cell): the one two-faced undecided read, keyed
+    per evaluation (``undecided_result_terms``).
+
+    A read is ``type(receiver).__getattribute__`` then ``__getattr__`` and
+    the descriptors they find: a protocol with a fallback no one dispatched
+    method states, so nothing here decides it whatever the caller binds.  It
+    completes with ``python:attribute_result("<name>", <receiver>, <key>)``
+    only under ``python:attribute_op.completes(python:attribute_op(<result>,
+    <key>))``; the complement halts with an ``UndeterminedRaiseEffect``
+    (``owner``) at the same key.  Both arms owe the ``undecided`` member.
+    The ``attr:<name>(<receiver>)`` coordinate stays the decided and typed
+    paths' (a constructed instance's stated field, a type-name read)."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.object_identity import identity_term
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    if site is None:
+        _siteless_undecided_read(
+            owner, f"{type(receiver).__name__}.{name}", "Attribute"
+        )
+    key = occurrence_key(site)
+    term, completes = undecided_result_terms(
+        "attribute",
+        (
+            str_const(name),
+            identity_term(receiver, site, "receiver", owner=str(site)),
+        ),
+        key,
+    )
+    return ExitSet.two_faced(
+        SymbolicValue(term),
+        UndeterminedRaiseEffect(
+            blame=str(site),
+            occurrence=key,
+            producer_node_owner=owner,
+            site=site,
+        ),
+        guard=completes,
+        site=site,
+    )
+
+
 def undecided_binary_faces(left, right, site, operator: str):
     """Two faces for ``left <operator> right`` over an undecided operand type.
 
