@@ -359,18 +359,6 @@ def test_two_evaluations_of_one_comparison_or_truth_are_two_unknowns() -> None:
         assert one.value.formula.args[-1] == str_const(halt.effect.occurrence)
 
 
-def test_next_on_an_opaque_operator_result_owes_its_call() -> None:
-    """``next(opaque_op(...))`` used to complete alone with ``call:next``: a
-    dropped halt.  It is the downstream's one two-faced form now."""
-    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-    from sugar_lift_py_tests.operations import NextOperation
-
-    receiver = OpaqueOpCallsite(callee="itertuples", arg=SymbolicValue(make_var("d")))
-    faces = NextOperation(owner="project_next", blame=_Site()).submit(receiver, None)
-    _assert_two_faced_and_owed(faces, "SymbolicValue.next")
-    assert faces.completed_value() is None
-
-
 def test_a_siteless_iter_or_next_is_the_lifters_gap() -> None:
     from sugar_source_tree.panic import SugarNotWritten
 

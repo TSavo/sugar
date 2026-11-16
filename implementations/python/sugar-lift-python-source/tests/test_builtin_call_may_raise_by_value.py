@@ -979,8 +979,7 @@ def test_the_doors_post_state_names_its_receivers_allocation():
 def test_a_str_method_over_an_opaque_argument_keeps_its_marker():
     from types import SimpleNamespace
 
-    from sugar_lift_py_tests.floor import SymbolicValue
-    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+    from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
     from sugar_lift_py_tests.floor.string_value import _fold_string_method
     from sugar_lift_py_tests.ir import make_var
     from sugar_source_tree.nodes import LanguageCallee
@@ -988,23 +987,32 @@ def test_a_str_method_over_an_opaque_argument_keeps_its_marker():
     # ``join`` iterates its operand and checks each member is a ``str``
     # (``string_value._joined``): those faces cite their site, so the
     # operation carries a source fragment.  Every face that completes is the
-    # coordinate with its marker.
-    for name, marker in (
-        ("join", LanguageCallee.STR_JOIN),
-        ("split", LanguageCallee.STR_SPLIT),
-    ):
-        site = _fragment_site(f"r = ','.{name}(xs)\n", "Call")
-        outcome = _fold_string_method(
+    # call's one result carrying its marker (``str_join_result``).
+    site = _fragment_site("r = ','.join(xs)\n", "Call")
+    outcome = _fold_string_method(
+        StringValue(","),
+        SimpleNamespace(
+            name="join", arguments=(SymbolicValue(make_var("xs")),), blame=site
+        ),
+    )
+    completed = _completed_values(outcome)
+    assert completed
+    for minted in completed:
+        assert type(minted) is CallSiteValue
+        assert minted.language_callee is LanguageCallee.STR_JOIN
+
+    # ``split`` by an opaque separator is not the fold's: the caller makes
+    # the one unanswered call (#7757 S8).
+    site = _fragment_site("r = ','.split(xs)\n", "Call")
+    assert (
+        _fold_string_method(
             StringValue(","),
             SimpleNamespace(
-                name=name, arguments=(SymbolicValue(make_var("xs")),), blame=site
+                name="split", arguments=(SymbolicValue(make_var("xs")),), blame=site
             ),
         )
-        completed = _completed_values(outcome)
-        assert completed
-        for minted in completed:
-            assert type(minted) is OpaqueOpCallsite
-            assert minted.language_callee is marker
+        is None
+    )
 
 
 # An instance of a source class (``ObjectValue``) carries currency by the one

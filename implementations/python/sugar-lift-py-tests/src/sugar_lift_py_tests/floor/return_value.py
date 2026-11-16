@@ -61,20 +61,3 @@ class ReturnValue(FloorValue):
 
     def edge_contribution(self, source_contract):
         return self.value.edge_contribution(source_contract)
-
-    def derived_post_contribution(self):
-        companion = getattr(self.value, "companion_formula", None)
-        if not callable(companion):
-            return ()
-        formula = companion(owner="ReturnValue.companion")
-        if formula is None:
-            return ()
-        from sugar_lift_py_tests.ir import eq, make_var
-
-        return (
-            formula,
-            eq(
-                make_var("out"),
-                self.value.computed.to_term(owner="ReturnValue.computed"),
-            ),
-        )

@@ -417,14 +417,10 @@ class LanguageCallee(_enum.Enum):
     # (``PyCallable_Check``, Objects/object.c); it runs no code of ``obj``.
     BUILTIN_CALLABLE = "python:builtins.callable"
     # ``str.join(iterable)``: a method of the builtin ``str`` whose result is
-    # always a ``str``.  No name binds it; ``StringValue``'s method fold mints
-    # it on the ``OpaqueOpCallsite`` of a join over an opaque iterable.
+    # always a ``str``.  No name binds it; ``StringValue``'s method fold marks
+    # the call result of a join over an opaque iterable with it
+    # (``string_value.str_join_result``).
     STR_JOIN = "python:builtins.str.join"
-    # ``str.split(sep[, maxsplit])``: a method of the builtin ``str`` whose
-    # result is always a new ``list``.  No name binds it; ``StringValue``'s
-    # method fold mints it on the ``OpaqueOpCallsite`` of a split by an opaque
-    # separator.
-    STR_SPLIT = "python:builtins.str.split"
     # ``typing.final(f)``: sets ``f.__final__`` if it can and returns ``f``.
     TYPING_FINAL = "python:typing.final"
     # ``re.search`` / ``re.match`` / ``re.fullmatch``: the C-floor matchers.
@@ -746,7 +742,6 @@ _CALLS_NEVER_A_CLASS = frozenset(
         LanguageCallee.OPERATOR_INDEX,
         LanguageCallee.WARNINGS_WARN,
         LanguageCallee.STR_JOIN,
-        LanguageCallee.STR_SPLIT,
         LanguageCallee.RE_SEARCH,
         LanguageCallee.RE_MATCH,
         LanguageCallee.RE_FULLMATCH,

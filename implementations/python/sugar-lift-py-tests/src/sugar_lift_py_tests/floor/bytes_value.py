@@ -60,6 +60,134 @@ class BytesValue(GuardStableValue):
             )
         return super().equals(other, site, ctx)
 
+    def contains(self, item, site):
+        """``item in b"..."``: CPython's ``_Py_bytes_contains``
+        (Objects/bytes_methods.c), decided where the needle is ground, as a
+        ``str`` haystack's is (``StringValue.contains``).
+
+        - An ``int`` needle (a ``bool`` is one) is a byte value: membership
+          where it is in ``range(0, 256)``, ``ValueError`` where it is not.
+        - A ``bytes`` needle is a substring test.
+        - Any other ground needle (a ``str``, ``None``, a ``float``, a list,
+          a tuple, a set) has neither ``__index__`` nor the buffer
+          protocol: ``TypeError``.
+        - A needle whose type is not decided (a formal, a call's result, an
+          instance: its ``__index__`` or buffer may run code or raise) is
+          the floor's one undecided membership: two faces, the halt kept,
+          owed (``FloorValue.undecided_contains``, #7757 H17).
+        """
+        from sugar_lift_py_tests.floor.guarded_operand import (
+            distribute_guarded_membership,
+        )
+
+        distributed = distribute_guarded_membership(self, item, site)
+        if distributed is not None:
+            return distributed
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.set_value import SetValue
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        def decided(answer: bool):
+            return ExitSet.completed(
+                TrueBoolLiteralSugar(site=site)
+                if answer
+                else FalseBoolLiteralSugar(site=site)
+            )
+
+        if type(item) is BytesValue:
+            return decided(item.value in self.value)
+        bools = {TrueBoolLiteralSugar: 1, FalseBoolLiteralSugar: 0}
+        byte = bools.get(type(item))
+        if type(item) is TermValue and isinstance(item.value, int):
+            byte = item.value
+        if byte is not None:
+            if not 0 <= byte < 256:
+                return ground_exceptional_exit(
+                    exception_name="ValueError",
+                    site=site,
+                    owner="BytesValue.contains",
+                )
+            return decided(byte in self.value)
+        if type(item) in (
+            StringValue,
+            NoneValue,
+            TermValue,
+            ListValue,
+            TupleValue,
+            SetValue,
+        ):
+            return ground_exceptional_exit(
+                exception_name="TypeError", site=site, owner="BytesValue.contains"
+            )
+        return self.undecided_contains(item, site, owner="BytesValue.contains")
+
+    def subscript(self, index, site):
+        """``b"..."[i]``: CPython's ``bytes_subscript``
+        (Objects/bytesobject.c), decided where the index is ground, as a
+        ``str``'s is (``StringValue.subscript``): an ``int`` index is the
+        byte's ``int`` value, or ``IndexError`` out of range; a slice of
+        ``int``/``None`` bounds is the sliced ``bytes`` (``ValueError`` for a
+        zero step); an index decided to have no ``__index__`` is
+        ``TypeError``; any other is the floor's one undecided subscript."""
+        from typing import cast
+
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        from sugar_lift_py_tests.floor.slice_value import SliceValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        if type(index) is SliceValue:
+            bounds = (index.lower, index.upper, index.step)
+            if all(
+                bound is None or (type(bound) is TermValue and type(bound.value) is int)
+                for bound in bounds
+            ):
+                lower, upper, step = (
+                    cast(int, bound.value) if type(bound) is TermValue else None
+                    for bound in bounds
+                )
+                if step == 0:
+                    return ground_exceptional_exit(
+                        exception_name="ValueError",
+                        site=site,
+                        owner="BytesValue.subscript",
+                    )
+                return ExitSet.completed(
+                    BytesValue(self.value[slice(lower, upper, step)])
+                )
+        if type(index) is TermValue and isinstance(index.value, int):
+            i = index.value
+            n = len(self.value)
+            if -n <= i < n:
+                return ExitSet.completed(TermValue(self.value[i]))
+            from sugar_lift_py_tests.floor.ground_index_error import (
+                ground_index_error,
+            )
+
+            return ground_index_error(
+                owner="BytesValue.subscript",
+                operation="bytes subscript",
+                index=i,
+                length=n,
+                site=site,
+            )
+        if index.python_index_protocol() is False:
+            return ground_exceptional_exit(
+                exception_name="TypeError", site=site, owner="BytesValue.subscript"
+            )
+        return self.undecided_subscript(index, site, owner="BytesValue.subscript")
+
     def slice_assign_iterable_with(self, operation, ctx):
         """Project the bytes object's authenticated integer members."""
         del operation, ctx

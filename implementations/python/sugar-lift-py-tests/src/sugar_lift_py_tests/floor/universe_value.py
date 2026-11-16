@@ -83,13 +83,6 @@ class UniverseValue(FloorValue):
             record = BlockValue(guarded_entries)
         return replace(self, record=record)
 
-    def derived_companions(self) -> tuple[Formula, ...]:
-        return tuple(
-            formula
-            for entry in self.record.statements
-            for formula in getattr(entry, "derived_post_contribution", lambda: ())()
-        )
-
     def invs(self) -> tuple[Formula, ...]:
         return tuple(
             formula
@@ -121,10 +114,9 @@ class UniverseValue(FloorValue):
         post = exits[0] if len(exits) == 1 else None
         if post is None:
             post = and_(list(exits))
-        companions = (*self.derived_companions(), *after)
-        if not companions:
+        if not after:
             return post
-        return and_([post, *companions])
+        return and_([post, *after])
 
     def after_facts(self) -> tuple:
         """``python:after(out, <formal>) == <value>`` for each cell this arm

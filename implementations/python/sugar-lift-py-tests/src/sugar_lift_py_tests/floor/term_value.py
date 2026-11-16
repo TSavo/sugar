@@ -256,7 +256,6 @@ class TermValue(GuardStableValue):
             )
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
@@ -266,7 +265,6 @@ class TermValue(GuardStableValue):
             )
         if type(other) in (
             CallSiteValue,
-            OpaqueOpCallsite,
             PredicateValue,
             SymbolicValue,
         ):

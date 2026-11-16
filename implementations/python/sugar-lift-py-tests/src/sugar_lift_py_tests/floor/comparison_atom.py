@@ -4,7 +4,7 @@ from typing import Literal
 
 from sugar_lift_py_tests.ir import Formula, gt, gte, lt, lte, py_ge, py_gt, py_le, py_lt
 
-from .equality_atom import _sort_warrant
+from .equality_atom import _term_sort
 from .floor_value import FloorValue
 
 ComparisonOperator = Literal["lt", "le", "gt", "ge"]
@@ -20,8 +20,8 @@ def resolve_comparison_atom(
     """Resolve one Python comparison where both operand sort warrants are known."""
     left_term = left.to_term(owner=owner)
     right_term = right.to_term(owner=owner)
-    left_sort = _sort_warrant(left, left_term, owner=owner)
-    right_sort = _sort_warrant(right, right_term, owner=owner)
+    left_sort = _term_sort(left_term)
+    right_sort = _term_sort(right_term)
 
     if left_sort is not None and left_sort == right_sort:
         return {

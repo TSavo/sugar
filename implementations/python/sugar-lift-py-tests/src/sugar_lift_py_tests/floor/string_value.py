@@ -407,24 +407,12 @@ class StringValue(GuardStableValue):
             return ExitSet.completed(StringValue(self.value + other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if isinstance(other, GuardedValue):
             return other.map_from_left(
                 lambda arm: self.add(arm, site, ctx), site, operation="add"
             )
-        from sugar_source_tree.nodes import LanguageCallee
-
-        if (
-            type(other) is OpaqueOpCallsite
-            and other.language_callee is LanguageCallee.STR_JOIN
-        ):
-            # "(" + ", ".join(ee.__name__ for ee in e) + ")" inside
-            # _exception_type_name's multi-name arm. str.join always returns
-            # str; name concat without inventing the joined text.  Known by
-            # the callee its minting site decided, never the spelling.
-            return CallSiteValue.named_string_concat(self, other, site)
         # str + <parameter> is not deferred to a caller: the parameter's
         # ``__radd__`` may answer after ``str.__add__``'s ``NotImplemented``,
         # which no one dispatched method states.  Like every other symbolic
@@ -432,7 +420,8 @@ class StringValue(GuardStableValue):
         # (``super().add`` -> ``_undecided_binary_law``), two faces (#7757,
         # audit row NEW-1).
         if type(other) is CallSiteValue and other.names_a_string():
-            # "`" + type(exc).__name__ + "()" inside backquote. Do not wrap
+            # "`" + type(exc).__name__ + "()" inside backquote, "(" +
+            # ", ".join(names) + ")" (``str_join_result``). Do not wrap
             # as SymbolicValue.add(CallSiteValue) — that is the drained
             # f-string dead-end. Do not invent the concatenated string.
             return CallSiteValue.named_string_concat(self, other, site)
@@ -639,26 +628,28 @@ def _ground_percent_operand(value):
 
 
 def _fold_string_method(receiver: StringValue, operation):
-    """The ``str`` methods the floor answers: decided, or an opaque coordinate.
+    """The ``str`` methods the floor answers, decided; else None.
 
     ``operation`` carries ``name``, ``arguments`` and ``blame``.  When every
     argument is ground the one answerer is the pinned interpreter's own
     ``str`` method (``str_method_cited_fold``): ``'a b'.split()`` is the
     ``ListValue`` a list display is (so a later ``.append`` answers through
     the same container law, #7757), ``','.join(['a', 'b'])`` is ``'a,b'``.
-    Otherwise what an argument's shape still decides: an opaque argument of
-    ``strip``/``lstrip``/``rstrip``/``splitlines`` mints the call coordinate,
-    of ``join``/``split`` the coordinate carrying its binding
-    (``LanguageCallee.STR_JOIN``: its result is a ``str``;
-    ``LanguageCallee.STR_SPLIT``: a new ``list``), never the spelling.
-    Returns None for a method or arity nothing here answers, so the caller
-    keeps the call loud.
+    ``join`` over an iterable the fold does not decide is iterated here,
+    each member checked to be a ``str`` (``_joined``), and completes with
+    the call's one result value (``str_join_result``).
+
+    Returns None for every other method, arity or argument nothing here
+    decides -- ``s.strip(chars)``, ``s.splitlines(keepends)``,
+    ``s.split(sep)`` with an argument known only by its type -- so the
+    caller makes the one unanswered call (``UnknownCalleeCallV1``): two
+    faces, owed, its halt kept (an argument of the wrong type raises
+    ``TypeError``, an empty separator ``ValueError``), its value the one
+    call result, which answers ``in``, iteration and indexing in the
+    undecided form (#7757 S8, H17).
     """
     from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.source_call_resolution import str_method_cited_fold
-    from sugar_source_tree.nodes import LanguageCallee
 
     name = operation.name
     args = tuple(operation.arguments)
@@ -671,46 +662,55 @@ def _fold_string_method(receiver: StringValue, operation):
     )
     if decided is not None:
         return decided
-
-    def opaque_coordinate(language_callee=None) -> ExitSet:
-        return ExitSet.completed(
-            OpaqueOpCallsite(
-                callee=name,
-                arg=receiver,
-                computed=None,
-                extra_args=tuple(args),
-                language_callee=language_callee,
-            )
-        )
-
-    # An argument known only by its type: the call coordinate, never an
-    # invented result (``call:strip(self, chars)``, a line split by an opaque
-    # ``keepends``).
-    if name in {"strip", "lstrip", "rstrip", "splitlines"}:
-        return opaque_coordinate() if len(args) == 1 else None
     if name == "join" and len(args) == 1:
         # An iterable the cited fold did not decide (a formal, a call's
         # result, a generator, a container with an opaque member): iterated
         # through the one iterator path, each member checked to be a
-        # ``str``, then the coordinate (``_joined``).
+        # ``str``, then the call's result (``_joined``).
+        from sugar_lift_py_tests.outcome import ExitSet
+
         return _joined(
             args[0],
             getattr(operation, "ctx", None),
             site=operation.blame,
-            result=lambda: opaque_coordinate(LanguageCallee.STR_JOIN),
+            result=lambda: ExitSet.completed(
+                str_join_result(receiver, args[0], operation.blame)
+            ),
         )
-    if name == "split" and 1 <= len(args) <= 2:
-        # An opaque separator or maxsplit.
-        return opaque_coordinate(LanguageCallee.STR_SPLIT)
     return None
+
+
+def str_join_result(receiver, iterable, site):
+    """The value ``receiver.join(iterable)`` returned at ``site``, once
+    ``_joined`` has iterated ``iterable`` and checked each member: the one
+    call result (``CallSiteValue``), the method coordinate every method call
+    has (``method_call_sugar._method_callsite``) at its occurrence
+    (``python:call_result``, ``source_call_resolution._occurrence_result``),
+    so two evaluations are two unknowns.  It carries the callee its minting
+    decided (``LanguageCallee.STR_JOIN``), never its spelling: CPython's
+    ``PyUnicode_Join`` returns a ``str`` whenever it completes, so the value
+    names a string (``CallSiteValue.names_a_string``).  Nothing else of it
+    is decided here: ``in``, iteration and indexing on it are the call
+    result's own undecided forms."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.source_call_resolution import _occurrence_result
+    from sugar_lift_py_tests.sugar.method_call_sugar import _method_callsite
+    from sugar_source_tree.nodes import LanguageCallee
+
+    callsite = replace(
+        _method_callsite("join", receiver, (iterable,), (), site, None, None),
+        language_callee=LanguageCallee.STR_JOIN,
+    )
+    return _occurrence_result(callsite, site)
 
 
 def _joined(iterable, ctx, *, site, result):
     """``sep.join(iterable)`` the cited fold did not decide: ``iterable``
     iterated through the one iterator path a ``for`` and a comprehension take
     (``iterator_operation.iterated``, then ``stepped``), each member checked
-    to be a ``str`` (``_str_members``), then ``result()`` (the ``STR_JOIN``
-    coordinate).
+    to be a ``str`` (``_str_members``), then ``result()`` (the call's result,
+    ``str_join_result``).
 
     CPython's ``PyUnicode_Join`` (Objects/unicodeobject.c) first runs
     ``PySequence_Fast`` on its argument -- ``iter`` and every ``next`` -- and

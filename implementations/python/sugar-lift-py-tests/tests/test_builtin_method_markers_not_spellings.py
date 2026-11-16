@@ -1,7 +1,8 @@
 """A builtin method's result is known by the marker its door mints (#7757).
 
-``str.split`` by an opaque separator is answered by ``StringValue``'s method
-fold, which marks the coordinate with ``LanguageCallee.STR_SPLIT``.
+``str.split`` / ``splitlines`` / ``strip`` over an argument known only by
+its type are not answered by ``StringValue``'s method fold: the caller makes
+the one unanswered call, whose value is the one call result (#7757 S8).
 
 ``type(x).__name__`` / ``__qualname__`` are known by the marker the attribute
 read mints (``type_name_attribute``); a user function named ``__name__`` does
@@ -24,11 +25,9 @@ from frame_fresh import fresh
 
 from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
-from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
 from sugar_lift_py_tests.floor.string_value import StringValue, _fold_string_method
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.ir import ctor, make_var
-from sugar_source_tree.nodes import LanguageCallee
 
 
 def _completed_member(outcome):
@@ -48,18 +47,32 @@ def _split(receiver: str, *arguments):
     ).completed_value()
 
 
-def test_split_by_opaque_separator_carries_its_binding() -> None:
-    minted = _split("a.b", SymbolicValue(make_var("sep")))
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("split", (SymbolicValue(make_var("sep")),)),
+        ("split", (StringValue("."), SymbolicValue(make_var("n")))),
+        ("splitlines", (SymbolicValue(make_var("keep")),)),
+        ("strip", (SymbolicValue(make_var("chars")),)),
+        ("lstrip", (SymbolicValue(make_var("chars")),)),
+        ("rstrip", (SymbolicValue(make_var("chars")),)),
+    ],
+    ids=["split-sep", "split-maxsplit", "splitlines", "strip", "lstrip", "rstrip"],
+)
+def test_a_str_method_over_an_opaque_argument_is_the_callers_unanswered_call(
+    name: str, arguments: tuple
+) -> None:
+    # Nothing here decides it: the fold answers None and the caller makes
+    # the one unanswered call, two-faced and owed (#7757 S8): an argument of
+    # the wrong type raises ``TypeError``, an empty separator ``ValueError``.
+    folded = _fold_string_method(
+        StringValue("a.b"),
+        SimpleNamespace(
+            name=name, arguments=arguments, owner="test", blame=f"fold-{name}"
+        ),
+    )
 
-    assert type(minted) is OpaqueOpCallsite
-    assert minted.language_callee is LanguageCallee.STR_SPLIT
-
-
-def test_split_with_opaque_maxsplit_carries_its_binding() -> None:
-    minted = _split("a.b", StringValue("."), SymbolicValue(make_var("n")))
-
-    assert type(minted) is OpaqueOpCallsite
-    assert minted.language_callee is LanguageCallee.STR_SPLIT
+    assert folded is None
 
 
 def test_type_name_attribute_read_names_a_string() -> None:
@@ -224,13 +237,6 @@ def test_splitlines_with_a_bool_keepends_folds_to_the_list_floor() -> None:
     assert _splitlines(source) == dropped
     assert _splitlines(source, TermValue(1)) == kept
     assert _splitlines(source, TermValue(0)) == dropped
-
-
-def test_splitlines_with_an_opaque_keepends_only_coordinates() -> None:
-    minted = _splitlines("a\nb", SymbolicValue(make_var("keep")))
-
-    assert type(minted) is OpaqueOpCallsite
-    assert minted.computed is None
 
 
 def test_join_over_a_ground_split_still_folds() -> None:

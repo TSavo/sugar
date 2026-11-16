@@ -283,17 +283,11 @@ def test_backquote_joins_a_named_concat_without_inventing_the_string() -> None:
 
 def test_string_plus_join_callsite_is_a_concat_coordinate_not_an_invented_string() -> None:
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.string_value import StringValue, str_join_result
     from sugar_lift_py_tests.ir import ctor
-    from sugar_source_tree.nodes import LanguageCallee
 
-    join = OpaqueOpCallsite(
-        callee="join",
-        arg=StringValue(", "),
-        computed=None,
-        extra_args=(SymbolicValue(make_var("names")),),
-        language_callee=LanguageCallee.STR_JOIN,
+    join = str_join_result(
+        StringValue(", "), SymbolicValue(make_var("names")), "join-site"
     )
     prefix = StringValue("(")
     site = "string-plus-join"
@@ -319,32 +313,27 @@ def test_string_plus_join_callsite_is_a_concat_coordinate_not_an_invented_string
     assert getattr(wrapped.completed_value().term, "name", None) == "call:__add__"
 
 
-def test_str_join_coordinate_is_known_by_its_callee_never_its_spelling() -> None:
-    """The join coordinate the string fold mints carries ``STR_JOIN``; a
-    coordinate merely spelled ``join`` (no decided callee) is not named a
-    string concatenation (#7757)."""
+def test_str_join_result_is_known_by_its_callee_never_its_spelling() -> None:
+    """The join result the string fold mints is the one call result
+    (``CallSiteValue``) carrying ``STR_JOIN``; a call merely spelled
+    ``join`` (no decided callee) is not named a string (#7757 S8)."""
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
     from sugar_lift_py_tests.floor.string_value import (
         StringValue,
         _fold_string_method,
+        str_join_result,
     )
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.ir import ctor
     from sugar_source_tree.nodes import LanguageCallee
 
     # A tuple whose one member is known to be a ``str`` but is not ground
-    # (an earlier join's coordinate): iterating it cannot raise and its
-    # member passes ``join``'s ``str`` check, so the fold completes as the
-    # coordinate alone.  An opaque iterable's ``iter``, ``next`` and member
+    # (an earlier join's result): iterating it cannot raise and its member
+    # passes ``join``'s ``str`` check, so the fold completes as the call's
+    # result alone.  An opaque iterable's ``iter``, ``next`` and member
     # check are halt faces (``string_value._joined``), read in
     # ``test_str_join_states_its_iteration``.
-    inner = OpaqueOpCallsite(
-        callee="join",
-        arg=StringValue(","),
-        computed=None,
-        extra_args=(SymbolicValue(make_var("names")),),
-        language_callee=LanguageCallee.STR_JOIN,
-    )
+    inner = str_join_result(StringValue(","), SymbolicValue(make_var("names")), "in")
 
     class _Join:
         name = "join"
@@ -352,25 +341,18 @@ def test_str_join_coordinate_is_known_by_its_callee_never_its_spelling() -> None
         blame = "fold-join"
 
     minted = _fold_string_method(StringValue(", "), _Join()).completed_value()
-    assert type(minted) is OpaqueOpCallsite
+    assert type(minted) is CallSiteValue
     assert minted.language_callee is LanguageCallee.STR_JOIN
+    assert minted.names_a_string()
 
-    spelled = OpaqueOpCallsite(
-        callee="join",
-        arg=StringValue(", "),
-        computed=None,
-        extra_args=(SymbolicValue(make_var("names")),),
+    spelled = CallSiteValue(
+        target_name="join",
+        arg_values=(StringValue(", "), SymbolicValue(make_var("names"))),
+        parameters=(),
+        term=ctor("call:join", (), symbol_kind="method-coordinate"),
+        body=None,
     )
-    from sugar_source_tree.panic import SugarNotWritten
-
-    try:
-        outcome = StringValue("(").add(spelled, "spelled-join", None)
-    except SugarNotWritten:
-        return  # refused by name: not a string concatenation either
-    assert not any(
-        isinstance(getattr(face, "value", None), CallSiteValue)
-        for face in outcome.exits
-    )
+    assert not spelled.names_a_string()
 
 
 def _two_arm_method_callsite():

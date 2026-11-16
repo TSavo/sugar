@@ -41,17 +41,6 @@ def _term_sort(term: Term) -> EqualitySort | None:
     return None
 
 
-def _sort_warrant(value: FloorValue, term: Term, *, owner: str) -> EqualitySort | None:
-    # A computed opaque operation warrants the sort of its coordinate without
-    # replacing that coordinate. This is testimony attached at construction.
-    from .opaque_op_callsite import OpaqueOpCallsite
-
-    if isinstance(value, OpaqueOpCallsite) and value.computed is not None:
-        computed = value.computed.to_term(owner=owner)
-        return _term_sort(computed)
-    return _term_sort(term)
-
-
 def resolve_equality_atom(
     left: FloorValue,
     right: FloorValue,
@@ -66,8 +55,8 @@ def resolve_equality_atom(
     """
     left_term = left.to_term(owner=owner)
     right_term = right.to_term(owner=owner)
-    left_sort = _sort_warrant(left, left_term, owner=owner)
-    right_sort = _sort_warrant(right, right_term, owner=owner)
+    left_sort = _term_sort(left_term)
+    right_sort = _term_sort(right_term)
 
     if left_sort is not None and left_sort == right_sort:
         return eq(left_term, right_term), ()
