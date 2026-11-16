@@ -2488,7 +2488,7 @@ def _serialize_source_call_binding_gap(exc: BaseException) -> dict[str, Any] | N
             "exception_type": type(exc).__name__,
             "stage": "dispatch",
             "diagnostic": {
-                "owner": "SourceCallFrame.bind_node_actuals",
+                "owner": "SourceVisibleCallFrameV1.bind_actuals",
                 "observed": str(exc),
                 "requested": "every call actual consumed by the authenticated frame",
                 "fix": "bind or reject the unconsumed actual at the call frame",

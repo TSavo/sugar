@@ -9,15 +9,16 @@ to #8166).
    like any call the tree cannot decide stays any class the module hands on
    (#8166's answer).
 2. A name a class body binds is that class body's, never the module's.
-3. A dataclass constructor frame rebuilt for a call keeps the fields of its
-   generated ``__init__``.
+
+(A constructor frame is no longer rebuilt at a call: the per-call rebuild,
+``SourceVisibleCallFrameV1.bind_node_actuals``, is deleted, #7757 N4.)
 """
 
 from __future__ import annotations
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Assign, ClassDef
+from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 
 
@@ -222,59 +223,3 @@ def test_a_class_body_read_falls_back_to_the_module_binding() -> None:
 
     # ``LOAD_NAME``: before the body binds ``K`` it reads the module's.
     assert classes["Box"].namespace_binds("x") is None
-
-
-# --- 3. a rebuilt dataclass frame keeps its fields ------------------------------
-
-
-def test_a_rebuilt_dataclass_frame_keeps_its_fields() -> None:
-    tree = _tree(
-        "from dataclasses import dataclass\n"
-        "\n"
-        "@dataclass\n"
-        "class Point:\n"
-        "    x: int\n"
-        "    y: int\n"
-        "\n"
-        "p = Point(1, 2)\n",
-        "dataclass_rebuild.py",
-    )
-    statement = next(node for node in tree.root.body if isinstance(node, ClassDef))
-    call = next(node for node in tree.root.body if isinstance(node, Assign)).value
-
-    frame = statement.source_visible_constructor_frame()
-    assert frame.dataclass_fields is not None
-    assert len(frame.body.initializer_body.statements) == 2
-
-    rebuilt = frame.bind_node_actuals(tuple(call.args), ())
-
-    # The generated ``__init__``'s two stores, one per field, survive.
-    assert rebuilt.dataclass_fields is frame.dataclass_fields
-    assert rebuilt.body.initializer_body is not None
-    assert len(rebuilt.body.initializer_body.statements) == 2
-
-
-def test_a_rebuilt_inherited_exception_frame_keeps_its_args_coordinate() -> None:
-    tree = _tree(
-        "class Oops(Exception):\n"
-        "    pass\n"
-        "\n"
-        "e = Oops('a', 'b')\n",
-        "exception_rebuild.py",
-    )
-    statement = next(node for node in tree.root.body if isinstance(node, ClassDef))
-    call = next(node for node in tree.root.body if isinstance(node, Assign)).value
-
-    frame = statement.source_visible_constructor_frame()
-    assert frame.exception_args_coordinate_cid == frame.formal_coordinates[0].cid
-    assert frame.body.exception_args_coordinate_cid == (
-        frame.exception_args_coordinate_cid
-    )
-
-    rebuilt = frame.bind_node_actuals(tuple(call.args), ())
-
-    # The ``(*args)`` coordinate the body stores as ``args`` survives.
-    assert rebuilt.exception_args_coordinate_cid == frame.exception_args_coordinate_cid
-    assert rebuilt.body.exception_args_coordinate_cid == (
-        frame.exception_args_coordinate_cid
-    )

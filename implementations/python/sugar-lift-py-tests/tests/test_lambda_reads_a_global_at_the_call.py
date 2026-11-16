@@ -57,7 +57,6 @@ from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
-from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
     AnnAssign,
@@ -128,12 +127,14 @@ def _lambdas(nodes) -> list:
 
 
 def _returned_at(lam: Lambda, site):
-    """What the lambda's call frame, constructed at module execution
-    ``site`` (None: called after import), returns."""
-    frame = construct_at_module_execution_site(site, lam.source_visible_call_frame)
-    returned = frame.body.statements[-1]
-    assert isinstance(returned, ReturnSugar)
-    return returned.value
+    """What the lambda's own construction, at module execution ``site``
+    (None: called after import), builds as the value its body returns.  The
+    lambda's frame is its signature (#7757 N4): the body is built once, by
+    the lambda's own construction, never by its frame."""
+    value = construct_at_module_execution_site(site, lam.sugar)
+    assert isinstance(value, LambdaSugar)
+    assert lam.source_visible_call_frame().body is None
+    return value.body
 
 
 def _site_of(tree: SourceFile, name: str):

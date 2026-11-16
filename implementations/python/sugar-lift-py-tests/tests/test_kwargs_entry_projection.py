@@ -1,8 +1,8 @@
 """A ``**kwargs`` entry is the ``variadic-keyword`` projection of its formal.
 
 ``def m(*args, **kwargs): t = g(*args, **kwargs)`` reads each collected
-keyword through ``formal.project("variadic-keyword", i)`` -- the coordinate
-``bind_node_actuals`` seats on the entry's actual Node, in collection order.
+keyword through ``formal.project("variadic-keyword", i)``, in collection
+order.
 ``bind_actuals`` paired ``*args`` elements with their ``variadic`` projections
 but never paired ``**kwargs`` entries, so a generator frame read of one found
 no Floor and refused ``unspecialized source-call formal``

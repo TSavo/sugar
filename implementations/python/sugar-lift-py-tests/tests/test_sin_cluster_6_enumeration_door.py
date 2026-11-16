@@ -1,8 +1,10 @@
 """SIN CLUSTER 6 — enumeration that bypasses the construction door.
 
-A call binds through SourceCallFrame.bind_node_actuals (not ad-hoc zip of
-flat params). ``f(a, *rest)`` called ``f(1, 2)`` packs ``rest=(2,)``; a lying
-twin asserting ``rest=2`` must fail. (The seek path's own application,
+A call binds through the frame's one binder (``bind_actuals``, not an ad-hoc
+zip of flat params). ``f(a, *rest)`` called ``f(1, 2)`` packs ``rest=(2,)``; a
+lying twin asserting ``rest=2`` must fail.  (The node-level binder that rebuilt
+a lambda's body with the actual nodes inlined at each call,
+``bind_node_actuals``, is deleted: a frame holds no body, #7757 N4.) (The seek path's own application,
 ``applied_contract_rows``, is deleted: a contract is applied in one place, at
 prove; #7757 item 12. The universe seek by a call-site cue and its callee
 resolution, ``resolve_function_for_call`` / ``find_function_by_name``, are
@@ -17,7 +19,7 @@ from sugar_lift_py_tests import tree_enumerate as te
 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.nodes import Call, FunctionDef, Name
+from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 
@@ -39,71 +41,7 @@ def _module_fn(source: str, name: str) -> tuple[SourceFile, FunctionDef]:
     return tree, fn
 
 
-# --- 1: bind_node_actuals door ------------------------------------------------
-
-
-def test_variadic_applied_binds_rest_as_tuple_truthful_twin() -> None:
-    """Truthful: ``f(a, *rest)`` called ``f(1, 2)`` binds rest as Tuple(2,)."""
-    source = (
-        "def f(a, *rest):\n"
-        "    return rest\n"
-        "\n"
-        "def test_a():\n"
-        "    assert f(1, 2) == (2,)\n"
-    )
-    tree, fn = _module_fn(source, "f")
-    call = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Name)
-        and node.func.id == "f"
-    )
-    frame = fn.source_visible_call_frame()
-    bound = frame.bind_node_actuals(tuple(call.args), ())
-    by_name = {
-        name: entry.state
-        for name, entry in zip(bound.parameters, bound.runtime_entries, strict=True)
-    }
-    rest = by_name["rest"]
-    # Materialized Tuple may be the shadow class (``Tuple_``); kind is authority.
-    assert rest.kind == "Tuple", type(rest).__name__
-    assert len(rest.elts) == 1
-    assert rest.elts[0].kind == "Constant"
-    assert rest.elts[0].value == 2
-
-
-def test_variadic_applied_lying_twin_rest_is_not_scalar_must_fail() -> None:
-    """Lying twin: asserting rest is the bare scalar 2 must fail.
-
-    The old ad-hoc binder ``zip(params, args)`` published rest=2. That shape
-    is illegal; the twin fails so the regression cannot go silent.
-    """
-    source = (
-        "def f(a, *rest):\n"
-        "    return rest\n"
-        "\n"
-        "def test_a():\n"
-        "    assert f(1, 2) == (2,)\n"
-    )
-    tree, fn = _module_fn(source, "f")
-    call = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Name)
-        and node.func.id == "f"
-    )
-    frame = fn.source_visible_call_frame()
-    bound = frame.bind_node_actuals(tuple(call.args), ())
-    rest = dict(
-        zip(bound.parameters, (e.state for e in bound.runtime_entries), strict=True)
-    )["rest"]
-
-    # Truthful: packed Tuple. Lying: bare Constant(2) — must not hold.
-    assert rest.kind == "Tuple"
-    with pytest.raises(AssertionError):
-        assert rest.kind == "Constant" and rest.value == 2
+# --- 1: the one binder ------------------------------------------------------
 
 
 def test_seek_path_has_no_application_of_its_own() -> None:
@@ -133,8 +71,8 @@ def test_binding_gap_is_loud_on_arity_mismatch() -> None:
     source = "def f(a, b):\n    return a\n"
     _tree_sf, fn = _module_fn(source, "f")
     frame = fn.source_visible_call_frame()
-    with pytest.raises(SourceCallBindingGap):
-        frame.bind_node_actuals((), ())
+    with pytest.raises(SourceCallBindingGap, match="missing required formal"):
+        frame.bind_actuals((), ())
 
 
 def test_the_cue_seek_and_its_callee_resolution_are_gone() -> None:
