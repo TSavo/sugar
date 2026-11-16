@@ -393,38 +393,6 @@ class ObjectValue(FloorValue):
             return None
         return self._dispatched_or_owed(name, positional, kw_values, site)
 
-    def reads_plain_field(self, name: str) -> bool:
-        """Whether a read of ``name`` off this instance, while its
-        ``__dict__`` holds ``name``, is that entry by Python's own rule
-        (``object.__getattribute__``, ``_PyObject_GenericGetAttrWithDict``):
-        it completes with the stored value.
-
-        All of: the instance's MRO is read and every class of it is a source
-        class or ``object``; the one class-namespace lookup decides that no
-        class of it binds ``name`` (so no data descriptor wins over the
-        entry, ``namespace_owner``); and the ``__getattribute__`` the lookup
-        selects is ``object``'s.  A class's own ``__getattr__`` is never
-        reached: the entry is found first.  Anything else -- no class
-        statement, an MRO not read, a builtin base, a member of the name, a
-        hook bound or not decided -- is False.  Read by a class's contract
-        to state that a read of a field its construction set completes
-        (``ConstructedInstanceValue.post_formula``, #7757 step 7)."""
-        from sugar_source_tree.nodes import ClassDef
-
-        definition = getattr(self.defining_class, "class_definition", None)
-        if definition is None:
-            return False
-        order = definition.method_resolution_order()
-        if order is None or any(
-            not isinstance(entry, ClassDef) and entry != "object" for entry in order
-        ):
-            return False
-        decided, owner = definition.namespace_owner(name)
-        if not decided or owner is not None:
-            return False
-        decided, owner = definition.namespace_owner("__getattribute__")
-        return decided and isinstance(owner, str) and owner == "object"
-
     def guarded(self, formula):
         # A constructed state is not an unconditional field-store statement.
         # Retain the branch restriction for the constructor's state projection.
