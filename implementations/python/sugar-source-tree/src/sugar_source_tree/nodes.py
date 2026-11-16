@@ -7519,6 +7519,14 @@ def _module_import_binding(statement, scope):
     threading holds no binding of is bound by nothing here: its reads resolve
     through the table at their own coordinate.
 
+    The row is a value of the scope, minted at the alias, and answers the
+    roll where it is minted (``_minted_binding_reference``): a function frame
+    holds every local unbound until its body binds it
+    (``FunctionDef._body_scope``), so every function-local ``import`` mints
+    one, and where every read of the name is one the table rows nothing
+    constructs it.  A read that is the row constructs it and answers again,
+    present or refused by name.
+
     A star import (``from m import *``) is a binding statement like any
     other: from it on, every module name it may bind is
     ``UNDECIDED_MODULE_BINDING``, and before it each name keeps the binding
@@ -7548,17 +7556,26 @@ def _module_import_binding(statement, scope):
             if reference is None:
                 binding[local] = UNDECIDED_MODULE_BINDING
                 continue
-            binding[local] = materialize(
-                statement.unit,
-                ShadowNode(
-                    "ImportBindingRef",
-                    alias.span,
-                    (
-                        ("name", Leaf(local)),
-                        ("target_symbol", Leaf(reference.target_symbol)),
+            # A value of the scope, minted at the alias: a read the table rows
+            # with this target keeps its own name (``Name.substitute``) and
+            # answers for itself, so where every read is such a read (each
+            # function-local ``import`` whose name the frame holds unbound
+            # until the body binds it) nothing constructs the row.  It
+            # answers where it is minted; a read that is the row constructs
+            # it and answers again, present or refused by name.
+            binding[local] = _minted_binding_reference(
+                materialize(
+                    statement.unit,
+                    ShadowNode(
+                        "ImportBindingRef",
+                        alias.span,
+                        (
+                            ("name", Leaf(local)),
+                            ("target_symbol", Leaf(reference.target_symbol)),
+                        ),
                     ),
-                ),
-                statement.reporter,
+                    statement.reporter,
+                )
             )
     return binding or None
 
