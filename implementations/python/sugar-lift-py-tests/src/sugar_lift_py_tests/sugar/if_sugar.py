@@ -298,7 +298,6 @@ class IfSugar(Sugar):
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
-        from sugar_lift_py_tests.outcome import Halted
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halt_record,
             halts_recorded,
@@ -319,23 +318,25 @@ class IfSugar(Sugar):
         if isinstance(cond, NativeOperationExitCarrierV1):
             return cond.and_then(lambda value: header_ran(self, "test", value, ctx))
 
-        if isinstance(cond, ExitSet) and any(
-            isinstance(face, Halted) for face in cond.exits
-        ):
-            # A condition that may raise (an unknown callee completes or
-            # raises): each completed face selects its suites under its own
-            # guard; a halted face never reaches either suite. Returning the
-            # condition's faces as the statement's dropped both suites. A
-            # halted face halted before either suite ran: it carries the
+        condition = plain_completed_value(cond)
+        if condition is not None:
+            return self._desugar_condition(condition, ctx)
+        if isinstance(cond, ExitSet):
+            # Any condition that is not one plain completed arm: one that may
+            # raise (an unknown callee completes or raises), one with several
+            # faces, or one that owes (an ``is`` nothing decides owes the
+            # undecided member, #8984).  Each completed face selects its
+            # suites under its own guard, its debt carried onto every arm the
+            # suites make (``ExitSet.and_then``); a halted face never reaches
+            # either suite.  Returning the condition's faces as the
+            # statement's dropped both suites -- every halt and fact in them.
+            # A halted face halted before either suite ran: it carries the
             # record of where the condition halted (``halts_recorded``), onto
             # which the block composition splices what ran before the ``if``.
             return halts_recorded(cond, halt_record(ctx)).and_then(
                 lambda value: self._select_on_face(value, ctx)
             )
-        condition = plain_completed_value(cond)
-        if condition is None:
-            return cond
-        return self._desugar_condition(condition, ctx)
+        return cond
 
     def _select_on_face(self, value, ctx):
         """One completed condition face selects its suites: its truth is
