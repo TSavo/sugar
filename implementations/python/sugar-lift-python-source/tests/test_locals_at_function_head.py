@@ -30,27 +30,12 @@ def _returns(tmp_path, source):
     ), [face.effect.producer_node_owner for face in exits if isinstance(face, Halted)]
 
 
-def test_the_options_dict_idiom_keeps_only_non_none_formals(tmp_path):
-    returned, halts = _returns(
-        tmp_path,
-        "def g(p=None, l=None):\n"
-        "    o = {k: v for k, v in list(locals().items()) if v is not None}\n"
-        "    return o\n"
-        "def f():\n    o = g(3)\n    if 'l' in o:\n        return 7\n"
-        "    if o['p'] == 3:\n        return 8\n    return 9\n",
-    )
-    assert (returned, halts) == ([8], [])
-
-
-def test_names_follow_co_varnames_order(tmp_path):
-    returned, halts = _returns(
-        tmp_path,
-        "def g(a, *r, k=2, **kw):\n    return list(locals())\n"
-        "def f():\n    o = g(1)\n"
-        "    if o[0] == 'a' and o[1] == 'k' and o[2] == 'r' and o[3] == 'kw':\n"
-        "        return 7\n    return 8\n",
-    )
-    assert (returned, halts) == ([7], [])
+# The options-dict idiom and the ``co_varnames`` order were read through
+# ``f``'s call of ``g``, reducing ``g``'s body at lift.  A same-file call is
+# its coordinate and edge, joined at prove (#7757 step 6), so ``f`` holds
+# ``g(3)``'s keyed result and every read of it is undecided; those two tests
+# are deleted.  The snapshot's shape (formals in ``co_varnames`` order) is
+# read off the tree by ``locals_snapshot_shape`` below.
 
 
 def test_after_another_local_is_bound_the_call_stays_ordinary(tmp_path):
@@ -85,3 +70,10 @@ def test_a_rebound_locals_is_not_the_builtin():
     assert locals_snapshot_shape(_unit(nested), 2, 20) is None
     plain = "def g(p, *, q):\n    return locals()\n"
     assert locals_snapshot_shape(_unit(plain), 2, 11).parameters == ("p", "q")
+    ordered = "def g(a, *r, k=2, **kw):\n    return locals()\n"
+    assert locals_snapshot_shape(_unit(ordered), 2, 11).parameters == (
+        "a",
+        "k",
+        "r",
+        "kw",
+    )

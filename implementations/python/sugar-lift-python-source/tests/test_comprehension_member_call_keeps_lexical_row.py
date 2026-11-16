@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sugar_lift_py_tests.floor.list_value import ListValue
+from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
 
 from test_assignment_evaluates_rhs import _rows
 from test_undetermined_raise_except_matching import _exits
@@ -58,8 +58,12 @@ def test_member_call_to_nested_function_projects_its_body(tmp_path: Path) -> Non
 
 
 def test_member_calls_are_each_their_own_evaluation(tmp_path: Path) -> None:
-    # The lying twin: retaining the row must not merge the members.  Each
-    # member is the local function's body run on ITS item.
+    # The lying twin: retaining the row must not merge the members.  The
+    # comprehension is its own keyed value (the one loop mechanism, #7757),
+    # and each member's ``tdf(s)`` is the same-file call's coordinate and
+    # edge (step 6): one unanswered call per member, each its own halt key.
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
     source = (
         "def tdf(name):\n"
         "    return [name]\n"
@@ -68,6 +72,13 @@ def test_member_calls_are_each_their_own_evaluation(tmp_path: Path) -> None:
     )
     rows = _rows(_exits(tmp_path, source))
     (returned,) = _returns(rows)
-    assert isinstance(returned, ListValue), returned
-    assert len(returned.elements) == 2
-    assert returned.elements[0] != returned.elements[1]
+    assert isinstance(returned, ComprehensionValue), returned
+    occurrences = [
+        payload.occurrence
+        for kind, payload, _guard in rows
+        if kind == "halt"
+        and isinstance(payload, UndeterminedRaiseEffect)
+        and payload.producer_node_owner == "UnknownCallee:e.tdf"
+    ]
+    assert len(occurrences) == 2
+    assert len(set(occurrences)) == 2

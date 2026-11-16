@@ -10,8 +10,8 @@ value is keyed per evaluation, ``python:subscript_result(<receiver>,
 ``python:subscript_op.completes(python:subscript_op(<result>, <key>))``,
 and it halts with an ``UndeterminedRaiseEffect`` at the same key under the
 complement. It does not guess IndexError/KeyError/TypeError and does not
-invent a member. A callsite whose body floors keeps the floor's own decided
-subscript.
+invent a member. A same-file callee's body is not floored at lift (#7757
+step 6), so its call's result is subscripted the same way.
 """
 
 from __future__ import annotations
@@ -80,12 +80,15 @@ def test_subscript_halt_is_guarded_by_the_call_completing(tmp_path) -> None:
     assert subscript_halt.effect.occurrence in guard
 
 
-def test_floored_callsite_subscript_is_decided(tmp_path) -> None:
+def test_a_same_file_call_result_subscript_is_the_undecided_read(tmp_path) -> None:
+    # ``g``'s body is not floored at lift: a same-file call is its coordinate
+    # and edge, joined at prove (#7757 step 6), so its result is subscripted
+    # by the one undecided read, both faces kept, never ``g``'s ``[1, 2]``.
     exits = _exits(
         tmp_path, "def g():\n    return [1, 2]\ndef f():\n    return g()[0]\n"
     )
-    assert _owners(exits) == []
-    assert _COMPLETES not in repr(exits)
+    assert _owners(exits) == ["CallSiteValue.subscript", "UnknownCallee:e.g"]
+    assert _COMPLETES in repr(exits)
     assert _RETIRED not in repr(exits)
 
 

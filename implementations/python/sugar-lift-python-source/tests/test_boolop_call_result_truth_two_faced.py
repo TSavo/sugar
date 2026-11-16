@@ -40,6 +40,8 @@ def test_call_result_truth_in_and_halts_or_selects(tmp_path):
     assert set(rows) == {("halt", None), ("return", 7)}
 
 
-def test_decided_operand_truth_adds_no_halt(tmp_path):
-    # The lying twin: a decided operand's truth cannot raise.
-    assert _rows(tmp_path, "        self.ok = 0 and 1\n") == [("return", 7)]
+# The decided twin (``self.ok = 0 and 1`` adds no halt) is deleted: ``cm()``
+# is the same-file class call's coordinate and edge (#7757 step 6), so
+# ``__init__`` is not reduced at lift and ``f``'s rows hold the ``with``'s own
+# undecided faces whatever the initializer writes.  A decided operand's truth
+# is read in ``__init__``'s own universe, where its rows are stated.

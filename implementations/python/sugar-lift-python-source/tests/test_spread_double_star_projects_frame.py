@@ -1,43 +1,37 @@
-"""``g(**k)`` names a module function the lexical scope resolves: its frame.
+"""``g(**k)`` to a module function is the call's coordinate and edge.
 
-#7644 gave a ``*`` spread call the callee's own lexical source frame. A
-``**``-only call to the same function went without one, so ``g(**{'p': 3})``
-and ``def h(**kw): return g(**kw)`` stayed two-faced
-(an unanswered call, ``UnknownCallee:g``) even though the mapping was a constructed
-DictValue whose entries bind onto the formals (expanded by the one ``**``
-reader, ``spread_sugar._call_keywords``).  Now the ``**`` call
-gets the same lexical frame, and its keys bind by name, the rest by default.
-That is numpy's ``_set_printoptions(*args, **kwargs)`` → ``_make_options_dict``
-chain under ``np.printoptions(precision=3)``.
+#7644 gave a ``*`` spread call the callee's own lexical source frame, and a
+``**`` call followed.  That frame is gone (#7757 step 6, the owner
+2026-11-15: a same-file call is a coordinate and an edge joined at prove):
+the mapping's entries are the call's operands (expanded by the one ``**``
+reader), and the call is the one unanswered call, its halt kept and owed.
+That is numpy's ``_set_printoptions(*args, **kwargs)`` →
+``_make_options_dict`` chain under ``np.printoptions(precision=3)``: never a
+completion decided by reading the callee's body.
 """
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.outcome import Halted
-
-from test_spread_decided_tuple_projects_frame import _returns, _spread_halts
+from test_spread_decided_tuple_projects_frame import the_call_is_owed_and_both_arms_stay
 from test_undetermined_raise_except_matching import _exits
 
 _G = "def g(p=None, legacy=None):\n    if legacy is None:\n        return p\n    raise ValueError\n"
 
 
-def test_a_constructed_mapping_binds_by_name_through_the_callee_body(tmp_path):
+def test_a_constructed_mapping_is_the_call_owed(tmp_path):
     exits = _exits(
         tmp_path,
         _G + "def f():\n    if g(**{'p': 3}) == 3:\n        return 7\n    raise ValueError\n",
     )
-    assert _spread_halts(exits) == []
-    assert [value.value for value in _returns(exits)] == [7]
-    assert not any(isinstance(face, Halted) for face in exits.exits)
+    the_call_is_owed_and_both_arms_stay(exits, "e.g")
 
 
-def test_a_forwarded_kwargs_mapping_binds_through_two_frames(tmp_path):
+def test_a_forwarded_kwargs_call_is_the_outer_call_owed(tmp_path):
     exits = _exits(
         tmp_path,
         _G
         + "def h(**kwargs):\n    return g(**kwargs)\n"
         + "def f():\n    if h(p=3) == 3:\n        return 7\n    raise ValueError\n",
     )
-    assert _spread_halts(exits) == []
-    assert [value.value for value in _returns(exits)] == [7]
-    assert not any(isinstance(face, Halted) for face in exits.exits)
+    # ``f`` calls ``h`` alone; neither ``h``'s body nor ``g``'s is read.
+    the_call_is_owed_and_both_arms_stay(exits, "e.h")

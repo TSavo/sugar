@@ -132,10 +132,17 @@ def test_a_builtin_is_not_this_law(tmp_path):
     assert not any(owner.startswith("UnknownCallee:") for owner in _owners(halts))
 
 
-def test_a_source_function_is_not_this_law(tmp_path):
+def test_a_source_function_call_is_this_law(tmp_path):
+    # A same-file call is its coordinate and edge, joined at prove (#7757 step
+    # 6, the owner 2026-11-15): ``g``'s body is not read here, so the call is
+    # the one unanswered call over its module-qualified target, its halt kept.
     source = "def g():\n    return 1\ndef f():\n    return g()\n"
     returns, halts = _split(tmp_path, source)
-    assert not any(owner.startswith("UnknownCallee:") for owner in _owners(halts))
+    (value,) = returns
+    term = value.to_term(owner="test")
+    assert term.name == "python:call_result"
+    assert term.args[0].name == "call:e.g"
+    assert _owners(halts) == ["UnknownCallee:e.g"]
 
 
 def _two_faced_and_owed(tmp_path, source):
@@ -275,8 +282,10 @@ def test_a_never_raising_shape_is_read_from_the_binding(tmp_path, source):
 
 def test_an_if_on_an_unknown_call_keeps_both_suites(tmp_path):
     # The condition's completed face selects the suites; returning the
-    # condition's own faces as the statement's dropped ``return 1``.
+    # condition's own faces as the statement's dropped ``return 1``.  The
+    # truth of the call's undecided result is its own two faces (``bool`` may
+    # run ``__bool__``/``__len__``): its halt is kept beside the call's.
     source = "def f():\n    if h():\n        return 1\n    return 2\n"
     returns, halts = _split(tmp_path, source)
     assert _values(returns) == {1, 2}
-    assert _owners(halts) == ["UnknownCallee:h"]
+    assert _owners(halts) == ["IfSugar.test", "UnknownCallee:h"]

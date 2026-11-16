@@ -39,11 +39,14 @@ def test_a_dict_comprehension_drops_what_its_filter_rejects(tmp_path):
     assert _returns(tmp_path, source) == [8]
 
 
-def test_filters_over_a_frame_s_actuals_decide_through_the_call(tmp_path):
+def test_filters_over_a_frame_s_own_names_decide(tmp_path):
+    # Read in the frame that binds the names: a same-file call ``g(3)`` is
+    # its coordinate and edge, joined at prove (#7757 step 6), so its actuals
+    # are never bound into ``g``'s body at lift.
     source = (
-        "def g(p=None, l=None):\n"
-        "    return {k: v for k, v in [('p', p), ('l', l)] if v is not None}\n"
-        "def f():\n    o = g(3)\n    if 'l' in o:\n        return 7\n    return 8\n"
+        "def f():\n    p = 3\n    l = None\n"
+        "    o = {k: v for k, v in [('p', p), ('l', l)] if v is not None}\n"
+        "    if 'l' in o:\n        return 7\n    return 8\n"
     )
     assert _returns(tmp_path, source) == [8]
 

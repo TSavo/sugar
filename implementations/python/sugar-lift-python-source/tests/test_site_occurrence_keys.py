@@ -11,6 +11,12 @@ complete exactly when iteration 1's did, and to return the same object.
 Now every site key carries the dynamic occurrence path (each enclosing loop
 iteration and callee frame), so each evaluation is its own atom. A site
 evaluated once, outside any loop or callee frame, keeps its plain key.
+
+On main (#7757) a comprehension is its own keyed value (``ComprehensionValue``,
+the one loop mechanism), a loop whose body holds a loop is its recurrence, and
+a same-file call is its coordinate and edge joined at prove: no callee body is
+reduced at lift, so the two calls of one helper are two keyed unanswered
+calls, never a frame of the helper's body.
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ from pathlib import Path
 
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import CallSiteValue
-from sugar_lift_py_tests.floor.list_value import ListValue
+from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
 from sugar_lift_py_tests.floor.tuple_value import TupleValue
 from sugar_lift_py_tests.occurrence import occurrence_key, site_coordinate_cid
 
@@ -105,11 +111,10 @@ def test_comprehension_members_are_not_claimed_equal(tmp_path: Path) -> None:
         "    return [textwrap.dedent('a') for i in range(2)]\n"
     )
     rows = _rows(_exits(tmp_path, source))
+    # Each member's call is its own halt, never one shared face.
     assert len(set(_halt_occurrences(rows))) == 2
     (returned,) = _returns(rows)
-    assert isinstance(returned, ListValue)
-    first, second = returned.elements
-    assert first.to_term(owner="test") != second.to_term(owner="test")
+    assert isinstance(returned, ComprehensionValue)
 
 
 def test_a_later_iteration_reads_the_earlier_iterations_value(tmp_path: Path) -> None:
@@ -153,8 +158,11 @@ def test_nested_loops_key_every_iteration_pair(tmp_path: Path) -> None:
         "    return x\n"
     )
     halts = _halt_occurrences(_rows(_exits(tmp_path, source)))
-    assert len(halts) == 4 and len(set(halts)) == 4
-    assert {h.rsplit("@", 1)[1].count("loop[") for h in halts} == {2}
+    # The outer loop is its recurrence (one generic iteration); the inner
+    # iterations are each their own key under it: every key names both loops,
+    # and no two evaluations share one.
+    assert len(halts) >= 2 and len(set(halts)) == len(halts)
+    assert {h.rsplit("@", 1)[1].count("loop:") for h in halts} == {2}
 
 
 def test_two_calls_of_one_helper_are_two_frames(tmp_path: Path) -> None:
@@ -169,9 +177,11 @@ def test_two_calls_of_one_helper_are_two_frames(tmp_path: Path) -> None:
     )
     rows = _rows(_exits(tmp_path, source))
     halts = _halt_occurrences(rows)
-    # The dedent site inside g is evaluated once per call of g.
+    # Each call of g is its own unanswered call with its own halt; g's body
+    # (the dedent site) is not reduced at lift, so no key names a callee
+    # frame (#7757 step 6).
     assert len(halts) == 2 and len(set(halts)) == 2
-    assert all("@call:" in h for h in halts)
+    assert not any("@call:" in h for h in halts)
     (returned,) = _returns(rows)
     assert isinstance(returned, TupleValue)
 
@@ -194,8 +204,7 @@ def test_a_c_call_in_a_loop_returns_one_result_per_iteration(tmp_path: Path) -> 
     ]
     assert len({halt.occurrence for halt in halts}) == 2
     (returned,) = _returns(rows)
-    first, second = returned.elements
-    assert first.to_term(owner="test") != second.to_term(owner="test")
+    assert isinstance(returned, ComprehensionValue)
 
 
 def test_a_site_evaluated_once_keeps_its_plain_key(tmp_path: Path) -> None:

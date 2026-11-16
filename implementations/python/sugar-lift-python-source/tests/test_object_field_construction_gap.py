@@ -1,4 +1,11 @@
-"""A missing constructed field is a Floor gap, not an unknown receiver type."""
+"""A field read on an instance with no class term is the undecided read.
+
+It was once a Floor gap (a construction panic) where nothing recorded the
+field, and the recorded value where a store did.  On main (#7757 L3, #9092)
+the lift neither refuses a member's absence nor reads a recorded field
+outright: with no class term to state prove's ``plain_read`` under, both are
+the one two-faced read, its halt kept and owed.
+"""
 
 import pytest
 
@@ -9,10 +16,8 @@ from sugar_lift_py_tests.floor import (
     SymbolicValue,
     TermValue,
 )
-from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
 
@@ -31,56 +36,66 @@ def _site(tmp_path, member):
     )
 
 
+def _the_undecided_read(outcome):
+    """The one two-faced read: a halt kept, undetermined (never the lift's
+    ``AttributeError``, never a construction panic), the read owed."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    halts = outcome.halts()
+    assert halts
+    for halt in halts:
+        assert not isinstance(halt.effect, RaiseEffect)
+        assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert outcome.owed_items()
+
+
 @pytest.mark.parametrize(
     "class_name, member", [("RenamedResource", "acquired"), ("Unrelated", "payload")]
 )
-def test_missing_field_panics_but_written_twin_projects(tmp_path, class_name, member):
+def test_written_and_missing_fields_are_the_dispatched_read(tmp_path, class_name, member):
+    # An instance with no class term (no class statement, no workspace root)
+    # names nothing prove's plain_read could decide (#9092): a recorded field
+    # is never read outright, and a field nothing recorded is never the
+    # lift's refusal (L3: the lift never decides a member's absence).  Both
+    # are the dispatched read, here the one undecided read.
     site = _site(tmp_path, member)
     receiver = ObjectValue(
         class_name, (ObjectField("marker", TermValue(3)),), allocation=FRAME_FRESH
     )
     written = receiver.with_field_store(member, TermValue(7))
-    assert written.attribute(member, site, None) == ExitSet.completed(TermValue(7))
+    read = written.attribute(member, site, None)
+    assert read != ExitSet.completed(TermValue(7))
+    _the_undecided_read(read)
 
-    # The write belongs to its own state, not to the original/other guard face.
-    with pytest.raises(ConstructionPanic) as caught:
-        receiver.attribute(member, site, None)
-    assert not isinstance(caught.value, Exception)
-    info = caught.value.info
-    assert info.owner == "ObjectValue.attribute"
-    assert info.observed == f"ObjectValue.{member}"
-    assert info.gap_kind is GapKind.FLOOR
-    assert info.gap_locus is GapLocus.CONSTRUCTION
-    assert "read_field.py" in info.blame
-    assert "source-authenticated" in info.requested
+    missing = receiver.attribute(member, site, None)
+    assert TermValue(7) not in [
+        face.value for face in missing.exits if not isinstance(face, Halted)
+    ]
+    _the_undecided_read(missing)
 
 
 def test_deleted_field_is_never_read_back_and_never_a_lift_attribute_error(tmp_path):
     """A read of a field a delete removed is not the lift's ``AttributeError``
-    (a ``__getattr__`` may answer it): with no class statement, whose order
-    nothing reads, it is the undecided read, owed, its halting face kept
-    (#7757 L3; with a class it is the dispatched read prove's walk
-    decides)."""
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-
+    (a ``__getattr__`` may answer it).  The delete is the dispatched
+    ``__delattr__`` (#7757 H1c), both faces kept; on every object it may
+    leave, the read is the undecided read, owed, its halting face kept, and
+    never the deleted value."""
     site = _site(tmp_path, "payload")
     receiver = ObjectValue(
         "Renamed", (ObjectField("payload", TermValue(7)),), allocation=FRAME_FRESH
     )
     deleted = receiver.delattr("payload", site, None)
-    deleted_value = deleted.completed_value()
-    assert deleted_value is not None
-    outcome = deleted_value.attribute("payload", site, None)
-    assert outcome.completed_value() != TermValue(7)
-    (halt,) = outcome.halts()
-    assert not isinstance(halt.effect, RaiseEffect)
-    assert isinstance(halt.effect, UndeterminedRaiseEffect)
-    assert outcome.owed_items()
+    assert deleted.halts()
+    after = [face.value for face in deleted.exits if not isinstance(face, Halted)]
+    assert after
+    for value in after:
+        outcome = value.attribute("payload", site, None)
+        assert outcome.completed_value() != TermValue(7)
+        _the_undecided_read(outcome)
 
 
 def test_unknown_receiver_type_is_the_two_faced_unanswered_read(tmp_path):
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.outcome import Halted
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     site = _site(tmp_path, "payload")

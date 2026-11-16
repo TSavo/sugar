@@ -54,10 +54,18 @@ def test_dict_keys_keep_insertion_order(tmp_path):
 
 
 def test_a_rebound_list_is_not_the_builtin(tmp_path):
-    returned, _ = _returns(
+    # The module's own ``list`` is a same-file call: its coordinate and edge,
+    # joined at prove (#7757 step 6), never the builtin's members and never
+    # its body read here.  What it returns is undecided, so both arms stay.
+    returned, exits = _returns(
         tmp_path,
         "def list(x):\n    return x\n"
         "def f():\n    o = list((1, 2))\n    if len(o) == 2:\n        return 7\n"
         "    return 8\n",
     )
-    assert returned == [7]
+    assert returned == [7, 8]
+    assert "UnknownCallee:e.list" in [
+        getattr(face.effect, "producer_node_owner", None)
+        for face in exits
+        if isinstance(face, Halted)
+    ]

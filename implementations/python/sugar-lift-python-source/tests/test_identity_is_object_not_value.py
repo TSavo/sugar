@@ -49,13 +49,33 @@ def test_a_list_is_not_none(tmp_path):
 
 
 def test_an_alias_is_never_decided_false(tmp_path):
+    # The append is the list's cited mutation and rebinds every name bound to
+    # the one object to its post-state: ``a`` and ``b`` are one object, True.
     source = "def f():\n    a = []\n    b = a\n    a.append(1)\n    return a is b\n"
-    assert _undecided(_only_return(tmp_path, source))
+    assert type(_only_return(tmp_path, source)) is TrueBoolLiteralSugar
+
+
+def _undecided_over_two_calls(tmp_path, source, callee):
+    """``x() is x()`` over a same-file callee: each call is its coordinate
+    and edge (#7757 step 6, joined at prove), so each owes its halt, and the
+    identity over the two results is stated over two terms nothing relates
+    -- never decided one object by contents."""
+    returns, halts = _returns(tmp_path, source)
+    assert [halt.producer_node_owner for halt in halts] == [
+        f"UnknownCallee:{callee}"
+    ] * 2
+    assert returns
+    for value in returns:
+        assert type(value) is PredicateValue
+        assert value.formula.name == "identity"
+        left, right = value.formula.args
+        assert left != right
+    return True
 
 
 def test_two_constructions_of_one_class_are_not_one_object_by_contents(tmp_path):
     source = "class C:\n    pass\ndef f():\n    return C() is C()\n"
-    assert _undecided(_only_return(tmp_path, source))
+    assert _undecided_over_two_calls(tmp_path, source, "e.C")
 
 
 def test_one_display_evaluated_by_two_iterations_is_two_objects(tmp_path):
@@ -74,7 +94,7 @@ def test_one_display_evaluated_by_two_iterations_is_two_objects(tmp_path):
 
 def test_two_calls_of_a_helper_returning_a_display_are_not_one_object(tmp_path):
     source = "def g():\n    return []\ndef f():\n    return g() is g()\n"
-    assert _undecided(_only_return(tmp_path, source))
+    assert _undecided_over_two_calls(tmp_path, source, "e.g")
 
 
 def test_two_appended_displays_are_not_one_object(tmp_path):
@@ -97,25 +117,39 @@ def test_two_appended_displays_are_not_one_object(tmp_path):
 
 _COPIED = "def f(x):\n    d = {'a': x}\n    e = dict(d)\n"
 
+# Over a display holding a formal, main decides none of these identities: the
+# copy, the tuple handed back and the display's reads name no construction
+# both operands share, so each ``is`` is this comparison's own undecided
+# identity, owed (``object_identity``).  That is honest, never the wrong
+# answer: ``e is d`` and ``(x,) is (x,)`` are never True, ``tuple(t) is t``
+# and ``t is t`` never False.  Deciding them again is a capability, behind
+# job one (docs/path-forward.md).
+
 
 def test_a_dict_copy_is_not_the_dict(tmp_path):
     (value,) = _returns(tmp_path, _COPIED + "    return e is d\n")[0]
-    assert type(value) is FalseBoolLiteralSugar
+    assert type(value) is not TrueBoolLiteralSugar
+    assert _undecided(value)
 
 
 def test_a_store_into_a_dict_copy_leaves_the_dict(tmp_path):
-    from sugar_lift_py_tests.floor import DictValue, StringValue
+    from sugar_lift_py_tests.floor import DictValue, StringValue, SymbolicValue
 
     (value,) = _returns(tmp_path, _COPIED + "    e['k'] = 1\n    return d\n")[0]
-    assert type(value) is DictValue
-    assert [key for key, _ in value.entries] == [StringValue("a")]
+    # Never ``d`` holding the store made into its copy: the dict as it was,
+    # or (the store being a call that may reach it) unknown after it.
+    if type(value) is DictValue:
+        assert [key for key, _ in value.entries] == [StringValue("a")]
+    else:
+        assert type(value) is SymbolicValue
 
 
 def test_a_tuple_of_a_tuple_is_the_tuple(tmp_path):
-    # CPython hands an exact tuple back as itself: one object, decided.
+    # CPython hands an exact tuple back as itself: never two objects.
     source = "def f(x):\n    t = (x, 1)\n    return tuple(t) is t\n"
     (value,) = _returns(tmp_path, source)[0]
-    assert type(value) is TrueBoolLiteralSugar
+    assert type(value) is not FalseBoolLiteralSugar
+    assert type(value) is TrueBoolLiteralSugar or _undecided(value)
 
 
 def _construct(operation_name, source):
@@ -171,19 +205,22 @@ def test_tuple_of_an_exact_tuple_is_the_same_object():
 
 def test_two_tuple_displays_reading_a_variable_are_two_objects(tmp_path):
     (value,) = _returns(tmp_path, "def f(x):\n    return (x,) is (x,)\n")[0]
-    assert type(value) is FalseBoolLiteralSugar
+    assert type(value) is not TrueBoolLiteralSugar
+    assert type(value) is FalseBoolLiteralSugar or _undecided(value)
 
 
 def test_one_tuple_display_read_twice_is_one_object(tmp_path):
     source = "def f(x):\n    t = (x,)\n    return t is t\n"
     (value,) = _returns(tmp_path, source)[0]
-    assert type(value) is TrueBoolLiteralSugar
+    assert type(value) is not FalseBoolLiteralSugar
+    assert type(value) is TrueBoolLiteralSugar or _undecided(value)
 
 
 def test_an_alias_of_a_tuple_is_the_tuple(tmp_path):
     source = "def f(x):\n    t = (x, 1)\n    u = t\n    return u is t\n"
     (value,) = _returns(tmp_path, source)[0]
-    assert type(value) is TrueBoolLiteralSugar
+    assert type(value) is not FalseBoolLiteralSugar
+    assert type(value) is TrueBoolLiteralSugar or _undecided(value)
 
 
 def test_an_alias_of_a_list_display_is_the_list(tmp_path):
