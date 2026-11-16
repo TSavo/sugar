@@ -1,6 +1,7 @@
-"""Formal ``delitem`` / ``delattr_named`` through the n-ary projector family.
+"""Formal ``del obj[key]`` through the one item mutation; ``delattr_named``
+through the n-ary projector family.
 
-Python semantic law made constructible (mirrors setitem / setattr_named):
+Python semantic law made constructible:
 
   def helper(obj, key):
       del obj[key]
@@ -8,20 +9,32 @@ Python semantic law made constructible (mirrors setitem / setattr_named):
   def helper2(obj):
       del obj.field
 
-Helper alone retains the respective delete demand as an undischarged
-``NativeOperationExitCarrierV1``. Authenticated callers discharge; mutable
-receivers complete with the element/attribute gone; missing key → named
-KeyError; missing/read-only attribute → named AttributeError — each with
-exact pre-effect state. Missing caller actual stays Undischarged. Earlier
-bindings survive later delete halts. Swapped-coordinate and
-read-authorizes-delete twins fail (readability never authorizes deletion).
+An item delete mints no carrier (#7757 step 7): every ``del r[k]`` is the one
+item mutation, ``store_effect_sugar.item_mutation("__delitem__", r, (k,),
+...)``, whatever ``r`` is:
 
-Mint contracts (Python protocol signatures; ordered operands + formals):
+  1. ``r``'s type binds no ``__delitem__`` -> its ``TypeError``;
+  2. ``r``'s class is an input here (``helper``'s ``obj``: deleted from and
+     used no other way, ``nodes._receiver_class_parameters``, #8857) -> the
+     dispatched edge ``call:dispatch:__delitem__(obj, key, py.class("0",
+     class:obj))``, owed with its halt kept, answered at prove by the class
+     each caller binds (``list``/``dict.__delitem__``'s law, #8864);
+  3. ``r``'s type is not decided here (a formal whose class is no input:
+     ``def helper(obj, key): del obj[key]; return obj`` reads ``obj`` bare)
+     -> the undecided delete (``undecided_item_mutation_faces``): it
+     completes only under ``python:delitem.completes(...)`` or raises
+     something undetermined (owner ``UndecidedDelitem``), both faces owing
+     the undecided member;
+  4. ``r``'s type decided by the lift -> its floor's own ``delitem``: a
+     mutable receiver completes with the element gone, a missing key is the
+     named ``KeyError``, an index out of range the named ``IndexError``.
 
-  operator ``delitem``  (~ ``__delitem__(self, key)``)
-  operands ``(receiver, index)``  — discharge order
-  projector: ``_project_delitem(receiver, index, site)``
-  producer: ``SubscriptDeleteEffectSugar.mint_delitem_carrier``
+No delete waits on a caller's actual.  The floor faces (arm 4) are read off
+the door over the decided actual, and the state a delete halt leaves with off
+a function whose receiver its own frame built (the block's prefix,
+``halts_at_statement_head``): earlier bindings survive a later delete halt.
+
+``helper2``'s ``del obj.field`` keeps its ``delattr_named`` carrier:
 
   operator ``delattr_named``  (~ ``__delattr__(self, name)``)
   operands ``(receiver, StringValue(name))``
@@ -29,18 +42,10 @@ Mint contracts (Python protocol signatures; ordered operands + formals):
   projector: ``_project_delattr_named(receiver, name, site)``
   producer: ``AttributeDeleteEffectSugar.mint_delattr_named_carrier``
 
-Since #8857 ``helper``'s ``obj`` takes ``class:obj`` as an input (it is
-deleted from and used no other way), so ``del obj[key]`` there is the
-dispatched ``__delitem__`` edge, answered at prove by the class a caller binds
-(``list``/``dict.__delitem__``'s law, #8864).  The ``delitem`` carrier stands
-for a formal whose class is no input; the discharge tests read it off
-``def helper(obj, key): del obj[key]; return obj`` (``return obj`` reads
-``obj`` bare).  ``helper2``'s ``del obj.field`` takes no class input and keeps
-its ``delattr_named`` carrier.
+Equality tooth: production-minted operator set == projector-table keys, and
+neither holds ``setitem`` or ``delitem``.
 
-Equality tooth: production-minted operator set == projector-table keys.
-
-Out of scope: Name deletion (``del name`` / DeleteNameSugar) — not delitem,
+Out of scope: Name deletion (``del name`` / DeleteNameSugar) -- not delitem,
 not delattr_named.
 """
 
@@ -52,11 +57,11 @@ from dataclasses import dataclass
 import pytest
 from frame_fresh import FRAME_FRESH, fresh
 
+from sugar_lift_py_tests import caller_parameter_contract
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
     _project_delattr_named,
-    _project_delitem,
     production_native_operation_operators,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -69,18 +74,23 @@ from sugar_lift_py_tests.floor import (
     ObjectValue,
     SliceValue,
     StringValue,
+    SymbolicValue,
     TermValue,
     TupleValue,
 )
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
+from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.delete_effect_sugar import (
     AttributeDeleteEffectSugar,
     SubscriptDeleteEffectSugar,
 )
 from sugar_lift_py_tests.sugar import store_effect_sugar
-from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
+from sugar_lift_py_tests.sugar.store_effect_sugar import (
+    SubscriptStoreEffectSugar,
+    item_mutation,
+)
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
@@ -90,14 +100,6 @@ from sugar_source_tree.tree import SourceFile
 # Exact missing producer method names (valid deliverable when red)
 # ---------------------------------------------------------------------------
 
-MISSING_DELITEM_PRODUCER = (
-    "SubscriptDeleteEffectSugar.mint_delitem_carrier"
-    " — formal delitem producer mirroring "
-    "SubscriptStoreEffectSugar.mint_setitem_carrier; "
-    "operator='delitem', operands=(receiver, index), "
-    "projector receiver.delitem(index, site)"
-)
-
 MISSING_DELATTR_PRODUCER = (
     "AttributeDeleteEffectSugar.mint_delattr_named_carrier"
     " — formal delattr_named producer mirroring "
@@ -106,15 +108,29 @@ MISSING_DELATTR_PRODUCER = (
     "projector receiver.delattr(name.value, site)"
 )
 
-MISSING_DELITEM_PROJECTOR = (
-    "_NATIVE_OPERATION_PROJECTORS['delitem'] "
-    "— lambda receiver, index, site: receiver.delitem(index, site)"
-)
-
 MISSING_DELATTR_PROJECTOR = (
     "_NATIVE_OPERATION_PROJECTORS['delattr_named'] "
     "— lambda receiver, name, site: receiver.delattr(name.value, site)"
 )
+
+# A function whose own frame built the receiver (decided): its delete is the
+# floor's own, and a halt leaves the block with the prefix it reached -- the
+# list ``a[0] = 9`` stored before it included.
+FRAME_MISSING_KEY = (
+    "def frame():\n"
+    "    a = [0]\n"
+    "    a[0] = 9\n"
+    "    obj = {'a': 1}\n"
+    "    del obj['missing']\n"
+)
+FRAME_BAD_INDEX = (
+    "def frame():\n"
+    "    a = [0]\n"
+    "    a[0] = 9\n"
+    "    obj = [0]\n"
+    "    del obj[4]\n"
+)
+_EARLIER_STORE = fresh(ListValue, (TermValue(9),))
 
 
 def _tree(source: str, name: str = "delete_formal_caller.py") -> SourceFile:
@@ -141,22 +157,20 @@ def _delitem_helper():
     ``del obj[key]`` is ``type(obj).__delitem__(obj, key)``: the dispatched
     edge (``receiver_dispatch.dispatch_edge_call``, #8857), owed as it
     stands with its halt kept, answered at prove by the class a caller binds
-    (``list.__delitem__`` / ``dict.__delitem__``'s law, #8864).  It is no
-    ``delitem`` carrier."""
+    (``list.__delitem__`` / ``dict.__delitem__``'s law, #8864)."""
     source = "def helper(obj, key):\n    del obj[key]\n"
     tree = _tree(source, "delitem_alone.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     return function, function.sugar().desugar(None)
 
 
-def _delitem_carrier_helper():
+def _delitem_undecided_helper():
     """The same delete on a formal whose class is no input of its contract:
     ``return obj`` reads ``obj`` bare (``nodes._receiver_uses``: blocked), so
-    ``SubscriptDeleteEffectSugar.project_delitem`` mints the ``delitem``
-    carrier, waiting for the caller's actuals, with the pre-effect state the
-    body's reducer enrolls.  The discharge tests read this carrier."""
+    nothing here decides ``type(obj)`` and the one item mutation is the
+    undecided delete (arm 3), never a carrier waiting on the caller."""
     source = "def helper(obj, key):\n    del obj[key]\n    return obj\n"
-    tree = _tree(source, "delitem_carrier_alone.py")
+    tree = _tree(source, "delitem_undecided_alone.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     return function, function.sugar().desugar(None)
 
@@ -199,28 +213,46 @@ def _class_input(call, receiver: str) -> None:
     assert rides.args[1].name == f"class:{receiver}", rides
 
 
+def _undecided_delete(outcome, *, stated: bool = True) -> Halted:
+    """Arm 3 of the one item mutation: ``del r[k]`` where nothing here
+    decides ``type(r)`` (``undecided_item_mutation_faces``).  The delete
+    completes only under ``python:delitem.completes(...)`` or raises
+    something undetermined (owner ``UndecidedDelitem``), and BOTH faces owe
+    the undecided member (``unanswered_call(None, <site>)``).  It is no
+    carrier and no completion decided here.  ``stated``: the halt is kept
+    with the state the block reached before it (a function's reduction)."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedDelitem"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
+    if stated:
+        assert halt.state is not None, "the undecided delete's halt dropped its state"
+    owed = unanswered_call(None, halt.effect.site)
+    assert owed in owed_calls(outcome)
+    assert owed in halt.owed
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for face in completed:
+        assert "python:delitem.completes" in str(face.guard), face.guard
+        assert owed in face.owed
+    assert outcome.completed_value() is None
+    return halt
+
+
 def _delattr_helper():
     source = "def helper2(obj):\n    del obj.field\n"
     tree = _tree(source, "delattr_alone.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     return function, function.sugar().desugar(None)
-
-
-def _require_delitem_carrier(pending) -> NativeOperationExitCarrierV1:
-    if not isinstance(pending, NativeOperationExitCarrierV1):
-        raise AssertionError(
-            f"missing producer {MISSING_DELITEM_PRODUCER}: "
-            f"helper alone must mint undischarged delitem carrier, "
-            f"got {type(pending).__name__} {pending!r:.200}"
-        )
-    if pending.demand.operator != "delitem":
-        raise AssertionError(
-            f"missing producer {MISSING_DELITEM_PRODUCER}: "
-            f"expected operator delitem, got {pending.demand.operator!r}"
-        )
-    if "delitem" not in _NATIVE_OPERATION_PROJECTORS:
-        raise AssertionError(f"missing projector {MISSING_DELITEM_PROJECTOR}")
-    return pending
 
 
 def _require_delattr_carrier(pending) -> NativeOperationExitCarrierV1:
@@ -240,7 +272,28 @@ def _require_delattr_carrier(pending) -> NativeOperationExitCarrierV1:
     return pending
 
 
-def _assert_named_halt(outcome, expected: str) -> Halted:
+def _door(receiver, key) -> ExitSet:
+    """``del receiver[key]`` through the one item mutation at ``helper``'s
+    delete, the receiver the caller's decided actual: its floor's own
+    ``delitem`` (arm 4), every face of it kept."""
+    return item_mutation(
+        "__delitem__", receiver, (key,), _floor_site(), None, unit=None
+    )
+
+
+def _frame_halt(source: str, expected: str) -> Halted:
+    """``source``'s one function reduced: its delete, on a receiver its own
+    frame built, halts with the named ``expected`` and the state the block
+    reached before it."""
+    tree = _tree(source, "delete_frame_halt.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    outcome = function.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    return _assert_named_halt(outcome, expected)
+
+
+def _assert_named_halt(outcome, expected: str, *, stated: bool = True) -> Halted:
     assert isinstance(outcome, ExitSet)
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
@@ -253,11 +306,22 @@ def _assert_named_halt(outcome, expected: str) -> Halted:
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
-    assert halted.state is not None, (
-        "formal delete halt omitted real pre-effect state "
-        "(NativeOperationResolutionV1.project / reduce_body collapse)"
-    )
+    if stated:
+        assert halted.state is not None, (
+            "delete halt omitted the real pre-effect state "
+            "(the block's prefix, halts_at_statement_head)"
+        )
     return halted
+
+
+def _holds_earlier_store(halted: Halted) -> None:
+    """The halt's state is the block before the delete: ``a[0] = 9`` in it,
+    never an empty, rolled-back record."""
+    assert halted.state is not None
+    assert any(
+        isinstance(entry, ListValue) and entry == _EARLIER_STORE
+        for entry in halted.state.entries
+    ), f"earlier store absent from entries={halted.state.entries!r}"
 
 
 def _deleted_list(completed_face) -> ListValue:
@@ -267,8 +331,8 @@ def _deleted_list(completed_face) -> ListValue:
         return value
     record = getattr(value, "record", None)
     if record is not None:
-        # The delete's post-state, and the same list where the carrier
-        # helper's ``return obj`` returns it.
+        # The delete's post-state, and the same list where a helper's
+        # ``return obj`` returns it.
         lists = [s for s in record.statements if isinstance(s, ListValue)] + [
             s.value
             for s in record.statements
@@ -281,15 +345,22 @@ def _deleted_list(completed_face) -> ListValue:
 
 
 # ===========================================================================
-# Missing-producer census (exact method names)
+# The carrier machinery is deleted (#7757 step 7)
 # ===========================================================================
 
 
-def test_delitem_producer_method_is_enrolled_or_named_missing() -> None:
-    """Pin the one-door mint method that store already has."""
-    assert hasattr(SubscriptStoreEffectSugar, "mint_setitem_carrier")
-    if not hasattr(SubscriptDeleteEffectSugar, "mint_delitem_carrier"):
-        raise AssertionError(f"missing producer method {MISSING_DELITEM_PRODUCER}")
+def test_item_mutation_mints_no_carrier_producer() -> None:
+    """No item store or delete producer mints a carrier: the one item
+    mutation is the door (``store_effect_sugar.item_mutation``)."""
+    for owner, deleted in (
+        (SubscriptStoreEffectSugar, "mint_setitem_carrier"),
+        (SubscriptStoreEffectSugar, "project_setitem"),
+        (SubscriptDeleteEffectSugar, "mint_delitem_carrier"),
+        (SubscriptDeleteEffectSugar, "project_delitem"),
+    ):
+        assert not hasattr(owner, deleted), f"{owner.__name__}.{deleted}"
+    assert not hasattr(store_effect_sugar, "_undecided_setitem_faces")
+    assert callable(item_mutation)
 
 
 def test_delattr_producer_method_is_enrolled_or_named_missing() -> None:
@@ -298,15 +369,12 @@ def test_delattr_producer_method_is_enrolled_or_named_missing() -> None:
         raise AssertionError(f"missing producer method {MISSING_DELATTR_PRODUCER}")
 
 
-def test_delitem_projector_is_enrolled_or_named_missing() -> None:
-    """Explicit projector matches Python ``__delitem__(self, key)`` arity."""
-    assert "setitem" in _NATIVE_OPERATION_PROJECTORS
-    if "delitem" not in _NATIVE_OPERATION_PROJECTORS:
-        raise AssertionError(f"missing projector {MISSING_DELITEM_PROJECTOR}")
-    projector = _NATIVE_OPERATION_PROJECTORS["delitem"]
-    assert projector is _project_delitem
-    parameters = tuple(inspect.signature(projector).parameters)
-    assert parameters == ("receiver", "index", "site", "ctx")
+def test_item_mutation_has_no_projector() -> None:
+    """``setitem`` / ``delitem`` left the projector table with their
+    carrier: nothing discharges an item mutation on a caller's actuals."""
+    assert "setitem" not in _NATIVE_OPERATION_PROJECTORS
+    assert "delitem" not in _NATIVE_OPERATION_PROJECTORS
+    assert not hasattr(caller_parameter_contract, "_project_delitem")
 
 
 def test_delattr_projector_is_enrolled_or_named_missing() -> None:
@@ -321,20 +389,22 @@ def test_delattr_projector_is_enrolled_or_named_missing() -> None:
 
 
 def test_production_minted_operators_equal_projector_keys_including_delete() -> None:
-    """Equality tooth: production set == projector keys (delete twins included)."""
+    """Equality tooth: production set == projector keys; ``delattr_named``
+    in both, the item mutation in neither."""
     production = production_native_operation_operators()
     projectors = frozenset(_NATIVE_OPERATION_PROJECTORS)
     assert production == projectors, (
         f"missing_projectors={sorted(production - projectors)} "
         f"orphan_projectors={sorted(projectors - production)}"
     )
-    assert {"delitem", "delattr_named"} <= production
-    assert {"delitem", "delattr_named"} <= projectors
+    assert "delattr_named" in production
+    assert "delattr_named" in projectors
+    assert {"setitem", "delitem"}.isdisjoint(production | projectors)
 
 
 def test_ordered_operands_and_formals_match_protocol_signatures() -> None:
-    """Mint coordinate order is protocol discharge order, not source-eval order."""
-    # The dispatched edge takes ``__delitem__(self, key)``'s order too: the
+    """Operand order is protocol order, not source-eval order."""
+    # The dispatched edge takes ``__delitem__(self, key)``'s order: the
     # receiver first, then the key, then the receiver's class input (#8857).
     _, dispatched = _delitem_helper()
     call = _dispatched_call(dispatched)
@@ -342,16 +412,18 @@ def test_ordered_operands_and_formals_match_protocol_signatures() -> None:
     _class_input(call, "obj")
     assert len(call.args) == 3
 
-    _, delitem = _delitem_carrier_helper()
-    delitem = _require_delitem_carrier(delitem)
-    assert delitem.demand.operator == "delitem"
-    assert tuple(v.term.name for v in delitem.operands) == ("obj", "key")
-    assert list(inspect.signature(_project_delitem).parameters) == [
+    # The one item mutation takes the receiver, then the key (its operands).
+    assert list(inspect.signature(item_mutation).parameters) == [
+        "method",
         "receiver",
-        "index",
+        "operands",
         "site",
         "ctx",
+        "unit",
+        "label",
     ]
+    exits = _door(fresh(ListValue, (TermValue(0), TermValue(1))), TermValue(0))
+    assert exits.completed_value() == fresh(ListValue, (TermValue(1),))
 
     _, delattr_c = _delattr_helper()
     delattr_c = _require_delattr_carrier(delattr_c)
@@ -380,10 +452,11 @@ def test_name_deletion_is_out_of_scope_for_delitem_and_delattr_named() -> None:
             "delitem",
             "delattr_named",
         }, "Name deletion must not mint delitem/delattr_named"
-    # Positive: attribute/subscript delete still own those operators (an item
-    # delete on a class-input formal is the dispatched ``__delitem__``).
-    _, item = _delitem_carrier_helper()
-    assert _require_delitem_carrier(item).demand.operator == "delitem"
+    # Positive: a subscript delete is the one item mutation (the dispatched
+    # ``__delitem__`` on a class-input formal, the undecided delete on a
+    # formal whose class is no input), an attribute delete its carrier.
+    _, item = _delitem_undecided_helper()
+    _undecided_delete(item)
     _, dispatched = _delitem_helper()
     _dispatched_call(dispatched)
     _, attr = _delattr_helper()
@@ -391,28 +464,22 @@ def test_name_deletion_is_out_of_scope_for_delitem_and_delattr_named() -> None:
 
 
 # ===========================================================================
-# Helper alone retains the delete demand
+# Helper alone owes its delete
 # ===========================================================================
 
 
 def test_helper_alone_retains_undischarged_delitem_demand() -> None:
     """``def helper(obj, key): del obj[key]`` → the dispatched ``__delitem__``
-    edge, owed with its halt (#8857); with ``obj`` blocked, the undischarged
-    delitem carrier."""
+    edge, owed with its halt (#8857); with ``obj`` blocked, the undecided
+    delete, owed on both faces with its halt and state kept."""
     _, dispatched = _delitem_helper()
     call = _dispatched_call(dispatched)
     assert [arg.name for arg in call.args[:2]] == ["obj", "key"]
     _class_input(call, "obj")
     assert [face for face in dispatched.exits if isinstance(face, Completed)]
 
-    _, pending = _delitem_carrier_helper()
-    pending = _require_delitem_carrier(pending)
-    assert len(pending.operands) == 2
-    assert len(pending.demand.operand_coordinate_cids) == 2
-    cids = pending.demand.operand_coordinate_cids
-    assert all(cid is not None for cid in cids)
-    assert len(set(cids)) == 2
-    assert tuple(value.term.name for value in pending.operands) == ("obj", "key")
+    _, undecided = _delitem_undecided_helper()
+    _undecided_delete(undecided)
 
 
 def test_helper2_alone_retains_undischarged_delattr_named_demand() -> None:
@@ -428,69 +495,50 @@ def test_helper2_alone_retains_undischarged_delattr_named_demand() -> None:
 
 
 def test_discrimination_helper_alone_is_not_completed_delete() -> None:
-    """Undischarged demand is not a completed empty body."""
+    """An owed delete is not a completed empty body."""
     # The dispatched edge (#8857): its halt stands, and the delete is owed,
     # never a completion decided here.
     _, dispatched = _delitem_helper()
     _dispatched_call(dispatched)
     assert dispatched.halts()
-    # The carrier, where ``obj``'s class is no input, waits.
-    _, pending = _delitem_carrier_helper()
-    pending = _require_delitem_carrier(pending)
-    assert not isinstance(pending, Completed)
-    assert not isinstance(pending, ExitSet)
+    # The undecided delete, where ``obj``'s class is no input: a guarded
+    # completion beside its kept halt, never a sole completion.
+    _, undecided = _delitem_undecided_helper()
+    _undecided_delete(undecided)
+    assert undecided.halts()
+    assert undecided.completed_value() is None
 
 
 # ===========================================================================
-# Missing caller actual stays Undischarged
+# No caller actual: the delete is owed, never completed
 # ===========================================================================
-
-
-def _unanswered(pending, actuals) -> None:
-    """No caller actual: the delete is the cited unanswered face (#7825),
-    never a fabricated completion."""
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
-
-    exits = pending.discharge(None, actuals)
-    assert pending.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
 
 
 def test_missing_caller_actual_is_undischarged_not_completed() -> None:
-    _, pending = _delitem_carrier_helper()
-    pending = _require_delitem_carrier(pending)
-    _unanswered(pending, {})
+    """No caller actual is waited on: the undecided delete is the cited
+    unanswered face on both arms (#7825), never a fabricated completion."""
+    _, undecided = _delitem_undecided_helper()
+    _undecided_delete(undecided)
 
 
 def test_partial_caller_actual_is_undischarged_discrimination() -> None:
-    _, pending = _delitem_carrier_helper()
-    pending = _require_delitem_carrier(pending)
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    completed = pending.discharge(
-        None,
-        {obj_cid: fresh(ListValue, (TermValue(0),)), key_cid: TermValue(0)},
-    )
+    """A decided receiver completes the delete; an undecided one (the key
+    decided, the receiver not) is the undecided delete, owed, not a
+    completion."""
+    completed = _door(fresh(ListValue, (TermValue(0),)), TermValue(0))
     assert isinstance(completed.exits[0], Completed)
-    _unanswered(pending, {obj_cid: fresh(ListValue, (TermValue(0),))})
+    undecided = _door(SymbolicValue(make_var("obj")), TermValue(0))
+    _undecided_delete(undecided, stated=False)
 
 
 # ===========================================================================
-# Authenticated callers discharge; mutable receiver completes gone
+# A decided receiver: the floor's own delete; mutable receiver completes gone
 # ===========================================================================
 
 
 def test_mutable_list_receiver_completes_delete_with_element_gone() -> None:
     """``del obj[0]`` on ``[0, 1]`` → ListValue([1])."""
-    _, pending = _delitem_carrier_helper()
-    pending = _require_delitem_carrier(pending)
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            obj_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
-            key_cid: TermValue(0),
-        },
-    )
+    exits = _door(fresh(ListValue, (TermValue(0), TermValue(1))), TermValue(0))
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
@@ -499,25 +547,13 @@ def test_mutable_list_receiver_completes_delete_with_element_gone() -> None:
 
 def test_mutable_dict_receiver_completes_delete_with_key_gone() -> None:
     """``del obj[key]`` on dict with present key → empty entries."""
-    _, pending = _delitem_carrier_helper()
-    pending = _require_delitem_carrier(pending)
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            obj_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
-            key_cid: StringValue("a"),
-        },
+    exits = _door(
+        fresh(DictValue, ((StringValue("a"), TermValue(1)),)), StringValue("a")
     )
     assert isinstance(exits.exits[0], Completed)
     value = exits.exits[0].value
-    if isinstance(value, DictValue):
-        assert value.entries == ()
-    else:
-        record = getattr(value, "record", None)
-        assert record is not None
-        dicts = [s for s in record.statements if isinstance(s, DictValue)]
-        assert dicts and dicts[-1].entries == ()
+    assert isinstance(value, DictValue), value
+    assert value.entries == ()
 
 
 def test_writable_field_delete_completes_with_attribute_gone() -> None:
@@ -545,13 +581,7 @@ def test_writable_field_delete_completes_with_attribute_gone() -> None:
 
 
 def test_discrimination_completed_delete_is_not_halted() -> None:
-    _, pending = _delitem_carrier_helper()
-    pending = _require_delitem_carrier(pending)
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {obj_cid: fresh(ListValue, (TermValue(0),)), key_cid: TermValue(0)},
-    )
+    exits = _door(fresh(ListValue, (TermValue(0),)), TermValue(0))
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Halted)
 
@@ -562,35 +592,26 @@ def test_discrimination_completed_delete_is_not_halted() -> None:
 
 
 def test_missing_dict_key_halts_with_named_keyerror_and_pre_effect_state() -> None:
-    _, pending = _delitem_carrier_helper()
-    pending = _require_delitem_carrier(pending)
-    testimony = pending.pre_effect_state
-    assert testimony is not None, (
-        "method body reducer did not enroll ReducerPreEffectStateV1 on the "
-        "formal delitem carrier"
+    # The floor's own face over the decided actual.
+    _assert_named_halt(
+        _door(
+            fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
+            StringValue("missing"),
+        ),
+        "KeyError",
+        stated=False,
     )
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            obj_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
-            key_cid: StringValue("missing"),
-        },
-    )
-    halted = _assert_named_halt(exits, "KeyError")
-    assert halted.state is testimony.state
+    # In a function's reduction the halt leaves with the block's prefix.
+    _holds_earlier_store(_frame_halt(FRAME_MISSING_KEY, "KeyError"))
 
 
 def test_missing_list_index_halts_with_named_indexerror_and_pre_effect_state() -> None:
-    _, pending = _delitem_carrier_helper()
-    pending = _require_delitem_carrier(pending)
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {obj_cid: fresh(ListValue, (TermValue(0),)), key_cid: TermValue(4)},
+    _assert_named_halt(
+        _door(fresh(ListValue, (TermValue(0),)), TermValue(4)),
+        "IndexError",
+        stated=False,
     )
-    halted = _assert_named_halt(exits, "IndexError")
-    assert halted.state is not None
+    _holds_earlier_store(_frame_halt(FRAME_BAD_INDEX, "IndexError"))
 
 
 def test_missing_attribute_halts_with_named_attributeerror_and_pre_effect() -> None:
@@ -610,15 +631,8 @@ def test_missing_attribute_halts_with_named_attributeerror_and_pre_effect() -> N
 
 
 def test_discrimination_present_key_is_not_keyerror() -> None:
-    _, pending = _delitem_carrier_helper()
-    pending = _require_delitem_carrier(pending)
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            obj_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
-            key_cid: StringValue("a"),
-        },
+    exits = _door(
+        fresh(DictValue, ((StringValue("a"), TermValue(1)),)), StringValue("a")
     )
     assert isinstance(exits.exits[0], Completed)
     assert not isinstance(exits.exits[0], Halted)
@@ -630,73 +644,61 @@ def test_discrimination_present_key_is_not_keyerror() -> None:
 
 
 def test_deletion_does_not_roll_back_earlier_bindings_on_keyerror() -> None:
-    """Prior store/bindings in pre-effect state survive a KeyError delete halt.
+    """Prior store/bindings survive a KeyError delete halt.
 
-    When formal discharge is available, the halt state is the enrolled
-    pre-effect testimony (earlier bindings intact). Floor KeyError alone is
-    not a substitute for that composition.
+    The halt's state is the block the reducer reached before the delete
+    (``halts_at_statement_head``): ``a[0] = 9`` in it, never a fabricated
+    empty block.  An undecided delete's halt keeps it the same way.
     """
-    _, pending = _delitem_carrier_helper()
-    pending = _require_delitem_carrier(pending)
-    assert pending.pre_effect_state is not None
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            obj_cid: fresh(DictValue, ((StringValue("kept"), TermValue(1)),)),
-            key_cid: StringValue("missing"),
-        },
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    halted = _frame_halt(FRAME_MISSING_KEY, "KeyError")
+    _holds_earlier_store(halted)
+    assert halted.state != _ReducedBlock((), True, ())
+
+    source = (
+        "def helper(obj, key):\n"
+        "    a = [0]\n"
+        "    a[0] = 9\n"
+        "    del obj[key]\n"
+        "    return obj\n"
     )
-    halted = _assert_named_halt(exits, "KeyError")
-    # Pre-effect state object identity — not a fabricated empty block.
-    assert halted.state is pending.pre_effect_state.state
+    function = next(
+        node
+        for node in _tree(source, "undecided_after_store.py").nodes()
+        if isinstance(node, FunctionDef)
+    )
+    _holds_earlier_store(_undecided_delete(function.sugar().desugar(None)))
 
 
 # ===========================================================================
-# Swapped-coordinate and read-authorizes-delete twins
+# Swapped-operand and read-authorizes-delete twins
 # ===========================================================================
 
 
 def test_swapped_receiver_index_coordinates_rejected_against_truthful_delete() -> None:
-    """Lying mint (receiver/index swapped) must not equal truthful post-state.
+    """A lying delete (receiver/index swapped) must not equal the truthful
+    post-state.
 
-    Swapped discharge puts the index formal in the receiver slot; Floor
-    ``TermValue.delitem`` refuses loudly (ConstructionPanic).  That is a valid
-    discrimination face — the lying mint must not complete the truthful list.
+    Swapped, the index sits in the receiver slot; Floor ``TermValue.delitem``
+    refuses loudly (ConstructionPanic) or halts.  Either is a valid
+    discrimination face — the lie must not complete the truthful list.
     """
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
-    function, truthful = _delitem_carrier_helper()
-    truthful = _require_delitem_carrier(truthful)
-    site = function.body[0].fragment
-    obj_c, key_c = truthful.coordinates
-    # LYING mint: index in receiver slot.
-    lying = NativeOperationExitCarrierV1.mint(
-        site=site,
-        operator="delitem",
-        operands=(truthful.operands[1], truthful.operands[0]),
-        coordinates=(key_c, obj_c),
-    )
-    actuals = {
-        obj_c.coordinate_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
-        key_c.coordinate_cid: TermValue(0),
-    }
-    truthful_exits = truthful.discharge(None, actuals)
+    original = fresh(ListValue, (TermValue(0), TermValue(1)))
+    truthful_exits = _door(original, TermValue(0))
     assert isinstance(truthful_exits.exits[0], Completed)
     truthful_list = _deleted_list(truthful_exits.exits[0])
     assert truthful_list == fresh(ListValue, (TermValue(1),))
     try:
-        lying_exits = lying.discharge(None, actuals)
+        lying_exits = _door(TermValue(0), original)
     except ConstructionPanic:
         # Receiver slot received TermValue — Floor refuses delitem. Discrimination holds.
         return
     lying_face = lying_exits.exits[0]
     if isinstance(lying_face, Completed):
-        lying_value = lying_face.value
-        if isinstance(lying_value, ListValue):
-            assert lying_value != truthful_list
-        else:
-            assert _deleted_list(lying_face) != truthful_list
+        assert lying_face.value != truthful_list
     else:
         assert isinstance(lying_face, Halted)
 
@@ -760,7 +762,7 @@ def test_discrimination_writable_field_is_not_attributeerror_delete() -> None:
 
 
 # ===========================================================================
-# Floor-level delete twins (exist today — not a substitute for formal carriers)
+# Floor-level delete twins
 # ===========================================================================
 
 
@@ -835,6 +837,7 @@ def test_floor_list_delitem_completes_with_element_gone() -> None:
 def test_floor_list_delitem_out_of_range_is_named_indexerror() -> None:
     """Floor list delete IndexError (ground_index_error) — named exceptional face."""
     from sugar_lift_py_tests.effect import RaiseEffect
+
     result = fresh(ListValue, (TermValue(0),)).delitem(
         TermValue(5), _floor_site(), None
     )
@@ -844,18 +847,13 @@ def test_floor_list_delitem_out_of_range_is_named_indexerror() -> None:
     assert halt.effect.exception_name == "IndexError"
 
 
-def test_floor_delete_is_not_the_formal_carrier_twin() -> None:
-    """Discrimination: a floor completion is not helper-alone undischarged demand."""
+def test_floor_delete_is_not_the_formal_helper_twin() -> None:
+    """Discrimination: a floor completion is not a helper's owed delete."""
     floor = fresh(ListValue, (TermValue(0),)).delitem(TermValue(0), _floor_site(), None)
     assert floor.completed_value() is not None
-    _, pending = _delitem_helper()
-    # Formal demand (when present) is a carrier, not a floor completion.
-    assert not (
-        isinstance(pending, ExitSet)
-        and isinstance(pending.completed_value(), ListValue)
-    )
-    if isinstance(pending, NativeOperationExitCarrierV1):
-        assert pending.demand.operator == "delitem"
-    else:
-        # Still red until mint exists — floor success does not green the vertical.
-        assert not isinstance(pending, NativeOperationExitCarrierV1)
+    _, dispatched = _delitem_helper()
+    _dispatched_call(dispatched)
+    assert not isinstance(dispatched.completed_value(), ListValue)
+    _, undecided = _delitem_undecided_helper()
+    _undecided_delete(undecided)
+    assert not isinstance(undecided.completed_value(), ListValue)

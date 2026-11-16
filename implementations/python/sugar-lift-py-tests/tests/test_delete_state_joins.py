@@ -24,13 +24,23 @@ Acceptance:
   (b) delete inside With — exit receives pre-halt state (NeverSuppresses)
   (c) earlier bindings survive delete halts in multi-statement / unpack-like
       contexts
-  (d) bound-method delete (self prepended) discharges without shifting
-      delitem coordinates (obj/key, not self)
+  (d) bound-method delete (self prepended) keeps the delete's operands
+      obj/key, never self
   (e) lying rollback / fabricated-state twins refuse
+
+An item delete mints no carrier (#7757 step 7): ``del obj[key]`` is the one
+item mutation (``store_effect_sugar.item_mutation``).  On a formal whose
+class is an input (each seed above) it is the dispatched ``__delitem__``
+edge; on a formal whose class is no input (``return obj`` reads it bare) the
+undecided delete, its undetermined halt kept with the block's prefix; on a
+receiver the function's own frame built, the floor's own ``delitem``, whose
+named ``KeyError`` the joins below route.  Every delete halt leaves the
+block with the state it reached before the delete
+(``halts_at_statement_head``): no caller's actual is waited on.
 
 Reds name owners by nature:
 
-  codex-1 — carrier composition / pre_effect_state survival
+  codex-1 — halt composition / pre-delete state survival
   codex-3 — method-call transport / bound-method projection
 
 MUST NOT TOUCH: production, carrier/ExitSet.
@@ -52,12 +62,7 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.floor import (
-    DictValue,
-    ListValue,
-    StringValue,
-    TermValue,
-)
+from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
@@ -67,7 +72,7 @@ from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 CODEX1 = (
-    "codex-1 carrier composition: delete halt pre_effect_state / earlier "
+    "codex-1 halt composition: the delete halt's block state / earlier "
     "bindings must compose through try/with/multi-statement without "
     "fabricated or rolled-back state"
 )
@@ -90,23 +95,38 @@ METHOD_DROP = (
 # ``__delitem__`` edge, answered at prove by the class a caller binds (#8864):
 # no ``KeyError`` is decided here, and its halt leaves the block with the
 # prefix the body reached (``function_universe_sugar``'s one statement
-# tail).  The carrier these discharge joins read stands for a formal whose
-# class is no input: ``return obj`` reads ``obj`` bare
-# (``nodes._receiver_uses``), so ``project_delitem`` mints it.
-DELITEM_CARRIER = "def helper(obj, key):\n    del obj[key]\n    return obj\n"
-MULTI_PRIOR_STORE_CARRIER = (
+# tail).  On a formal whose class is no input (``return obj`` reads ``obj``
+# bare, ``nodes._receiver_uses``) nothing here decides ``type(obj)``: the
+# delete is the undecided one (``undecided_item_mutation_faces``), its
+# undetermined halt kept with the same prefix.
+MULTI_PRIOR_STORE_UNDECIDED = (
     "def multi(obj, key):\n"
     "    a = [0]\n"
     "    a[0] = 9\n"
     "    del obj[key]\n"
     "    return obj\n"
 )
-METHOD_DROP_CARRIER = (
+METHOD_DROP_UNDECIDED = (
     "class Holder:\n"
     "    def drop(self, obj, key):\n"
     "        del obj[key]\n"
     "        return obj\n"
 )
+# The named ``KeyError`` the joins route: a delete on a dict the function's
+# own frame built (decided), its missing key the floor's ``KeyError``, the
+# halt's state the block's prefix.
+DELITEM_MISSING = "def helper():\n    obj = {'a': 1}\n    del obj['missing']\n"
+MULTI_PRIOR_STORE_MISSING = (
+    "def multi():\n"
+    "    a = [0]\n"
+    "    a[0] = 9\n"
+    "    obj = {'a': 1}\n"
+    "    del obj['missing']\n"
+)
+DELITEM_PRESENT = (
+    "def helper():\n" "    obj = {'a': 1}\n" "    del obj['a']\n" "    return obj\n"
+)
+_EARLIER_STORE = fresh(ListValue, (TermValue(9),))
 
 
 def _tree(source: str, name: str = "delete_state_joins.py") -> SourceFile:
@@ -183,33 +203,24 @@ def test_dispatched_delete_halt_keeps_the_earlier_store_in_its_state() -> None:
     ), f"{CODEX1}: earlier store absent from entries={halt.state.entries!r}"
 
 
-def _delitem_keyerror_halt(
-    source: str = DELITEM_CARRIER,
-) -> tuple[NativeOperationExitCarrierV1, Halted]:
-    """Sole exceptional edge: formal delitem missing-key KeyError."""
-    tree = _tree(source, "delitem_seed.py")
+def _reduced(source: str, name: str = "delitem_seed.py"):
+    tree = _tree(source, name)
     function = next(
         node
         for node in tree.nodes()
         if isinstance(node, FunctionDef) and node.name in {"helper", "multi", "drop"}
     )
-    pending = function.sugar().desugar(None)
-    assert isinstance(
-        pending, NativeOperationExitCarrierV1
-    ), f"{CODEX1}: expected delitem carrier, got {type(pending).__name__}"
-    assert pending.demand.operator == "delitem"
-    assert (
-        pending.pre_effect_state is not None
-    ), f"{CODEX1}: reducer did not enroll pre_effect_state on delitem carrier"
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            obj_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
-            key_cid: StringValue("missing"),
-        },
-    )
-    assert isinstance(exits, ExitSet) and len(exits.exits) == 1
+    return function, function.sugar().desugar(None)
+
+
+def _delitem_keyerror_halt(source: str = DELITEM_MISSING) -> Halted:
+    """Sole exceptional edge: the delete's missing-key ``KeyError``, the
+    floor's own over a dict the frame built, leaving with the block's state
+    before the delete -- never a carrier waiting on a caller."""
+    _function, exits = _reduced(source)
+    assert isinstance(exits, ExitSet), type(exits)
+    assert not isinstance(exits, NativeOperationExitCarrierV1)
+    assert len(exits.exits) == 1, exits
     halted = exits.exits[0]
     assert isinstance(halted, Halted), halted
     assert halted.effect.exception_type_coordinate == _identity("KeyError")
@@ -220,10 +231,47 @@ def _delitem_keyerror_halt(
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
-    assert (
-        halted.state is pending.pre_effect_state.state
-    ), f"{CODEX1}: halt.state is not enrolled pre-effect state identity"
-    return pending, halted
+    assert isinstance(
+        halted.state, _ReducedBlock
+    ), f"{CODEX1}: delete halt left no block state: {halted.state!r}"
+    return halted
+
+
+def _holds_earlier_store(halted: Halted) -> None:
+    assert halted.state is not None, f"{CODEX1}: multi-statement halt dropped state"
+    entries = halted.state.entries
+    lists = [e for e in entries if isinstance(e, ListValue)]
+    assert lists == [_EARLIER_STORE], f"{CODEX1}: earlier store absent: {entries!r}"
+
+
+def _undecided_halt(source: str) -> Halted:
+    """A delete on a formal whose class is no input: the undecided delete's
+    one undetermined halt (owner ``UndecidedDelitem``), kept with its state,
+    both faces owing the undecided member -- no carrier."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    _function, outcome = _reduced(source, "delitem_undecided.py")
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedDelitem"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
+    assert halt.state is not None, f"{CODEX1}: undecided delete halt dropped state"
+    owed = unanswered_call(None, halt.effect.site)
+    assert owed in owed_calls(outcome)
+    assert owed in halt.owed
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for face in completed:
+        assert "python:delitem.completes" in str(face.guard), face.guard
+        assert owed in face.owed
+    return halt
 
 
 # ===========================================================================
@@ -233,24 +281,24 @@ def _delitem_keyerror_halt(
 
 def test_delete_halt_inside_try_handler_starts_from_pre_delete_state() -> None:
     """Matching except: handler Completed.value is the exact pre-delete state."""
-    pending, halted = _delitem_keyerror_halt()
+    halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE_MISSING)
+    _holds_earlier_store(halted)
     routed = _route_try(ExitSet((halted,)), "KeyError")
     assert len(routed.exits) == 1
     handler = routed.exits[0]
     assert isinstance(handler, Completed)
     assert handler.value is halted.state
-    assert handler.value is pending.pre_effect_state.state
 
 
 def test_delete_halt_wrong_exception_retains_identical_pre_delete_state() -> None:
     """Unmatched except: effect and state object identity survive."""
-    pending, halted = _delitem_keyerror_halt()
+    halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE_MISSING)
+    _holds_earlier_store(halted)
     routed = _route_try(ExitSet((halted,)), "ValueError")
     retained = routed.exits[0]
     assert isinstance(retained, Halted)
     assert retained.effect is halted.effect
     assert retained.state is halted.state
-    assert retained.state is pending.pre_effect_state.state
 
 
 # ===========================================================================
@@ -260,7 +308,8 @@ def test_delete_halt_wrong_exception_retains_identical_pre_delete_state() -> Non
 
 def test_delete_halt_inside_with_never_suppresses_receives_pre_halt_state() -> None:
     """NeverSuppresses cleanup: surviving halt keeps exact pre-delete state."""
-    pending, halted = _delitem_keyerror_halt()
+    halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE_MISSING)
+    _holds_earlier_store(halted)
     after = ExitSet((halted,)).and_exit(
         ExitSet.completed(TermValue(0)),
         disposition=NeverSuppresses(),
@@ -270,12 +319,12 @@ def test_delete_halt_inside_with_never_suppresses_receives_pre_halt_state() -> N
     assert isinstance(surviving, Halted)
     assert surviving.effect is halted.effect
     assert surviving.state is halted.state
-    assert surviving.state is pending.pre_effect_state.state
 
 
 def test_with_then_try_composition_on_delete_halt() -> None:
     """Compose with cleanup then matching try — handler value is pre-delete state."""
-    pending, halted = _delitem_keyerror_halt()
+    halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE_MISSING)
+    _holds_earlier_store(halted)
     after_with = ExitSet((halted,)).and_exit(
         ExitSet.completed(TermValue(0)),
         disposition=NeverSuppresses(),
@@ -286,7 +335,6 @@ def test_with_then_try_composition_on_delete_halt() -> None:
     handler = handler_set.exits[0]
     assert isinstance(handler, Completed)
     assert handler.value is halted.state
-    assert handler.value is pending.pre_effect_state.state
 
 
 # ===========================================================================
@@ -296,31 +344,24 @@ def test_with_then_try_composition_on_delete_halt() -> None:
 
 def test_earlier_bindings_survive_delete_halt_in_multi_statement_body() -> None:
     """Prior ``a[0]=9`` remains in pre-effect state when later delitem KeyErrors."""
-    pending, halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE_CARRIER)
-    assert halted.state is not None, f"{CODEX1}: multi-statement halt dropped state"
-    lists = [e for e in halted.state.entries if isinstance(e, ListValue)]
-    assert lists == [
-        fresh(ListValue, (TermValue(9),))
-    ], f"{CODEX1}: earlier store not in halt state entries={halted.state.entries!r}"
-    assert halted.state is pending.pre_effect_state.state
+    _holds_earlier_store(_delitem_keyerror_halt(MULTI_PRIOR_STORE_MISSING))
+
+
+def test_undecided_delete_halt_keeps_the_earlier_store_in_its_state() -> None:
+    """(c) on the undecided delete (a formal whose class is no input): its
+    undetermined halt leaves ``multi`` with the record the body reached,
+    ``a[0] = 9`` in it.  It names no exception (nothing decides
+    ``type(obj).__delitem__`` here) and waits on no caller's actual."""
+    _holds_earlier_store(_undecided_halt(MULTI_PRIOR_STORE_UNDECIDED))
 
 
 def test_discrimination_completed_return_is_not_the_delete_keyerror_halt() -> None:
     """Positive twin: in-range delete completes; not a KeyError halt face."""
-    tree = _tree(DELITEM_CARRIER, "complete_delete.py")
-    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            obj_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
-            key_cid: StringValue("a"),
-        },
-    )
-    assert isinstance(exits.exits[0], Completed)
-    assert not isinstance(exits.exits[0], Halted)
+    _function, exits = _reduced(DELITEM_PRESENT, "complete_delete.py")
+    assert isinstance(exits, ExitSet), type(exits)
+    assert exits.exits
+    assert all(isinstance(face, Completed) for face in exits.exits), exits
+    assert not exits.halts()
 
 
 # ===========================================================================
@@ -341,30 +382,14 @@ def test_bound_method_delete_retains_obj_key_demand_not_self() -> None:
     assert call.args[2].args[1].name == "class:obj"
     assert len(call.args) == 3
 
-    # The carrier, where ``obj``'s class is no input.
-    tree = _tree(METHOD_DROP_CARRIER, "method_drop_alone.py")
-    method = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, FunctionDef) and node.name == "drop"
-    )
-    pending = method.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1), (
-        f"{CODEX3}: method body must mint delitem carrier, "
-        f"got {type(pending).__name__}"
-    )
-    assert pending.demand.operator == "delitem"
-    names = tuple(value.term.name for value in pending.operands)
-    assert names == (
-        "obj",
-        "key",
-    ), f"{CODEX3}: delitem formals shifted by self: {names}"
+    # Where ``obj``'s class is no input: the undecided delete, its halt kept
+    # with its state, owed -- no carrier and no ``self`` operand to shift.
+    _undecided_halt(METHOD_DROP_UNDECIDED)
+    tree = _tree(METHOD_DROP_UNDECIDED, "method_drop_alone.py")
+    method = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     method_formals = tuple(p.name for p in method.params)
     assert method_formals[0] == "self"
     assert method_formals[1:] == ("obj", "key")
-    # Self formal coordinate is not a delitem operand.
-    self_coord = method.formal_coordinates()[0]
-    assert self_coord.coordinate_cid not in set(pending.demand.operand_coordinate_cids)
 
 
 def _drop_call_outcome(actuals: str) -> ExitSet:
@@ -396,8 +421,10 @@ def test_bound_method_delete_on_a_class_call_result_is_undecided_at_the_call(
     decided at the call: both are the undecided faces (a completed face under
     an undecided read's guard, every halt an undetermined raise naming no
     exception).  The ``KeyError`` is stated by ``drop``'s own reduction over
-    ``obj``/``key`` (``test_bound_method_delete_retains_obj_key_demand_not_self``)
-    and reaches a caller at prove once a method of a call result is
+    ``obj``/``key`` (``test_bound_method_delete_retains_obj_key_demand_not_self``:
+    the dispatched ``__delitem__`` edge, answered at prove by
+    ``dict.__delitem__``'s law, #8864) and reaches a caller at prove once a
+    method of a call result is
     dispatched there (step 8).  Before step 6 the call applied the body here
     and named the ``KeyError``; that application is deleted."""
     from test_method_call_application_twins import _undecided_faces
@@ -412,10 +439,10 @@ def test_bound_method_delete_on_a_class_call_result_is_undecided_at_the_call(
 
 def test_fabricated_empty_state_is_not_pre_delete_when_store_preceded() -> None:
     """Bite: multi-statement halt state is not an empty fabricated block."""
-    pending, halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE_CARRIER)
+    halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE_MISSING)
     fabricated = _ReducedBlock((), True, ())
     assert halted.state is not None
-    assert halted.state is pending.pre_effect_state.state
+    _holds_earlier_store(halted)
     with pytest.raises(AssertionError):
         assert halted.state is fabricated
     assert any(
@@ -425,19 +452,19 @@ def test_fabricated_empty_state_is_not_pre_delete_when_store_preceded() -> None:
 
 def test_handler_value_is_not_fabricated_fresh_block_twin() -> None:
     """Matching try handler must be the halt state object, not a fresh empty."""
-    pending, halted = _delitem_keyerror_halt()
+    halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE_MISSING)
     handler = _route_try(ExitSet((halted,)), "KeyError").exits[0]
     assert isinstance(handler, Completed)
     fabricated = _ReducedBlock((), True, ())
     with pytest.raises(AssertionError):
         assert handler.value is fabricated
     assert handler.value is halted.state
-    assert handler.value is pending.pre_effect_state.state
+    _holds_earlier_store(halted)
 
 
 def test_lying_rollback_misreads_halt_as_completed_body() -> None:
     """Discrimination: KeyError delete halt is not a Completed empty return."""
-    _, halted = _delitem_keyerror_halt()
+    halted = _delitem_keyerror_halt()
     with pytest.raises(AssertionError):
         assert isinstance(halted, Completed)
     with pytest.raises(AssertionError):
@@ -446,7 +473,7 @@ def test_lying_rollback_misreads_halt_as_completed_body() -> None:
 
 def test_wrong_exception_observation_is_not_the_delete_effect() -> None:
     """Bite: foreign RaiseEffect is not the transported delete edge."""
-    _, halted = _delitem_keyerror_halt()
+    halted = _delitem_keyerror_halt()
     foreign = RaiseEffect(
         exception_name="KeyError",
         blame="foreign.py:1:0",
@@ -461,7 +488,7 @@ def test_wrong_exception_observation_is_not_the_delete_effect() -> None:
 
 
 def test_with_does_not_fabricate_completed_on_delete_halt_twin() -> None:
-    _, halted = _delitem_keyerror_halt()
+    halted = _delitem_keyerror_halt()
     after = ExitSet((halted,)).and_exit(
         ExitSet.completed(TermValue(0)),
         disposition=NeverSuppresses(),

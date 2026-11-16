@@ -163,8 +163,11 @@ def test_annotated_attribute_with_value_builds_store_effect():
     assert isinstance(effects[0], AttributeStoreRuntimeEffect)
 
 
-def test_annotated_subscript_store_is_undischarged_setitem_carrier():
-    """Formal annotated subscript store mints setitem demand (not free SugarNotWritten)."""
+def test_annotated_subscript_store_is_the_one_item_mutation():
+    """A formal's annotated subscript store is the one item mutation
+    (``store_effect_sugar.item_mutation``, #7757 step 7), never a carrier
+    and never a free SugarNotWritten: the dispatched ``__setitem__`` or the
+    undecided mutation, its halt kept either way."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
@@ -172,8 +175,9 @@ def test_annotated_subscript_store_is_undischarged_setitem_carrier():
     outcome = (
         _fn("def A(d, k, y):\n    d[k]: int = y\n    return y\n").sugar().desugar()
     )
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "setitem"
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    text = repr(outcome)
+    assert "UnknownCallee:dispatch:__setitem__" in text or "UndecidedSetitem" in text
 
 
 _CONSTRUCTED_RECEIVER_SOURCE = (

@@ -4,21 +4,27 @@ Temporal state (earlier bindings) must provably survive a sole exceptional
 edge in EACH context below. Rows that cannot go green name the exact missing
 producer — that list is the seam-3 residual for T.
 
-Shared store seed (formal unpack × setitem, post-#6644):
+Shared store seed (unpack Name × setitem on a decided list):
 
-    def f(a, i, p, q):
-        b = a
-        x, b[i] = p, q
+    def f(p):
+        a = [0]
+        x, a[5] = p, 9
         return x
 
-``b = a`` reads ``a`` bare, so ``a``'s class is no input of ``f``'s contract
-and the store is the deferred ``setitem`` carrier these rows route.  Without
-it (``x, a[i] = p, q`` alone) ``a`` takes ``class:a`` since #8925 and the
-store is the dispatched ``__setitem__`` edge, owed with its halt and the
-block's state kept, as row R2's helper below states for ``a[i] = q``.
+The store is the one item mutation (``store_effect_sugar.item_mutation``,
+#7757 step 7) on a receiver the lift decided, so it is the list's own store:
+invalid index → sole Halted face, the named ``IndexError``, carrying the
+block's record the reducer gives it (``halts_at_statement_head``). Earlier
+Name ``x←p`` is not rolled into a Completed return.
 
-Invalid index → sole Halted face; ``pending.pre_effect_state.state is
-halted.state``. Earlier Name ``x←p`` is not rolled into a Completed return.
+No item store waits on a caller's actual, so the former seed -- the same
+unpack on a formal, ``b = a; x, b[i] = p, q``, discharged with a caller's
+list -- has no carrier left to discharge: ``a``'s class is no input there
+(``b = a`` reads ``a`` bare), so its store is the undecided mutation, owed on
+both faces, its undetermined halt kept with the block's state
+(``test_formal_seed_is_the_undecided_store_with_its_state``).  Without
+``b = a``, ``a`` takes ``class:a`` (#8925) and the store is the dispatched
+``__setitem__`` edge, as row R2's helper below states for ``a[i] = q``.
 
 Matrix rows:
 
@@ -33,7 +39,7 @@ effect-boundary sugar that had no producer (#7757).
 
 Lying twins per row (refuse):
 
-  - fabricated post-halt state at carrier enrollment
+  - fabricated post-halt state
   - rolled-back binding (halt misread as Completed body)
 
 MUST NOT TOUCH: carrier/ExitSet, reducer, producers, routing.
@@ -41,12 +47,10 @@ MUST NOT TOUCH: carrier/ExitSet, reducer, producers, routing.
 Seam-3 residual list (rows that pin a weaker or incomplete surface):
 
   R2. CLOSED by #6685 (codex-1): Try composes over deferred native exits.
-      Helper alone still retains one undischarged setitem carrier (deferred
-      formal — correct). Authenticated source call discharges through Try:
-      IndexError routes to handler; success bypasses handler. Pinned green
-      in test_try_native_store_carrier.py and matrix row ``r2_source_try_*``
-      below. Residual half that remains is intentional deferral at helper
-      desugar, not a missing Try×carrier composition.
+      The helper's store is now the dispatched ``__setitem__`` edge (#8857),
+      owed with its halt routed by the ``try`` and its state kept; a source
+      call is its coordinate, joined at prove (#7757 step 5). Pinned in
+      matrix row ``r2_source_try_*`` below.
 """
 
 from __future__ import annotations
@@ -54,10 +58,7 @@ from __future__ import annotations
 import pytest
 
 from frame_fresh import fresh
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    ReducerPreEffectStateV1,
-)
+from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -71,7 +72,6 @@ from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import true_guard
@@ -84,10 +84,16 @@ from sugar_source_tree.tree import SourceFile
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
-# ``b = a`` hands ``a`` on bare: its class is no input, so the unpack's store
-# through ``b`` is the ``setitem`` carrier over ``a``'s formal coordinate
-# (#8925 makes ``x, a[i] = p, q`` alone the dispatched edge).
-UNPACK_SETITEM = "def f(a, i, p, q):\n    b = a\n    x, b[i] = p, q\n    return x\n"
+# The unpack's store on a list the frame built: the list's own store, the
+# named ``IndexError`` at index 5; its in-range twin completes.
+UNPACK_SETITEM = "def f(p):\n    a = [0]\n    x, a[5] = p, 9\n    return x\n"
+UNPACK_SETITEM_OK = "def f(p):\n    a = [0]\n    x, a[0] = p, 9\n    return x\n"
+
+# The former seed: the same unpack on a formal whose class is no input
+# (``b = a`` hands ``a`` on bare), the undecided mutation.
+UNPACK_SETITEM_FORMAL = (
+    "def f(a, i, p, q):\n    b = a\n    x, b[i] = p, q\n    return x\n"
+)
 
 
 def _tree(source: str, name: str = "state_survival_matrix.py") -> SourceFile:
@@ -112,29 +118,24 @@ class _Expected:
         return self.identity
 
 
-def _unpack_store_halt() -> tuple[NativeOperationExitCarrierV1, Halted]:
-    """Sole exceptional edge: formal unpack Name+setitem IndexError halt."""
-    tree = _tree(UNPACK_SETITEM, "unpack_store_seed.py")
+def _desugared(source: str, name: str):
+    tree = _tree(source, name)
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setitem"
-    assert pending.pre_effect_state is not None
-    a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            a_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(5),
-            q_cid: TermValue(9),
-        },
-    )
+    return function.sugar().desugar(None)
+
+
+def _unpack_store_halt() -> tuple[ExitSet, Halted]:
+    """Sole exceptional edge: unpack Name+setitem IndexError halt, carrying
+    the block's record."""
+    exits = _desugared(UNPACK_SETITEM, "unpack_store_seed.py")
     assert isinstance(exits, ExitSet)
+    assert not isinstance(exits, NativeOperationExitCarrierV1)
     assert len(exits.exits) == 1
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.state is pending.pre_effect_state.state
+    assert halted.state is not None
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
+    assert halted.effect.producer_node_owner == "ground_index_error"
     assert (
         isinstance(halted.effect.occurrence_id, str)
         and ":" in halted.effect.occurrence_id
@@ -142,7 +143,7 @@ def _unpack_store_halt() -> tuple[NativeOperationExitCarrierV1, Halted]:
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
-    return pending, halted
+    return exits, halted
 
 
 def _route_try_except(exits: ExitSet, expected: str) -> ExitSet:
@@ -163,17 +164,14 @@ def _route_try_except(exits: ExitSet, expected: str) -> ExitSet:
 
 def test_a_store_halt_try_except_handler_begins_from_routed_edge_state() -> None:
     """Matching except consumes the store halt; handler value IS pre-halt state."""
-    pending, halted = _unpack_store_halt()
-    testimony = pending.pre_effect_state
-    assert testimony is not None
-    assert halted.state is testimony.state
+    _, halted = _unpack_store_halt()
+    assert halted.state is not None
 
     routed = _route_try_except(ExitSet((halted,)), "IndexError")
     assert len(routed.exits) == 1
     handler = routed.exits[0]
     assert isinstance(handler, Completed)
     # Handler begins from the routed edge's state — exact object identity.
-    assert handler.value is testimony.state
     assert handler.value is halted.state
 
 
@@ -189,7 +187,7 @@ def test_a_wrong_except_type_retains_identical_halt_state() -> None:
 
 def test_a_handler_not_fabricated_post_halt_state_twin() -> None:
     """Bite: handler value must be the pre-halt state, not a fresh empty block."""
-    pending, halted = _unpack_store_halt()
+    _, halted = _unpack_store_halt()
     routed = _route_try_except(ExitSet((halted,)), "IndexError")
     handler = routed.exits[0]
     assert isinstance(handler, Completed)
@@ -197,7 +195,7 @@ def test_a_handler_not_fabricated_post_halt_state_twin() -> None:
     with pytest.raises(AssertionError):
         assert handler.value is fabricated
     with pytest.raises(AssertionError):
-        assert handler.value is not pending.pre_effect_state.state
+        assert handler.value is not halted.state
 
 
 # ===========================================================================
@@ -256,22 +254,16 @@ def test_b_exit_does_not_fabricate_completed_from_store_halt_twin() -> None:
 
 
 def test_d_unpack_name_binding_survives_later_store_halt() -> None:
-    """Earlier Name ``x←p`` seam: halt state is pre_effect_state, not Completed."""
-    pending, halted = _unpack_store_halt()
-    assert pending.pre_effect_state is not None
-    assert halted.state is pending.pre_effect_state.state
+    """Earlier Name ``x←p`` seam: halt keeps the block's state, not Completed."""
+    _, halted = _unpack_store_halt()
+    assert halted.state is not None
     assert not isinstance(halted, Completed)
     assert not isinstance(getattr(halted, "value", None), UniverseValue)
     # Success twin: when store completes, return carries formal p (x survived).
-    a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
-    success = pending.discharge(
-        None,
-        {
-            a_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(0),
-            q_cid: TermValue(9),
-        },
-    ).exits[0]
+    succeeded = _desugared(UNPACK_SETITEM_OK, "unpack_store_ok.py")
+    assert isinstance(succeeded, ExitSet)
+    assert len(succeeded.exits) == 1
+    success = succeeded.exits[0]
     assert isinstance(success, Completed)
     assert isinstance(success.value, UniverseValue)
     returns = [
@@ -286,13 +278,13 @@ def test_d_unpack_name_binding_survives_later_store_halt() -> None:
 
 def test_d_rolled_back_binding_twin_refuses() -> None:
     """Bite: later store halt is not a Completed body and does not drop state."""
-    pending, halted = _unpack_store_halt()
+    _, halted = _unpack_store_halt()
     with pytest.raises(AssertionError):
         assert isinstance(halted, Completed), "later store halt completed the body"
     with pytest.raises(AssertionError):
         assert halted.state is None, "halt dropped earlier-binding state"
     with pytest.raises(AssertionError):
-        assert halted.state is not pending.pre_effect_state.state
+        assert halted.state is _ReducedBlock((), True, ()), "fabricated state"
 
 
 def test_d_free_dual_store_later_halt_retains_prior_store_in_state() -> None:
@@ -346,7 +338,7 @@ def test_e_with_then_try_except_preserves_store_halt_state() -> None:
     Store halt → NeverSuppresses ``__exit__`` path → matching except handler.
     Handler value remains the original pre-halt state object.
     """
-    pending, halted = _unpack_store_halt()
+    _, halted = _unpack_store_halt()
     after_with = ExitSet((halted,)).and_exit(
         ExitSet.completed(TermValue(0)),
         disposition=NeverSuppresses(),
@@ -358,7 +350,6 @@ def test_e_with_then_try_except_preserves_store_halt_state() -> None:
     handler_set = _route_try_except(after_with, "IndexError")
     handler = handler_set.exits[0]
     assert isinstance(handler, Completed)
-    assert handler.value is pending.pre_effect_state.state
     assert handler.value is halted.state
 
 
@@ -428,37 +419,55 @@ def test_r2_a_source_call_is_its_coordinate_never_the_helper_s_body(
 
 
 # ===========================================================================
-# Cross-row lying twins: fabricated enrollment / rolled-back / wrong occurrence
+# Cross-row: the formal seed's store, and the seed's sole exceptional edge
 # ===========================================================================
 
 
-def test_fabricated_post_halt_state_refused_at_carrier_enrollment() -> None:
-    """Cross-row: raw/fabricated state cannot enroll as reducer testimony."""
-    pending, _ = _unpack_store_halt()
-    fabricated = _ReducedBlock((TermValue(99),), True, ())
-    with pytest.raises(TypeError, match="reducer-issued testimony"):
-        pending.and_then(
-            lambda value: ExitSet.completed(value),
-            pre_effect_state=fabricated,
-        )
+def test_formal_seed_is_the_undecided_store_with_its_state() -> None:
+    """The former seed, ``b = a; x, b[i] = p, q``: no carrier waits on a
+    caller's list (#7757 step 7).  ``a``'s class is no input, so the store is
+    the undecided mutation (``undecided_item_mutation_faces``): it completes
+    only under its own ``python:setitem.completes`` atom, with ``x`` bound to
+    ``p``, or halts with an undetermined raise kept with the block's state;
+    both faces owe the undecided member."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
 
-
-def test_conflicting_second_state_enrollment_panics() -> None:
-    pending, _ = _unpack_store_halt()
-    conflicting = ReducerPreEffectStateV1._from_reducer(
-        _ReducedBlock((TermValue(1),), True, ())
-    )
-    with pytest.raises(ConstructionPanic, match="second conflicting"):
-        pending.and_then(
-            lambda value: ExitSet.completed(value),
-            pre_effect_state=conflicting,
-        )
+    outcome = _desugared(UNPACK_SETITEM_FORMAL, "unpack_store_formal.py")
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedSetitem"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.state is not None
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for face in (halt, *completed):
+        assert None in {call.symbol for call in owed_calls(ExitSet((face,)))}
+    for face in completed:
+        assert "python:setitem.completes" in str(face.guard)
+        assert isinstance(face.value, UniverseValue), face.value
+        returns = [
+            s for s in face.value.record.statements if type(s).__name__ == "ReturnValue"
+        ]
+        assert len(returns) == 1
+        assert returns[0].value.term.name == "p"
+    assert outcome.completed_value() is None
+    # Bite: the undecided store's halt is neither dropped nor stateless.
+    with pytest.raises(AssertionError):
+        assert not outcome.halts(), "the undecided store dropped its halt"
+    with pytest.raises(AssertionError):
+        assert halt.state is None, "halt dropped earlier-binding state"
 
 
 def test_matrix_seed_is_sole_exceptional_edge() -> None:
     """Seed contract: exactly one Halted face; no parallel Completed store."""
-    _, halted = _unpack_store_halt()
-    exits = ExitSet((halted,))
+    exits, _ = _unpack_store_halt()
     assert len(exits.exits) == 1
     assert all(isinstance(face, Halted) for face in exits.exits)
     with pytest.raises(AssertionError):

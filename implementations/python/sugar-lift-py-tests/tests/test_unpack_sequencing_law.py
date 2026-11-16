@@ -23,7 +23,10 @@ Producer methods (this PR):
   - ``UnpackStoreAssignSugar.desugar``
 
 Consumer methods (reused, not reimplemented — windows 10876 / composition):
-  - ``SubscriptStoreEffectSugar.desugar`` / ``_store`` → ``receiver.setitem``
+  - ``SubscriptStoreEffectSugar.desugar`` / ``_store`` → the one item
+    mutation ``store_effect_sugar.item_mutation`` (#7757 step 7): the
+    dispatched edge on a receiver whose class is an input, the undecided
+    mutation where nothing decides its type, else ``receiver.setitem``
   - ``reduce_body`` / ``reduce_block_to_exitset`` (store success/halt sequence)
 
 Corpus coordinate (pandas 3.0.3, line content verified):
@@ -304,8 +307,10 @@ def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> Non
     is), so the store is the dispatched ``__setitem__`` edge, owed as the one
     member ``python:dispatch:__setitem__`` with its halt kept, answered at
     prove by the class each caller binds -- not a fabricated completion, and
-    not a ``SugarNotWritten`` panic (the panic is reserved for undecided
-    non-formal receivers).
+    not a ``SugarNotWritten`` panic.  A receiver whose type nothing decides
+    (a formal whose class is no input, an opaque call result) is no panic
+    either: it is the undecided mutation (``item_mutation``), two-faced and
+    owed; no store waits on a caller's actual (#7757 step 7).
     """
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,

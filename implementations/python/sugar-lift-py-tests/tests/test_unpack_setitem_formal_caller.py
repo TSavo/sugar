@@ -7,48 +7,48 @@ Concrete program (post-#6630 setitem producer + #6604 Name+Subscript leaves):
         return x
 
 This is not a second setitem vertical and not a second unpack-leaf vertical.
-It is the join: the unpack statement admits the subscript store leaf, formal
-desugar mints the ``setitem`` demand (never a fabricated completion), and a
-real caller / discharge supplies authenticated actuals.
-
-The undischarged-carrier tooth for this helper alone already lives in
-``test_assign_unpack_store_leaves.test_formal_subscript_unpack_desugar_stays_undischarged``
-(#6634).  This module builds the caller/discharge faces on top of that tooth
-and does not recreate it.
+It is the join: the unpack statement admits the subscript store leaf, its
+store goes through the one item mutation (``item_mutation`` of
+``store_effect_sugar``, #7757 step 7) -- never a fabricated completion -- and
+a real caller's call is its coordinate and edge, joined at prove.
 
 Operand order (setitem owner law):
 
   source evaluation:  value → receiver → index   (q, a, i for this body)
-  discharge / mint:   receiver, index, value     (a, i, q for this body)
-
-Acceptance faces (each with a discrimination twin):
-
-  1. Helper alone retains the undischarged ``setitem`` demand in discharge
-     order ``(receiver, index, value)`` — here ``(a, i, q)``.
-  2. Mutable receiver completes with ``x`` bound to ``p`` and the correct
-     list store at ``a[i]``.
-  3. Invalid index yields named ``IndexError``; earlier name binding is not
-     rolled back into a Completed face; the return statement does not complete.
-  4. First-store halt blocks later targets (dual-store unpack).
-  5. Swapped source/discharge order twin fails.
+  dispatch:           receiver, index, value     (a, i, q for this body)
 
 Since #8925 ``a`` above takes ``class:a`` as an input of ``f``'s contract: an
 item store through an unpack leaf is read as ``a[i] = v`` is
 (``nodes._receiver_uses``), so ``x, a[i] = p, q`` stores through the
 dispatched ``__setitem__`` edge, ``call:dispatch:__setitem__(a, i, q,
 py.class("0", class:a))``, owed with its halt kept and answered at prove by
-the class each caller binds (``list.__setitem__``'s law, #8864).  The
-``setitem`` carrier stands for the same unpack on a formal whose class is no
-input; the discharge faces below read it off ``CARRIER_PROGRAM``, where
-``b = a`` hands ``a`` on bare (``_receiver_uses``: blocked) and the store
-goes through ``b``.
+the class each caller binds (``list.__setitem__``'s law, #8864).
 
-Does not touch ``store_effect_sugar``, projector tables, or carrier/ExitSet.
+No item store waits on a caller's actual, so no ``setitem`` carrier stands
+anywhere (#7757 step 7).  The same unpack on a formal whose class is no input
+(``UNDECIDED_PROGRAM``: ``b = a`` hands ``a`` on bare, ``_receiver_uses``:
+blocked) is the undecided mutation: it completes under its own
+``python:setitem.completes`` atom or raises something undetermined, both
+faces owing the undecided member, the halt kept with the block's state.  The
+floor's own store faces that a caller's list decides (the store at the right
+cell, the named ``IndexError`` at a bad index) are read where the receiver is
+decided: the one item mutation on a ``ListValue`` actual, and the same unpack
+on a list the frame built (``DECIDED_PROGRAM`` / ``BAD_INDEX_PROGRAM``).
+
+Acceptance faces (each with a discrimination twin):
+
+  1. Helper alone: the dispatched edge in order ``(receiver, index, value)``
+     -- here ``(a, i, q)``; on a formal whose class is no input, the
+     undecided mutation, owed, halt kept.
+  2. Mutable receiver completes with ``x`` bound to ``p`` and the correct
+     list store at ``a[i]``.
+  3. Invalid index yields named ``IndexError``; earlier name binding is not
+     rolled back into a Completed face; the return statement does not complete.
+  4. First-store halt blocks later targets (dual-store unpack).
+  5. Swapped source/dispatch order twin fails.
 """
 
 from __future__ import annotations
-
-import inspect
 
 import pytest
 
@@ -69,8 +69,13 @@ PROGRAM = "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n"
 
 # The same unpack on a formal whose class is no input of ``f``'s contract:
 # ``b = a`` reads ``a`` bare, so the store through ``b`` (``a``'s object) is
-# the ``setitem`` carrier over ``a``'s formal coordinate.
-CARRIER_PROGRAM = "def f(a, i, p, q):\n    b = a\n    x, b[i] = p, q\n    return x\n"
+# the undecided mutation (``item_mutation``: nothing here decides its type).
+UNDECIDED_PROGRAM = "def f(a, i, p, q):\n    b = a\n    x, b[i] = p, q\n    return x\n"
+
+# The same unpack on a list the frame built: the receiver is decided, so the
+# store is the list's own (``ListValue.setitem``), at a good and a bad index.
+DECIDED_PROGRAM = "def f(p):\n    a = [0]\n    x, a[0] = p, 9\n    return x\n"
+BAD_INDEX_PROGRAM = "def f(p):\n    a = [0]\n    x, a[5] = p, 9\n    return x\n"
 
 
 def _tree(source: str, name: str = "unpack_setitem_caller.py") -> SourceFile:
@@ -80,20 +85,22 @@ def _tree(source: str, name: str = "unpack_setitem_caller.py") -> SourceFile:
     )
 
 
+def _desugared(source: str, name: str):
+    """``source``'s one function alone and its own proof's reduction."""
+    tree = _tree(source, name)
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    return function, function.sugar().desugar(None)
+
+
 def _dispatched_helper():
     """``PROGRAM`` alone and its own proof's reduction: ``a``'s class is an
     input (#8925), so its unpack leaf store is the dispatched edge."""
-    tree = _tree(PROGRAM, "helper_alone.py")
-    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    return function, function.sugar().desugar(None)
+    return _desugared(PROGRAM, "helper_alone.py")
 
 
-def _helper():
-    """``CARRIER_PROGRAM`` alone: the undischarged ``setitem`` carrier, with
-    the pre-effect state the body's reducer enrolls."""
-    tree = _tree(CARRIER_PROGRAM, "helper_carrier_alone.py")
-    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    return function, function.sugar().desugar(None)
+def _undecided_helper():
+    """``UNDECIDED_PROGRAM`` alone: the store is the undecided mutation."""
+    return _desugared(UNDECIDED_PROGRAM, "helper_undecided_alone.py")
 
 
 def _dispatched_call(outcome, method: str = "__setitem__"):
@@ -132,6 +139,52 @@ def _class_input(call, receiver: str) -> None:
     assert rides.args[1].name == f"class:{receiver}", rides
 
 
+def _undecided_store(outcome):
+    """The undecided mutation (``item_mutation`` over a receiver whose type
+    nothing here decides, ``undecided_item_mutation_faces``): no carrier and
+    no dispatched edge; one undetermined halt owned
+    by ``UndecidedSetitem``, kept with the block's state; every completed
+    face under the store's own ``python:setitem.completes`` atom; both faces
+    owing the undecided member (symbol ``None``).  Returns the halt and the
+    completed faces."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedSetitem"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.state is not None
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for face in (halt, *completed):
+        assert None in {call.symbol for call in owed_calls(ExitSet((face,)))}
+    for face in completed:
+        assert "python:setitem.completes" in str(face.guard)
+    assert "python:dispatch:__setitem__" not in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    assert outcome.completed_value() is None
+    return halt, completed
+
+
+def _floor_store(receiver, index, value):
+    """The one item mutation on a receiver the lift decided (the ``ListValue``
+    a caller hands ``a``): the list's own store, at the unpack's site."""
+    from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
+    tree = _tree(UNDECIDED_PROGRAM, "floor_store_site.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    site = function.body[1].fragment
+    return item_mutation("__setitem__", receiver, (index, value), site, None, unit=None)
+
+
 def _call(actuals: str):
     tree = _tree(PROGRAM + f"\nf({actuals})\n")
     call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
@@ -147,20 +200,20 @@ def _identity(name: str):
     )
 
 
-def _completed_universe(pending, actuals) -> UniverseValue:
-    exits = pending.discharge(None, actuals)
-    assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    face = exits.exits[0]
+def _sole_completed_universe(outcome) -> UniverseValue:
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1, outcome
+    face = outcome.exits[0]
     assert isinstance(face, Completed)
     assert isinstance(face.value, UniverseValue)
     return face.value
 
 
-def _stored_list(universe: UniverseValue) -> ListValue:
-    lists = [s for s in universe.record.statements if isinstance(s, ListValue)]
-    assert len(lists) == 1, lists
-    return lists[0]
+def _stored_list(outcome) -> ListValue:
+    """The list the one item mutation completed with."""
+    value = outcome.completed_value()
+    assert isinstance(value, ListValue), outcome
+    return value
 
 
 def _returned(universe: UniverseValue) -> ReturnValue:
@@ -169,17 +222,30 @@ def _returned(universe: UniverseValue) -> ReturnValue:
     return returns[0]
 
 
+def _index_error(halted) -> None:
+    """The floor's named ``IndexError`` at its authenticated locus."""
+    assert isinstance(halted, Halted)
+    assert not isinstance(halted, Completed)
+    assert halted.effect.exception_type_coordinate == _identity("IndexError")
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
-# 1. Helper alone retains setitem demand (discharge order)
+# 1. Helper alone: the dispatched edge in dispatch order; the undecided store
 # ---------------------------------------------------------------------------
 
 
 def test_helper_alone_retains_setitem_demand_in_discharge_order() -> None:
     # Expected shape changed (#8925): ``x, a[i] = p, q`` on a formal whose
-    # class is an input is the dispatched ``__setitem__`` edge, in the same
-    # discharge order (receiver, index, value), owed with its halt and the
-    # block's state kept; ``x`` binds ``p`` beside it, so every completed
-    # face returns ``p``.  The carrier stands where the class is no input.
+    # class is an input is the dispatched ``__setitem__`` edge, in dispatch
+    # order (receiver, index, value), owed with its halt and the block's state
+    # kept; ``x`` binds ``p`` beside it, so every completed face returns ``p``.
     _, outcome = _dispatched_helper()
     call = _dispatched_call(outcome)
     assert [arg.name for arg in call.args[:3]] == ["a", "i", "q"]
@@ -193,36 +259,32 @@ def test_helper_alone_retains_setitem_demand_in_discharge_order() -> None:
         assert isinstance(returned.value, SymbolicValue)
         assert returned.value.term.name == "p"
 
-    _, pending = _helper()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setitem"
-    # Discharge order for this unpack: receiver a, index i, stored value q.
-    # (Name target x binds p; p is not a setitem operand.)
-    assert tuple(operand.term.name for operand in pending.operands) == (
-        "a",
-        "i",
-        "q",
-    )
-    cids = pending.demand.operand_coordinate_cids
-    assert len(cids) == 3
-    assert all(cid is not None for cid in cids)
-    assert len(set(cids)) == 3
-    parameters = tuple(
-        inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
-    )
-    assert parameters == ("receiver", "index", "value", "site", "ctx")
+    # Expected shape changed (#7757 step 7): on a formal whose class is no
+    # input the store is the undecided mutation, never a ``setitem`` carrier
+    # awaiting actuals; ``x`` still binds ``p`` on its completed face.
+    _, undecided = _undecided_helper()
+    _halt, undecided_completed = _undecided_store(undecided)
+    for face in undecided_completed:
+        assert isinstance(face.value, UniverseValue), face.value
+        returned = _returned(face.value)
+        assert isinstance(returned.value, SymbolicValue)
+        assert returned.value.term.name == "p"
+    # The carrier's projector is deleted: no item store is minted as one.
+    assert "setitem" not in _NATIVE_OPERATION_PROJECTORS
 
 
 def test_helper_alone_is_not_a_completed_face_discrimination() -> None:
-    """Bite: undischarged formal unpack must not look like a Completed body."""
+    """Bite: the formal unpack's store must not look like a Completed body."""
     _, dispatched = _dispatched_helper()
     assert dispatched.completed_value() is None
     assert dispatched.halts()
-    _, pending = _helper()
+    _, undecided = _undecided_helper()
     with pytest.raises(AssertionError):
-        assert isinstance(pending, ExitSet) and pending.completed_value() is not None
+        assert undecided.completed_value() is not None
     with pytest.raises(AssertionError):
-        assert isinstance(pending, Completed)
+        assert not undecided.halts(), "the undecided store dropped its halt"
+    with pytest.raises(AssertionError):
+        assert isinstance(undecided, Completed)
 
 
 # ---------------------------------------------------------------------------
@@ -231,19 +293,14 @@ def test_helper_alone_is_not_a_completed_face_discrimination() -> None:
 
 
 def test_mutable_receiver_completes_with_x_and_correct_store() -> None:
-    _, pending = _helper()
-    a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
-    universe = _completed_universe(
-        pending,
-        {
-            a_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(0),
-            q_cid: TermValue(9),
-        },
-    )
-    # Correct store: a[0] becomes 9.
-    assert _stored_list(universe) == fresh(ListValue, (TermValue(9),))
-    # x bound to p: Name is spent as formal p; return carries SymbolicValue(p).
+    # Correct store: the list a caller hands ``a``, ``a[0] = 9``, becomes
+    # ``[9]`` (the one item mutation's floor store; no carrier discharges).
+    stored = _floor_store(fresh(ListValue, (TermValue(0),)), TermValue(0), TermValue(9))
+    assert _stored_list(stored) == fresh(ListValue, (TermValue(9),))
+    # x bound to p beside the decided store: the return carries
+    # SymbolicValue(p).
+    _, outcome = _desugared(DECIDED_PROGRAM, "decided_ok.py")
+    universe = _sole_completed_universe(outcome)
     returned = _returned(universe)
     assert isinstance(returned.value, SymbolicValue)
     assert returned.value.term.name == "p"
@@ -273,7 +330,7 @@ def _the_call(actuals: str):
 def test_source_caller_mutable_receiver_completes() -> None:
     # Expected verdict changed (#8705, #8739): the call is the edge, two-faced
     # and owed; it no longer carries the callee's store on the caller's list.
-    # The store itself is the row discharged with these actuals
+    # The store on these actuals is the list's own
     # (``test_mutable_receiver_completes_with_x_and_correct_store``).
     presented = _the_call("[0], 0, 1, 9")
     # The edge carries the actuals for a, i, p, q as written.
@@ -287,17 +344,9 @@ def test_source_caller_mutable_receiver_completes() -> None:
 
 def test_mutable_receiver_completes_discrimination_wrong_cell() -> None:
     """Bite: storing at index 0 is not the same face as storing at index 1."""
-    _, pending = _helper()
-    a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
     base = fresh(ListValue, (TermValue(0), TermValue(1)))
-    at_zero = _completed_universe(
-        pending, {a_cid: base, i_cid: TermValue(0), q_cid: TermValue(9)}
-    )
-    at_one = _completed_universe(
-        pending, {a_cid: base, i_cid: TermValue(1), q_cid: TermValue(9)}
-    )
-    zero_list = _stored_list(at_zero)
-    one_list = _stored_list(at_one)
+    zero_list = _stored_list(_floor_store(base, TermValue(0), TermValue(9)))
+    one_list = _stored_list(_floor_store(base, TermValue(1), TermValue(9)))
     assert zero_list == fresh(ListValue, (TermValue(9), TermValue(1)))
     assert one_list == fresh(ListValue, (TermValue(0), TermValue(9)))
     with pytest.raises(AssertionError):
@@ -312,38 +361,24 @@ def test_mutable_receiver_completes_discrimination_wrong_cell() -> None:
 def test_invalid_index_named_indexerror_no_statement_completion() -> None:
     """IndexError from Floor setitem; return does not complete; not Completed.
 
-    Post-#6644: the halt face carries the authentic reducer pre-effect state
-    (earlier unpack binding seam).  Name ``x`` is spent by substitute so the
-    block entries may be empty — the state object itself must still be present
-    and must not be fabricated completion.
+    The store on the list a caller hands ``a`` raises the named
+    ``IndexError`` at index 5.  The same unpack on a list the frame built
+    halts there too, with the record the reducer gives the halt (the block's
+    state before the store, ``halts_at_statement_head``): ``x`` is spent by
+    substitute so the block entries may be empty -- the state object itself
+    must still be present and must not be fabricated completion.
     """
-    _, pending = _helper()
-    assert pending.pre_effect_state is not None
-    a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            a_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(5),
-            q_cid: TermValue(9),
-        },
-    )
+    floor = _floor_store(fresh(ListValue, (TermValue(0),)), TermValue(5), TermValue(9))
+    assert len(floor.exits) == 1
+    _index_error(floor.exits[0])
+
+    _, exits = _desugared(BAD_INDEX_PROGRAM, "decided_bad.py")
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     halted = exits.exits[0]
-    assert isinstance(halted, Halted)
-    assert not isinstance(halted, Completed)
-    assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
-    )
-    # Authentic earlier-binding halt state (carrier #6640 / enrollment #6644).
+    _index_error(halted)
+    # Authentic earlier-binding halt state: the block's record, kept.
     assert halted.state is not None
-    assert pending.pre_effect_state.state is halted.state
     # No statement completion: no UniverseValue return face on the halt arm.
     assert not isinstance(getattr(halted, "value", None), UniverseValue)
     # Earlier name binding is not rolled back into a fake Completed — the sole
@@ -357,7 +392,7 @@ def test_source_caller_invalid_index_named_indexerror() -> None:
     # no longer is the followed body's one IndexError halt.  It is the edge,
     # which owes its halt and completes with the call value, never a
     # completed return of ``x``; the named IndexError with the earlier
-    # binding's state is the row discharged with these actuals
+    # binding's state is the list's own store at these actuals
     # (``test_invalid_index_named_indexerror_no_statement_completion``),
     # joined at the call by prove (#8690, #8749).
     presented = _the_call("[0], 5, 1, 9")
@@ -372,16 +407,7 @@ def test_source_caller_invalid_index_named_indexerror() -> None:
 
 def test_invalid_index_discrimination_is_not_completed() -> None:
     """Bite: IndexError face must not be misread as Completed with x."""
-    _, pending = _helper()
-    a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            a_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(5),
-            q_cid: TermValue(9),
-        },
-    )
+    _, exits = _desugared(BAD_INDEX_PROGRAM, "decided_bad_d.py")
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed), "halted store completed the body"
     # Bite: missing earlier-binding state is also not the law.
@@ -434,77 +460,45 @@ def test_first_store_halt_blocks_later_targets_discrimination() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. Swapped source/discharge order twin fails
+# 5. Swapped source/dispatch order twin fails
 # ---------------------------------------------------------------------------
 
 
 def test_swapped_source_discharge_order_twin_fails() -> None:
-    """Discharge order is (a, i, q); source eval of the store is (q, a, i).
+    """Dispatch order is (a, i, q); source eval of the store is (q, a, i).
 
-    A twin that equates the two orders must fail — the mint pins discharge
-    order for the projector, not evaluation order.
+    A twin that equates the two orders must fail — the dispatched edge pins
+    ``type(a).__setitem__(a, i, q)``'s order, not evaluation order.
     """
-    _, pending = _helper()
-    discharge_names = tuple(operand.term.name for operand in pending.operands)
+    _, outcome = _dispatched_helper()
+    call = _dispatched_call(outcome)
+    dispatch_names = tuple(arg.name for arg in call.args[:3])
     source_eval_names = ("q", "a", "i")  # value, receiver, index
-    assert discharge_names == ("a", "i", "q")
-    assert discharge_names != source_eval_names
+    assert dispatch_names == ("a", "i", "q")
+    assert dispatch_names != source_eval_names
     with pytest.raises(AssertionError):
-        assert discharge_names == source_eval_names, "eval order is not discharge order"
+        assert dispatch_names == source_eval_names, "eval order is not dispatch order"
 
 
 def test_lying_swapped_index_value_mint_is_not_truthful_store() -> None:
-    """Lying mint with index/value slots swapped is distinguishable."""
-    function, truthful = _helper()
-    # The unpack is ``CARRIER_PROGRAM``'s second statement.
-    site = function.body[1].fragment
-    obj_c, key_c, value_c = truthful.coordinates
-    lying = NativeOperationExitCarrierV1.mint(
-        site=site,
-        operator="setitem",
-        operands=(
-            truthful.operands[0],
-            truthful.operands[2],
-            truthful.operands[1],
-        ),
-        coordinates=(obj_c, value_c, key_c),
-    )
-    actuals = {
-        obj_c.coordinate_cid: fresh(
-            ListValue, (TermValue(0), TermValue(1), TermValue(2))
-        ),
-        key_c.coordinate_cid: TermValue(1),
-        value_c.coordinate_cid: TermValue(99),
-    }
-    truthful_universe = _completed_universe(truthful, actuals)
-    truthful_list = _stored_list(truthful_universe)
+    """A store with index/value swapped is distinguishable: the truthful one
+    stores 99 at 1; the swapped one stores 1 at 99, the named IndexError."""
+    base = fresh(ListValue, (TermValue(0), TermValue(1), TermValue(2)))
+    truthful_list = _stored_list(_floor_store(base, TermValue(1), TermValue(99)))
     assert truthful_list == fresh(
         ListValue, (TermValue(0), TermValue(99), TermValue(2))
     )
 
-    lying_exits = lying.discharge(None, actuals)
-    lying_face = lying_exits.exits[0]
-    if isinstance(lying_face, Completed) and isinstance(lying_face.value, ListValue):
-        lying_list = lying_face.value
-    elif isinstance(lying_face, Completed) and isinstance(
-        lying_face.value, UniverseValue
-    ):
-        lying_list = _stored_list(lying_face.value)
-    else:
-        assert isinstance(lying_face, Halted)
-        lying_list = None
-
-    if lying_list is not None:
-        assert lying_list != truthful_list
-        with pytest.raises(AssertionError):
-            assert lying_list == truthful_list, "swapped mint matched truthful store"
+    lying = _floor_store(base, TermValue(99), TermValue(1))
+    assert len(lying.exits) == 1
+    _index_error(lying.exits[0])
+    with pytest.raises(AssertionError):
+        assert lying.completed_value() == truthful_list, "swapped store matched"
 
 
 def test_missing_actuals_stay_undischarged() -> None:
-    """Missing actuals: the store is the cited unanswered face (#7825)."""
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
-
-    _, pending = _helper()
-    exits = pending.discharge(None, {})
-    assert pending.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
+    """No store waits on a caller's actual (#7757 step 7): where nothing
+    decides the receiver's type the store is the undecided mutation, owing
+    the undecided member on both faces, never a completed value."""
+    _, outcome = _undecided_helper()
+    _undecided_store(outcome)

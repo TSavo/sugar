@@ -253,15 +253,17 @@ def test_attribute_store_target_lifts_a_typed_red_effect():
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
 
 
-def test_subscript_store_target_retains_setitem_demand_without_caller():
+def test_subscript_store_target_on_a_formal_is_the_undecided_store():
+    """``xs[0] = 1`` where ``xs`` is also read bare (``return xs``): its class
+    is no input of the contract, so the store is the undecided item mutation
+    (``store_effect_sugar.item_mutation``): owed, its halt kept, never a
+    carrier waiting on a caller's actual (#7757 step 7)."""
     from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
 
-    pending = _fn("def A(xs):\n    xs[0] = 1\n    return xs\n").sugar().desugar()
+    outcome = _fn("def A(xs):\n    xs[0] = 1\n    return xs\n").sugar().desugar()
 
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setitem"
-    assert pending.demand.operand_coordinate_cids[0] is not None
-    assert pending.demand.operand_coordinate_cids[1:] == (None, None)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert "UndecidedSetitem" in repr(outcome)
 
 
 def test_subscript_store_producer_retains_receiver_key_and_rhs():

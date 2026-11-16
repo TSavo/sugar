@@ -13,6 +13,17 @@ Seed:
     def helper2(obj):
         del obj.field
 
+An item delete mints no carrier (#7757 step 7): ``del obj[key]`` is the one
+item mutation (``store_effect_sugar.item_mutation``).  On ``helper``'s
+``obj`` (its class an input) it is the dispatched ``__delitem__`` edge; on a
+formal whose class is no input (``return obj`` reads it bare) the undecided
+delete, owed on both faces with its halt kept; on a receiver whose type is
+decided (the caller's ``dict``/``list`` actual) the floor's own ``delitem``.
+The readback laws below read that floor delete off the door over the decided
+actual, and the state a halted delete leaves with off a function whose own
+frame built the receiver.  ``helper2``'s ``del obj.field`` keeps its
+``delattr_named`` carrier.
+
 Acceptance:
 
   1. Completed delitem → subsequent read of that key yields named KeyError;
@@ -51,6 +62,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
@@ -75,12 +87,23 @@ FLOOR_ATTR = (
 DELITEM = "def helper(obj, key):\n    del obj[key]\n"
 # Since #8857 ``DELITEM``'s ``obj`` takes ``class:obj`` as an input (deleted
 # from, used no other way): its delete is the dispatched ``__delitem__``
-# edge, answered at prove by the class a caller binds (#8864), never a
-# carrier discharged here.  The ``delitem`` carrier these readback laws read
-# stands for a formal whose class is no input: ``return obj`` reads ``obj``
-# bare (``nodes._receiver_uses``), so ``project_delitem`` mints it.
-DELITEM_CARRIER = "def helper(obj, key):\n    del obj[key]\n    return obj\n"
+# edge, answered at prove by the class a caller binds (#8864).  On a formal
+# whose class is no input (``return obj`` reads ``obj`` bare,
+# ``nodes._receiver_uses``) nothing here decides ``type(obj)``: the delete is
+# the undecided one (``undecided_item_mutation_faces``), never a carrier
+# waiting on the caller's actuals.
+DELITEM_UNDECIDED = "def helper(obj, key):\n    del obj[key]\n    return obj\n"
 DELATTR = "def helper2(obj):\n    del obj.field\n"
+# A delete on a receiver the function's own frame built (decided): a missing
+# key is its floor's ``KeyError``, and the halt leaves the block with the
+# prefix it reached, ``a[0] = 9`` included (``halts_at_statement_head``).
+FRAME_MISSING_KEY = (
+    "def frame():\n"
+    "    a = [0]\n"
+    "    a[0] = 9\n"
+    "    obj = {'a': 1, 'b': 2}\n"
+    "    del obj['missing']\n"
+)
 
 
 def _tree(source: str, name: str = "delete_readback_laws.py") -> SourceFile:
@@ -122,13 +145,67 @@ def test_delitem_on_a_class_input_formal_is_the_dispatched_edge() -> None:
     assert call.args[2].args[1].name == "class:obj"
 
 
-def _delitem_pending():
-    tree = _tree(DELITEM_CARRIER, "delitem_readback.py")
+def test_delitem_on_a_formal_with_no_class_input_is_the_undecided_delete() -> None:
+    """``DELITEM_UNDECIDED`` alone: no carrier.  The delete completes only
+    under ``python:delitem.completes(...)`` or raises something undetermined
+    (owner ``UndecidedDelitem``), its halt kept with its state, and both
+    faces owe the undecided member."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    tree = _tree(DELITEM_UNDECIDED, "delitem_undecided.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "delitem"
-    return function, pending
+    outcome = function.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedDelitem"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
+    assert halt.state is not None, f"{CODEX1}: undecided delete halt dropped state"
+    owed = unanswered_call(None, halt.effect.site)
+    assert owed in owed_calls(outcome)
+    assert owed in halt.owed
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for face in completed:
+        assert "python:delitem.completes" in str(face.guard), face.guard
+        assert owed in face.owed
+    assert outcome.completed_value() is None
+
+
+def _delete_site():
+    """``del obj[key]``'s fragment in ``DELITEM_UNDECIDED``."""
+    tree = _tree(DELITEM_UNDECIDED, "delitem_readback.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    return function.body[0].fragment
+
+
+def _delete(receiver, key):
+    """``del receiver[key]`` through the one item mutation at the helper's
+    delete, the receiver the caller's decided actual: its floor's own
+    ``delitem`` (#7757 step 7), every face of it kept."""
+    site = _delete_site()
+    return site, item_mutation("__delitem__", receiver, (key,), site, None, unit=None)
+
+
+def _frame_keyerror() -> Halted:
+    """``FRAME_MISSING_KEY`` reduced: its sole face, the named ``KeyError``,
+    with the state the block reached before the delete."""
+    tree = _tree(FRAME_MISSING_KEY, "delitem_frame.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    outcome = function.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert len(outcome.exits) == 1, outcome
+    (halted,) = outcome.exits
+    assert isinstance(halted, Halted), halted
+    assert halted.effect.exception_type_coordinate == _identity("KeyError")
+    assert halted.state is not None, f"{CODEX1}: halted delete dropped its state"
+    return halted
 
 
 def _delattr_pending():
@@ -210,9 +287,6 @@ def _keyerror_raise(outcome, *, site) -> Halted:
 
 def test_completed_delitem_readback_yields_named_keyerror_with_delete_lineage() -> None:
     """After ``del obj['a']``, ``obj['a']`` is KeyError at the delete locus."""
-    function, pending = _delitem_pending()
-    delete_site = function.body[0].fragment
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = fresh(
         DictValue,
         (
@@ -220,7 +294,7 @@ def test_completed_delitem_readback_yields_named_keyerror_with_delete_lineage() 
             (StringValue("b"), TermValue(2)),
         ),
     )
-    exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
+    delete_site, exits = _delete(original, StringValue("a"))
     assert isinstance(exits.exits[0], Completed)
     post = _post_dict(exits.exits[0])
     assert not any(k.value == "a" for k, _ in post.entries)
@@ -240,11 +314,8 @@ def test_completed_delitem_readback_yields_named_keyerror_with_delete_lineage() 
 
 def test_discrimination_completed_delitem_does_not_fabricate_deleted_value() -> None:
     """Lying twin: readback must not return TermValue(1) for deleted key."""
-    function, pending = _delitem_pending()
-    site = function.body[0].fragment
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
-    exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
+    site, exits = _delete(original, StringValue("a"))
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), site)
     with pytest.raises(AssertionError):
@@ -325,11 +396,8 @@ def test_discrimination_delattr_does_not_leave_readable_old_value() -> None:
 
 def test_delete_then_restore_setitem_reads_new_value() -> None:
     """``del obj[k]; obj[k]=99`` → read yields 99, not the pre-delete 1."""
-    function, pending = _delitem_pending()
-    site = function.body[0].fragment
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
-    deleted = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
+    site, deleted = _delete(original, StringValue("a"))
     post = _post_dict(deleted.exits[0])
     restored = post.setitem(StringValue("a"), TermValue(99), site, None)
     assert restored.completed_value() is not None
@@ -370,10 +438,6 @@ def test_delete_then_restore_setattr_reads_new_value() -> None:
 
 def test_readback_after_halted_delete_still_sees_original() -> None:
     """KeyError delete halt does not mutate the pre-delete receiver."""
-    function, pending = _delitem_pending()
-    site = function.body[0].fragment
-    assert pending.pre_effect_state is not None, f"{CODEX1}: missing pre_effect_state"
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = fresh(
         DictValue,
         (
@@ -381,15 +445,18 @@ def test_readback_after_halted_delete_still_sees_original() -> None:
             (StringValue("b"), TermValue(2)),
         ),
     )
-    exits = pending.discharge(
-        None, {obj_cid: original, key_cid: StringValue("missing")}
-    )
+    site, exits = _delete(original, StringValue("missing"))
+    assert len(exits.exits) == 1
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("KeyError")
-    assert (
-        halted.state is pending.pre_effect_state.state
-    ), f"{CODEX1}: halt state identity lost"
+    # In a function's reduction the halt leaves with the block's prefix: the
+    # earlier ``a[0] = 9`` is in it, never a rolled-back empty record.
+    framed = _frame_keyerror()
+    assert any(
+        isinstance(entry, ListValue) and entry == fresh(ListValue, (TermValue(9),))
+        for entry in framed.state.entries
+    ), f"{CODEX1}: halt state lost the earlier store: {framed.state.entries!r}"
     # Original receiver still carries pre-delete content.
     present = original.subscript(StringValue("a"), site)
     assert present.completed_value() is not None
@@ -400,12 +467,8 @@ def test_readback_after_halted_delete_still_sees_original() -> None:
 
 
 def test_discrimination_halted_delete_is_not_a_completed_empty_dict() -> None:
-    function, pending = _delitem_pending()
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
-    exits = pending.discharge(
-        None, {obj_cid: original, key_cid: StringValue("missing")}
-    )
+    _, exits = _delete(original, StringValue("missing"))
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     with pytest.raises(AssertionError):
@@ -421,11 +484,8 @@ def test_discrimination_halted_delete_is_not_a_completed_empty_dict() -> None:
 
 def test_lying_keyerror_wrong_occurrence_refuses() -> None:
     """KeyError after delete must not claim a foreign occurrence identity."""
-    function, pending = _delitem_pending()
-    delete_site = function.body[0].fragment
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
-    exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
+    delete_site, exits = _delete(original, StringValue("a"))
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), delete_site)
     raise_value = _keyerror_raise(missing, site=delete_site)
@@ -438,11 +498,8 @@ def test_lying_keyerror_wrong_occurrence_refuses() -> None:
 
 def test_lying_fabricated_deleted_value_refuses_against_keyerror() -> None:
     """Positive KeyError face is not Completing the pre-delete TermValue(1)."""
-    function, pending = _delitem_pending()
-    site = function.body[0].fragment
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
-    exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
+    site, exits = _delete(original, StringValue("a"))
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), site)
     assert not (
@@ -454,16 +511,7 @@ def test_lying_fabricated_deleted_value_refuses_against_keyerror() -> None:
 
 def test_list_delitem_readback_indexerror_after_completed_delete() -> None:
     """List twin: delete index 0 of [0,1] → post [1]; read index 1 → IndexError."""
-    function, pending = _delitem_pending()
-    site = function.body[0].fragment
-    obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            obj_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
-            key_cid: TermValue(0),
-        },
-    )
+    site, exits = _delete(fresh(ListValue, (TermValue(0), TermValue(1))), TermValue(0))
     assert isinstance(exits.exits[0], Completed)
     value = exits.exits[0].value
     if isinstance(value, ListValue):
