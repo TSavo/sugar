@@ -1493,20 +1493,23 @@ def undecided_binary_terms(operator: str, left_term, right_term, key: str):
     return term, completes
 
 
-def undecided_result_terms(name: str, operands, key: str):
-    """The one form of an undecided read keyed per evaluation, as
-    ``undecided_binary_terms`` is for a binary operation: its result term
-    ``python:<name>_result(<operands>..., <key>)`` and its completes atom
-    ``python:<name>_op.completes(python:<name>_op(<result>, <key>))``.
+def undecided_result_terms(name: str, operand_terms, key: str):
+    """The one form of an undecided operation's value, one per evaluation
+    (#7757 NEW-1): its result term ``python:<name>_result(*operands,
+    <key>)`` and its completes atom ``python:<name>_op.completes(
+    python:<name>_op(<result>, <key>))``, the shape
+    :func:`undecided_binary_terms` states a binary operation in.
 
-    ``key`` is ``occurrence_key(site)`` taken where the read evaluates, so
-    inside a live loop item it carries that item's occurrence path: two
-    evaluations are two terms, never one (a counting ``__getattr__`` read
-    twice is two values), and the completes atom names the read it is
-    about, operands and all."""
+    ``key`` is the occurrence key taken where the operation evaluates, so
+    two evaluations over the same operand terms (two ``next(it)``, one
+    ``-p`` per live loop item) are two unknowns, never one term.  The
+    result names no Python operation the prover decides: it is the
+    uninterpreted application, and its operands are the inputs a joined
+    actual binds.
+    """
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
 
-    term = ctor(f"python:{name}_result", (*operands, str_const(key)))
+    term = ctor(f"python:{name}_result", (*operand_terms, str_const(key)))
     completes = atomic(
         f"python:{name}_op.completes",
         [ctor(f"python:{name}_op", (term, str_const(key)))],
