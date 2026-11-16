@@ -115,11 +115,6 @@ _EVALUATION_EXIT_PATH = object()
 # standing before every statement it threads into, at any depth
 # (``ModuleBindingStatesV1.at``).
 _MODULE_STATEMENT_STATES = object()
-# Set by ``ClassDef._source_visible_body`` while it threads a class call's
-# initializer: the receiver the call runs it on (``_InitializerReceiverV1``),
-# which each of the initializer's own ``return`` statements reads where it
-# stands (``Return.substitute``).
-_INITIALIZER_RECEIVER = object()
 # A module binding the module body does not decide where it is read
 # (``SourceUnit.module_bindings_at``): the reader cites it by name and never
 # reads the name in its place.
@@ -1038,73 +1033,6 @@ def _explicit_state(name: str, state):
     return _MISSING
 
 
-@dataclass(frozen=True, eq=False)
-class _InitializerReceiverV1:
-    """The object a class call's initializer runs on, as the initializer's
-    threading reads it (``ClassDef._source_visible_body``).
-
-    ``receiver`` is the ``ConstructedReceiverRef`` the call seats at the
-    receiver formal ``name``: the object itself, by its coordinate, whatever
-    name holds it.  ``rebound``: the body binds ``name`` somewhere
-    (``_binds_name``), so a read of the name may be another object there.
-    ``returns``: ``(extent, exits)`` for each of the initializer's own
-    ``return`` statements, every one of which reads the receiver where it
-    stands (``_initializer_returns``): ``exits`` is the code that still runs
-    after it before the frame is left, innermost first -- an enclosing
-    ``try``'s ``finally`` clause, an enclosing ``with``'s exit
-    (``_receiver_past_exits``).  ``frame``: the source extent of the
-    initializer's ``def`` (none for a dataclass's generated stores), whose
-    own ``super().m(...)`` is a call on the receiver, evaluated in place
-    (``_call_on_self_in_place``)."""
-
-    name: str
-    receiver: object
-    rebound: bool
-    returns: tuple = ()
-    frame: tuple | None = None
-
-    def reads_at(self, statement) -> bool:
-        return self.exits_at(statement) is not None
-
-    def exits_at(self, statement):
-        """The exits that run after the ``return`` ``statement`` (innermost
-        first), or None when it is no ``return`` of the initializer's own."""
-        span = statement.span
-        extent = (span.start, span.end)
-        for at, exits in self.returns:
-            if at == extent:
-                return exits
-        return None
-
-    def runs(self, frame) -> bool:
-        """Whether ``frame`` (the ``def`` a statement runs in) is the
-        initializer's own."""
-        span = getattr(frame, "span", None)
-        return span is not None and (span.start, span.end) == self.frame
-
-
-def _denotes(value, target) -> bool:
-    """Whether the binding ``value`` holds ``target``'s object on every path
-    to it: a state of that object (``container_mutation.same_object``: a
-    store's post-state, the one door's, a call's exposure of it), the root
-    of a path mutation through it, or a join whose every arm does."""
-    from .container_mutation import _identity, _state, same_object
-
-    node = _state(value)
-    for _ in range(64):
-        if not isinstance(node, Node):
-            return False
-        if same_object(node, target):
-            return True
-        if node.kind == "IfExp":
-            return _denotes(node.body, target) and _denotes(node.orelse, target)
-        if node.kind == "PathAfterCall" and getattr(node, "mode", None) == "root":
-            node = _identity(node.root)
-            continue
-        return False
-    return False
-
-
 def _name_read(owner: "Node", name: str, scope: BindingMap):
     """``name`` substituted in ``scope`` at ``owner``'s site, or None when
     nothing is bound to it there.
@@ -1129,116 +1057,15 @@ def _name_read(owner: "Node", name: str, scope: BindingMap):
     return None if isinstance(read, Name) else read
 
 
-def _receiver_read(owner: "Node", held: _InitializerReceiverV1, scope: BindingMap):
-    """The read of the object ``held.receiver`` in ``scope``: the receiver
-    formal's read where the body never rebinds the formal, or where it
-    still holds the object; else the read of another name that holds it
-    (the first in name order).  None when no name holds it there: the
-    object is read by its identity, never by the formal's spelling
-    (``self = other`` leaves ``self`` another object)."""
-    if not held.rebound or (
-        held.name in scope and _denotes(scope[held.name], held.receiver)
-    ):
-        return _name_read(owner, held.name, scope)
-    for name in sorted(
-        key for key in scope if isinstance(key, str) and key != held.name
-    ):
-        if _denotes(scope[name], held.receiver):
-            return _name_read(owner, name, scope)
-    return None
-
-
-# A right-hand side whose evaluation runs no code: reading it cannot reach
-# any object.
-_INERT_VALUE_KINDS = frozenset({"Name", "Constant", "Tuple", "List"})
-
-
-def _receiver_where_it_was_dropped(
-    owner: "Node", held: _InitializerReceiverV1, final: BindingMap, edges
-):
-    """The receiver's read where the last name holding it was rebound away
-    from it, when nothing could reach it after: ``edges`` are the body's
-    top-level statements with the scope before each
-    (``_substitute_body_tracked``).  The statement that rebinds the last
-    holder must be a plain assignment to names of a value that runs no code
-    and reads no name holding the object, and no later scope may hold the
-    object inside another value.  None otherwise."""
-    from .container_mutation import _contains, _state, aliases
-
-    last = None
-    for index, (statement, pre) in enumerate(edges):
-        read = _receiver_read(owner, held, pre)
-        if read is not None:
-            last = (index, statement, pre, read)
-    if last is None:
-        return None
-    index, statement, pre, read = last
-    if isinstance(statement, Assign):
-        targets, value = statement.targets, statement.value
-    elif isinstance(statement, AnnAssign) and statement.value is not None:
-        targets, value = (statement.target,), statement.value
-    else:
-        return None
-    if not all(isinstance(target, Name) for target in targets):
-        return None
-    for node in value.walk():
-        if node.kind not in _INERT_VALUE_KINDS:
-            return None
-        if isinstance(node, Name) and node.id in pre:
-            bound = pre[node.id]
-            if _denotes(bound, held.receiver) or _contains(
-                _state(bound), held.receiver
-            ):
-                return None
-    for _statement, later in (*edges[index + 1 :], (None, final)):
-        _exact, containing = aliases(later, held.receiver)
-        if containing:
-            return None
-    return read
-
-
-def _read_where_the_body_ends(
-    owner: "Node", held: _InitializerReceiverV1, scope: BindingMap, edges=()
-):
-    """The sugar of the read of the receiver ``held`` names after a body's
-    last statement, in ``scope``, the scope the body's threading left there
-    (``FunctionDef._substitute_body_to_end``): the very node any read of the
-    object at that point is -- a store's post-state, a call's exposure
-    (``container_mutation.havoc_after``), an ``if``'s phi
-    (``_receiver_read``).  Where the body rebound every name that held it,
-    the read where the last of them let it go (``_receiver_where_it_was_dropped``),
-    else the object unknown after the body.  None when the formal is never
-    rebound and nothing is bound to it there."""
-    read = _receiver_read(owner, held, scope)
-    if read is None and held.rebound:
-        read = _receiver_where_it_was_dropped(owner, held, scope, edges)
-        if read is None:
-            from .container_mutation import _havoc
-
-            read = _havoc(owner, held.name, ())
+def _read_where_the_body_ends(owner: "Node", name: str, scope: BindingMap):
+    """The sugar of the read of the receiver ``name`` holds after a body's
+    last statement, in ``scope``, the scope the body's threading left there:
+    the very node any read of the object at that point is -- a store's
+    post-state, a call's exposure (``container_mutation.havoc_after``).  The
+    body never rebinds ``name`` (a dataclass's generated stores).  None when
+    nothing is bound to it there."""
+    read = _name_read(owner, name, scope)
     return None if read is None else read.sugar()
-
-
-def _binds_name(body, name: str) -> bool:
-    """Whether ``body`` binds ``name`` anywhere in its own scope: a binding
-    site of it (``names_bound_here``; a star import may bind any name) in a
-    statement of the body, not one inside a function, lambda or class
-    nested in it, whose names are their own."""
-    # Each node once: a body is a DAG of shared nodes (``Node.walk``).
-    seen: set[int] = set()
-    stack: list = list(body)
-    while stack:
-        node = stack.pop()
-        if not isinstance(node, Node) or id(node) in seen:
-            continue
-        seen.add(id(node))
-        bound = node.names_bound_here()
-        if name in bound or "*" in bound:
-            return True
-        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
-            continue
-        stack.extend(child for _name, _index, child in node._child_edges())
-    return False
 
 
 def _returns_only_last(body) -> bool:
@@ -1451,253 +1278,6 @@ def _rebound_in_branches_and_loops(body, name: str) -> bool:
         return all(fits(child, inner) for _name, _index, child in node._child_edges())
 
     return all(fits(statement, True) for statement in body)
-
-
-def _initializer_returns(body) -> tuple:
-    """``(extent, exits)`` for each of ``body``'s own ``return`` statements
-    -- not one of a function, lambda or class nested in it -- wherever it
-    stands: at the top, under an ``if`` or a ``match``, inside a loop (its
-    read there is the item's, as every read in the body is), inside a
-    ``try`` or a ``with``.  ``exits`` is the code that runs after it before
-    the frame is left, innermost first: ``("finally", try)`` for each
-    enclosing ``try`` whose ``finally`` it is not in (its handlers and
-    ``else`` never run after a ``return``), ``("with", managers)`` for each
-    enclosing ``with`` (its managers' ``__exit__``).  The receiver it leaves
-    with is read past them (``_receiver_past_exits``)."""
-    found: list = []
-
-    def walk(node, exits):
-        if not isinstance(node, Node):
-            return
-        if isinstance(node, Return):
-            found.append(((node.span.start, node.span.end), exits))
-            return
-        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
-            return
-        if isinstance(node, (Try, TryStar)) and node.finalbody:
-            inner = (("finally", node), *exits)
-            for statement in node.body:
-                walk(statement, inner)
-            for handler in node.handlers:
-                walk(handler, inner)
-            for statement in node.orelse:
-                walk(statement, inner)
-            for statement in node.finalbody:
-                walk(statement, exits)
-            return
-        if isinstance(node, (With, AsyncWith)):
-            inner = (
-                ("with", tuple(item.context_expr for item in node.items)),
-                *exits,
-            )
-            for statement in node.body:
-                walk(statement, inner)
-            return
-        for _name, _index, child in node._child_edges():
-            walk(child, exits)
-
-    for statement in body:
-        walk(statement, ())
-    return tuple(found)
-
-
-def _receiver_past_exits(owner: "Node", held: _InitializerReceiverV1, scope, read):
-    """``read`` (the receiver's read where the initializer ``return``
-    ``owner`` stands, in ``scope``) as the frame leaves it: past each exit
-    that runs after the ``return`` (``_initializer_returns``), innermost
-    first, each threaded by the one threading -- a ``finally`` clause as the
-    block threads its statements (``_substitute_body_tracked``: a store on
-    the object is its field store, a call on it the one door, a call that
-    may reach it the one exposure rule), as the copy the ``try`` runs after
-    a completed face, which a pending ``return`` is (``_exit_path_scope``
-    ``"completion"``: the keys its statements bind there), a ``with``'s
-    exit as the block threads the ``with`` after it, by its managers'
-    exposure (``container_mutation.thread_header``).  The object leaves as
-    the last exit left it: its read there (``_receiver_read``), which the
-    class call reads where the face ends, after the exits ran
-    (``InitializerReturn.past_exits``).  ``read`` itself where no exit
-    touched any name; the object unknown after the body
-    (``container_mutation._havoc``) where no name holds it any more after
-    the exits."""
-    exits = held.exits_at(owner) or ()
-    if not exits:
-        return read
-    from .container_mutation import _havoc, thread_header
-
-    current = {
-        key: value
-        for key, value in scope.items()
-        if key is not _MODULE_STATEMENT_STATES
-    }
-    start = current
-    for kind, code in exits:
-        if kind == "finally":
-            _items, _changed, net = owner._substitute_body_tracked(
-                code.finalbody, _exit_path_scope(code, "completion", current)
-            )
-            current = {**current, **net}
-        else:
-            header = tuple(expression.substitute(current) for expression in code)
-            current = thread_header(header, current, current)
-    if all(current.get(name) is value for name, value in start.items()):
-        return read
-    after = _receiver_read(owner, held, current)
-    if after is None:
-        return _havoc(owner, held.name, ())
-    return after
-
-
-def _initializer_return(
-    statement: "Node", value, receiver: "Node", past_exits=None
-) -> "Node":
-    """``statement`` (an initializer's ``return``) carrying the receiver's
-    read where it stands (``InitializerReturn``), and its read past the code
-    that runs after it (``past_exits``, ``_receiver_past_exits``) where that
-    code touches it."""
-    from .backend import Child, MaybeChild, materialize
-    from .shadow import ShadowNode, _handle_of
-
-    return materialize(
-        statement.unit,
-        ShadowNode(
-            "InitializerReturn",
-            statement.span,
-            (
-                ("value", MaybeChild(None if value is None else _handle_of(value))),
-                ("receiver", Child(_handle_of(receiver))),
-                (
-                    "past_exits",
-                    MaybeChild(None if past_exits is None else _handle_of(past_exits)),
-                ),
-            ),
-        ),
-        statement.reporter,
-    )
-
-
-def _super_method(node) -> "Optional[str]":
-    """The method ``m`` when ``node`` is ``super().m(...)``: a call of an
-    attribute read off a zero-argument call of the builtin ``super`` (by its
-    binding), whatever the method -- ``__init__`` or any other.  None for
-    any other node."""
-    if (
-        not isinstance(node, Call)
-        or not isinstance(node.func, Attribute)
-        or not isinstance(node.func.value, Call)
-    ):
-        return None
-    inner = node.func.value
-    if (
-        not inner.args
-        and not inner.keywords
-        and inner.language_callee() is LanguageCallee.BUILTIN_SUPER
-    ):
-        return node.func.attr
-    return None
-
-
-def _call_on_self_in_place(source, scope, call):
-    """``super().m(...)`` (``source``, ``_super_method``) of a class call's
-    initializer, at its own position in the expression that holds it: the
-    one call form, evaluated in place in Python's order like every other
-    call.  Its callee is the member the receiver's MRO selects after
-    ``__class__`` (``BuiltinSuperValue``), for every method ``m``,
-    ``__init__`` or any other, and it is called on the object the frame's
-    receiver formal holds -- the first positional formal of the ``def``
-    running it, which the zero-argument ``super()`` binds
-    (``builtin_semantic_callable.zero_argument_super_receiver``) -- as the
-    expression reads that formal here (``_name_read``, in the scope the
-    operands before it leave, ``_scope_after``).
-
-    The call is one ``PathContainerCall`` on that receiver
-    (``frame_receiver``), whose value this node presents
-    (``BuiltinContainerProjection``, index 1) and whose ``(receiver after,
-    value)`` pair its evaluation binds under its own key (``binds``), as a
-    walrus binds its value: the receiver after the call is a read of that
-    pair (``PathAfterCall``), what the call states it did to it
-    (``call_site_value.receiver_after_its_call``, the one projection of a
-    callee's caller-visible effects, ``caller_visible_stores``), else
-    unknown.  Every name bound to the object reads it there after the call,
-    in the operands after it (``_scope_after``) and after the statement
-    (``container_mutation.havoc_after``), wherever the call sits; where the
-    position does not decide that the call ran once (a conditional operand,
-    a loop's header, a comprehension), those names read the one undecided
-    member (``container_mutation.calls_on_self_left``).
-
-    In a comprehension the call runs once per member: no one key holds its
-    pair, and the receiver each member reads after the first is not this
-    read, so the receiver is the undecided member too (``_havoc``).
-
-    ``call`` is ``source`` substituted against ``scope``.  None for any
-    other call, and outside a class call's initializer
-    (``_INITIALIZER_RECEIVER``), whose stores on the receiver are states of
-    it in the tree (``ReceiverFieldStoreState``) the base method would not
-    see: in any other frame the receiver formal is the frame's coordinate,
-    which the base method's call, its coordinate and edge, leaves undecided
-    where the call stands (#7757 step 6)."""
-    held = scope.get(_INITIALIZER_RECEIVER)
-    if not isinstance(held, _InitializerReceiverV1):
-        return None
-    method = _super_method(source)
-    if method is None or not isinstance(call, Call):
-        return None
-    # The frame the zero-argument ``super()`` reads, as its own reduction
-    # reads it (``_super_frame_first_positional``).
-    frame = source.unit.frame_holding(source.line_col_span())
-    if not isinstance(frame, (FunctionDef, AsyncFunctionDef)) or not frame.params:
-        return None
-    formal = frame.params[0]
-    if (
-        not held.runs(frame)
-        or formal.name != held.name
-        or formal.param_kind not in ("positional_only", "positional_or_keyword")
-    ):
-        return None
-    from .container_mutation import _container_call, _havoc, _projection, reaches
-    from .shadow import occurrence_tags_of
-
-    receiver = _name_read(source, formal.name, scope)
-    if receiver is None or not reaches(receiver, scope):
-        return None
-    tags = occurrence_tags_of(source)
-    per_member = _in_a_comprehension(frame, source)
-    if per_member:
-        receiver = _havoc(source, formal.name, tags)
-    # Every operand the call hands on (a ``*`` or ``**`` one's value
-    # included) is exposed to it as an argument of the call.
-    operands = (
-        *(arg.value if isinstance(arg, Starred) else arg for arg in call.args),
-        *(keyword.value for keyword in call.keywords),
-    )
-    pair = _container_call(
-        call,
-        receiver,
-        method,
-        operands,
-        call,
-        tags,
-        label=formal.name,
-        frame_receiver=formal.name,
-    )
-    return _projection(
-        call,
-        pair,
-        1,
-        tags,
-        binds=None if per_member else source._evaluation_key(scope),
-    )
-
-
-def _in_a_comprehension(frame, node) -> bool:
-    """Whether ``node`` stands in a comprehension of ``frame``'s own code
-    (a list, set or dict comprehension, inlined into the frame, PEP 709):
-    it runs once per member."""
-    span = node.span
-    return any(
-        inner.kind in ("ListComp", "SetComp", "DictComp", "GeneratorExp")
-        and _encloses(inner.span, span)
-        for inner in frame.walk()
-    )
 
 
 # Set in the scope a generator expression substitutes its conditions and
@@ -6320,14 +5900,7 @@ def _scope_after(scope, evaluated, substituted, *, rebinds=False, operated=()):
     expression binds its ``deferred`` reference.  Only a walrus written in
     ``evaluated``'s own source counts: a term substitution put in its place
     (a name's binding) carries the walrus of an earlier statement, already
-    bound or since rebound.  ``scope`` itself when ``evaluated`` holds none.
-
-    The same rule carries a call on ``self`` in place
-    (``_call_on_self_in_place``) to what is evaluated after it: every name
-    bound to the object reads it as the call left it
-    (``container_mutation.calls_on_self_left``) -- a later operand, the
-    target an assignment stores into, a branch after a test -- never as it
-    stood before the call."""
+    bound or since rebound.  ``scope`` itself when ``evaluated`` holds none."""
     if evaluated is None:
         return scope
     if not isinstance(evaluated, Node):
@@ -6344,16 +5917,7 @@ def _scope_after(scope, evaluated, substituted, *, rebinds=False, operated=()):
         from .container_mutation import rebound_after
 
         scope = rebound_after(scope, evaluated, substituted, operated)
-    if not isinstance(scope.get(_INITIALIZER_RECEIVER), _InitializerReceiverV1):
-        return scope
-    span = evaluated.span
-    # A call on ``self`` is spelled ``super``: without it in the source
-    # nothing below was called in place, and the walk is never asked.
-    if evaluated.unit.source.find("super", span.start, span.end) < 0:
-        return scope
-    from .container_mutation import calls_on_self_left
-
-    return calls_on_self_left(substituted, scope, scope, scope)
+    return scope
 
 
 def _last_child_position(node):
@@ -13781,9 +13345,9 @@ class ClassDef(Statement):
         # its ``__class__`` cell (PEP 3135).  A dataclass's generated
         # ``__init__`` is no source function and has none.
         cell_class_definition = None
-        # The object the class call returns: a read of the receiver where
-        # the initializer ends (``_read_where_the_body_ends``); a ``return``
-        # carries its own (``InitializerReturn``).
+        # The object the class call returns where a dataclass's generated
+        # stores run here: a read of the receiver after the last of them
+        # (``_read_where_the_body_ends``).
         receiver_at_end = None
         if dataclass_fields is not None:
             # ``_init_fn``: one ``__dataclass_self__.f = f`` per field, in
@@ -13822,9 +13386,7 @@ class ClassDef(Statement):
             # ``_init_fn``'s receiver name is no field's, and nothing in it
             # rebinds it.
             receiver_at_end = _read_where_the_body_ends(
-                self,
-                _InitializerReceiverV1(receiver_name, receiver, False),
-                {**constructor_scope, **net},
+                self, receiver_name, {**constructor_scope, **net}
             )
         elif initializer is not None:
             # ``type.__call__`` runs ``type(obj).__init__(obj, *args, **kw)``
@@ -13916,43 +13478,8 @@ class Return(Statement):
     _child_fields = ("value",)
 
     def substitute(self, scope):
-        """`return <expr>` binds nothing: recurse into the returned expression.
-
-        A ``return`` of a class call's initializer (``_INITIALIZER_RECEIVER``),
-        wherever it stands (``_initializer_returns``), leaves the call with
-        its receiver as it stands after the returned value is evaluated: it
-        carries the read of that object in the scope the value's own calls
-        leave (the one exposure rule, ``havoc_after``), past the code that
-        runs after it before the frame is left (``_receiver_past_exits``)
-        -- ``InitializerReturn``, which the class call returns on the face
-        that leaves by it (``ClassConstructorBodySugar``).
-
-        A ``super().m(...)`` anywhere in the returned value is the one call
-        on ``self``, evaluated in place (``_call_on_self_in_place``): the
-        exposure rule reads the receiver after it as the call states it left
-        it (``container_mutation.calls_on_self_left``), and the ``return``
-        leaves with that."""
-        held = scope.get(_INITIALIZER_RECEIVER)
-        if isinstance(held, _InitializerReceiverV1) and held.reads_at(self):
-            from .container_mutation import havoc_after
-
-            rewritten = self._substitute_children(scope)
-            after = havoc_after(rewritten, scope, scope)
-            return self._leaving(held, after, rewritten)
+        """`return <expr>` binds nothing: recurse into the returned expression."""
         return self._substitute_children(scope)
-
-    def _leaving(self, held, scope, rewritten):
-        """This initializer ``return`` (``rewritten``, already substituted)
-        carrying the receiver's read in ``scope`` past the exits after it
-        (``InitializerReturn``); where no name holds the receiver there, the
-        plain ``return``, whose face the class call refuses by name."""
-        receiver = _receiver_read(self, held, scope)
-        if receiver is None:
-            return rewritten
-        past = _receiver_past_exits(self, held, scope, receiver)
-        return _initializer_return(
-            self, rewritten.value, receiver, None if past is receiver else past
-        )
 
     def _construct_sugar(self):
         """Construct the function exit, including Python's real empty return."""
@@ -13961,39 +13488,6 @@ class Return(Statement):
         return ReturnSugar(
             value=self.value.sugar() if self.value is not None else None,
             site=self.fragment,
-        )
-
-
-class InitializerReturn(Return):
-    """A ``return`` of a class call's initializer with the read of the
-    receiver where it stands (``Return.substitute``): the object the class
-    call returns when the initializer leaves by it, which no read after the
-    initializer's last statement gives.  ``past_exits``: where code runs
-    after the ``return`` before the frame is left and touches the object (a
-    ``finally`` that stores on ``self``, a ``with``'s exit that may reach
-    it), the read of it past that code (``_receiver_past_exits``), which the
-    class call reads where the face ends, after that code ran."""
-
-    receiver: Expression
-    past_exits: Optional[Expression]
-    _child_fields = ("value", "receiver", "past_exits")
-
-    def substitute(self, scope):
-        del scope
-        return self
-
-    def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
-            InitializerReturnSugar,
-        )
-
-        return InitializerReturnSugar(
-            value=self.value.sugar() if self.value is not None else None,
-            receiver=self.receiver.sugar(),
-            site=self.fragment,
-            past_exits=(
-                self.past_exits.sugar() if self.past_exits is not None else None
-            ),
         )
 
 
@@ -15272,9 +14766,9 @@ class Assign(Statement):
         of its own, and nothing here decides what the receiver is.
 
         Python evaluates ``value`` before the target, so the receiver is
-        read as the value left it (``_scope_after``): a call on it in the
-        value (``self.y = 1 + super().m()``) has run, and the store lands on
-        the object as that call left it."""
+        read as the value left it (``_scope_after``): a call in the value
+        that may change it (``self.y = 1 + g(self)``) has run, and the store
+        lands on the object as that call left it."""
         if len(self.targets) != 1 or not isinstance(self.targets[0], Attribute):
             return None
         target = self.targets[0]
@@ -22986,9 +22480,8 @@ def _carrying_its_evaluation(scope, call):
 
 
 class Call(Expression):
-    # A call on ``self`` evaluated in place (``_call_on_self_in_place``)
-    # binds its pair under a key minted exactly as a statement's (and a
-    # walrus's) is.
+    # A call's evaluation key (``after_call_key``, ``_carrying_its_evaluation``)
+    # is minted exactly as a statement's (and a walrus's) is.
     _evaluation_exit_path = Statement._evaluation_exit_path
     _evaluation_key = Statement._evaluation_key
 
@@ -23008,9 +22501,7 @@ class Call(Expression):
         return key + _AFTER_CALL_SUFFIX
 
     def substitute(self, scope: "dict[str, Node]") -> "Node":
-        """The call's children substituted in Python's order; a
-        ``super().m(...)`` of a class call's initializer is then the one call
-        on ``self``, evaluated here, in place (``_call_on_self_in_place``)."""
+        """The call's children substituted in Python's order."""
         snapshot = self._locals_snapshot(scope)
         if snapshot is not None:
             return snapshot
@@ -23030,8 +22521,7 @@ class Call(Expression):
             )
         ):
             self.unit.retain_lexical_call_row(self, rewritten)
-        on_self = _call_on_self_in_place(self, scope, rewritten)
-        return rewritten if on_self is None else on_self
+        return rewritten
 
     func: Expression
     args: Tuple[Expression, ...]
@@ -24487,7 +23977,6 @@ class PathContainerCall(Expression):
             value_first=value_first,
             operator=operator,
             operator_site=getattr(self, "operator_site", None),
-            frame_receiver=getattr(self, "frame_receiver", None),
             unit=getattr(self, "unit", None),
         )
 
@@ -24550,12 +24039,7 @@ class BuiltinContainerProjection(Expression):
     ``name_mutation_statement``, ``path_mutation_statement``): the
     projection reads the pair there, never the call (and its operands)
     evaluated again.  A projection with no key (a statement never
-    substituted) reads its call.
-
-    A call on ``self`` evaluated in place (``_call_on_self_in_place``)
-    evaluates its call here and binds the pair under its own key
-    (``binds``), as a walrus binds its value: the receiver after it reads
-    the pair there (``PathAfterCall``)."""
+    substituted) reads its call."""
 
     call: Expression
     index: int
@@ -24576,12 +24060,10 @@ class BuiltinContainerProjection(Expression):
             if isinstance(evaluation, str)
             else self.call.sugar()
         )
-        binds = getattr(self, "binds", None)
         return BuiltinContainerProjectionSugar(
             call=pair,
             index=self.index,
             site=self.fragment,
-            binds=binds if isinstance(binds, str) else None,
         )
 
 
