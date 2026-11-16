@@ -263,17 +263,25 @@ def test_a_source_initializer_before_a_builtin_exception_is_admitted(tmp_path):
 
 
 def test_an_exception_class_with_a_source_initializer_raises_its_instance(tmp_path):
+    # The source ``__init__``'s ``super().__init__('wrapped', msg)`` reaches
+    # BaseException's: the one dispatched call after ``E`` (#7757 L5), owed
+    # where no namespace row states the builtin's member -- never answered
+    # by the floor.  On its completed face the instance is raised.
     source = EXCEPTION_WITH_INITIALIZER + "def f():\n    raise E('boom')\n"
     exits, returns, halts = _faces(tmp_path, source)
     assert returns == []
-    assert owed_calls(exits) == ()
-    assert _owners(halts) == []
-    (raised,) = halts
-    assert isinstance(raised, RaiseEffect)
-    assert raised.exception_type_coordinate.args[0].value == "source-class"
+    assert owed_calls(exits) != ()
+    assert any(
+        isinstance(halt, RaiseEffect)
+        and halt.exception_type_coordinate.args[0].value == "source-class"
+        for halt in halts
+    )
 
 
-def test_super_init_into_the_builtin_exception_seats_args(tmp_path):
+def test_super_init_into_the_builtin_exception_is_not_answered_here(tmp_path):
+    # ``BaseException.__init__`` seats ``args``; the lift no longer applies
+    # it through ``super()`` (#7757 L5), so ``e.args`` is not read as the
+    # tuple it seats: the call is owed.
     source = EXCEPTION_WITH_INITIALIZER + (
         "def f():\n"
         "    try:\n"
@@ -282,12 +290,14 @@ def test_super_init_into_the_builtin_exception_seats_args(tmp_path):
         "        return e.args\n"
     )
     exits, returns, _halts = _faces(tmp_path, source)
-    assert owed_calls(exits) == ()
-    assert returns == [TupleValue((StringValue("wrapped"), StringValue("boom")))]
+    assert owed_calls(exits) != ()
+    assert TupleValue((StringValue("wrapped"), StringValue("boom"))) not in returns
 
 
-def test_super_init_with_a_keyword_is_the_type_error(tmp_path):
-    # ``BaseException_init`` rejects every keyword actual.
+def test_super_init_with_a_keyword_is_not_a_lift_type_error(tmp_path):
+    # ``BaseException_init`` rejects every keyword actual; that is the
+    # builtin's to decide, through the one dispatched call (#7757 L5), not
+    # a ``TypeError`` the lift names.
     source = (
         "class E(Exception):\n"
         "    def __init__(self, msg):\n"
@@ -295,11 +305,12 @@ def test_super_init_with_a_keyword_is_the_type_error(tmp_path):
         "def f():\n"
         "    raise E('boom')\n"
     )
-    _exits_, returns, halts = _faces(tmp_path, source)
+    exits, returns, halts = _faces(tmp_path, source)
     assert returns == []
-    assert [
+    assert owed_calls(exits) != ()
+    assert "TypeError" not in [
         halt.exception_name for halt in halts if isinstance(halt, RaiseEffect)
-    ] == ["TypeError"]
+    ]
 
 
 # -- the inherited-exception frame reads the one base walk ------------------

@@ -1,18 +1,31 @@
-"""Authenticated zero-argument super transports ``type.__new__`` results."""
+"""Zero-argument ``super().__new__`` over a tail of builtins is the one call
+(#7757 L5).
 
-import pytest
+``super().__new__(mcs, name, bases, namespace)`` in a metaclass's
+``__new__`` reaches ``type.__new__``: the order after ``__class__`` (``type``,
+``object``) holds no source class.  The lift used to answer that call by the
+floor's own ``type.__new__`` (a ``RuntimeClassValue`` over the namespace),
+beside the dispatched call the same lookup takes through any source class.
+Now it is the one dispatched call after ``__class__`` for every tail; with no
+workspace root (these classes name no join symbol) it is the one unanswered
+call of ``super.__new__``, owed, both faces standing.  The lift builds no
+class and refuses no namespace shape of its own.
+"""
 
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
     BuiltinSuperValue,
+    CallSiteValue,
     MappingObjectValue,
     RuntimeClassValue,
     StringValue,
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
@@ -28,8 +41,7 @@ _METACLASS = (
 
 def _super_value():
     # ``super()`` in a metaclass's ``__new__`` binds the metaclass itself, a
-    # class whose own MRO (Meta, type, object) it walks: ``type.__new__``,
-    # selected by the builtin ``type`` the base reads by binding.
+    # class whose own MRO (Meta, type, object) it walks.
     tree = SourceFile(
         (_METACLASS, "type_new_transport.py", blake3_512_of(_METACLASS.encode())),
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
@@ -40,7 +52,19 @@ def _super_value():
     return BuiltinSuperValue(current_class=meta, receiver=meta)
 
 
-def test_type_new_result_carries_the_exact_namespace_as_class_dict() -> None:
+def _the_one_call(outcome) -> None:
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == "UnknownCallee:super.__new__"
+    _binds, call = peel_walrus_binds(done.value)
+    assert isinstance(call, CallSiteValue), type(call)
+    assert not isinstance(call, RuntimeClassValue)
+    assert call.body is None
+    assert outcome.owed_items()
+
+
+def test_super_new_over_type_is_the_one_call_never_a_class_built_here() -> None:
     namespace = MappingObjectValue(
         "Namespace",
         (),
@@ -49,32 +73,25 @@ def test_type_new_result_carries_the_exact_namespace_as_class_dict() -> None:
         allocation=FRAME_FRESH,
     )
 
-    outcome = _super_value().call_method_value(
-        "__new__",
-        (
-            TermValue("metaclass"),
-            StringValue("Made"),
-            TupleValue(()),
-            namespace,
-        ),
-        owner="test",
-        blame="new-site",
-        keywords=(
-            ("**", MappingObjectValue("Kwds", (), entries=(), allocation=FRAME_FRESH)),
-        ),
+    _the_one_call(
+        _super_value().call_method_value(
+            "__new__",
+            (
+                TermValue("metaclass"),
+                StringValue("Made"),
+                TupleValue(()),
+                namespace,
+            ),
+            owner="test",
+            blame="new-site",
+        )
     )
 
-    made = outcome.completed_value()
-    assert made is not None
-    assert isinstance(made, RuntimeClassValue)
-    assert made.name == "Made"
-    projected = made.attribute("__dict__", "dict-site", None)
-    assert projected.completed_value() is not None
-    assert projected.completed_value().entries == namespace.entries
 
-
-def test_type_new_refuses_a_non_mapping_namespace() -> None:
-    with pytest.raises(ConstructionPanic):
+def test_super_new_over_type_never_refuses_a_namespace_shape() -> None:
+    # ``type.__new__`` decides what it accepts; the lift no longer reads its
+    # operands to refuse them.
+    _the_one_call(
         _super_value().call_method_value(
             "__new__",
             (
@@ -86,3 +103,4 @@ def test_type_new_refuses_a_non_mapping_namespace() -> None:
             owner="test",
             blame="new-site",
         )
+    )

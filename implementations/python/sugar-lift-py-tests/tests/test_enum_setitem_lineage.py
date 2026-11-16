@@ -1,19 +1,34 @@
-"""Enum namespace writes retain source override and builtin mutation lineage."""
+"""An enum-style namespace's ``super()`` calls into builtins are the one call
+(#7757 L5).
+
+``super().__setitem__`` in a ``dict`` subclass reaches ``dict.__setitem__``,
+and ``super().__new__`` in a ``type`` subclass reaches ``type.__new__``: in
+each the order after ``__class__`` holds only builtins.  The lift used to
+answer both by the floor (dict's mutation of the receiver, with ``None`` kept
+apart; a ``RuntimeClassValue`` over the namespace), beside the dispatched
+call the same lookup takes through any source class.  Now each is the one
+dispatched call after ``__class__``; with no workspace root it is the one
+unanswered call (``super.<name>``), owed, both faces standing.  What the
+builtin does to the receiver is not stated here, so no namespace is read as
+holding the stored member.
+"""
 
 from __future__ import annotations
 
 from sugar_lift_py_tests.context import ReduceContext
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
     BuiltinSuperValue,
     CallSiteValue,
     MappingObjectValue,
-    NoneValue,
+    ReceiverOwnedMutationResult,
     RuntimeClassValue,
     StringValue,
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.outcome import ExitSet, Halted
+from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
@@ -36,15 +51,6 @@ def _source_receiver(source: str):
     )
     assert isinstance(receiver, MappingObjectValue)
     return receiver, context
-
-
-def _mutation_products(outcome):
-    assert outcome.completed_value() is not None
-    result = getattr(outcome.completed_value(), "result", None)
-    receiver = getattr(outcome.completed_value(), "receiver_after", None)
-    assert isinstance(result, NoneValue)
-    assert isinstance(receiver, MappingObjectValue)
-    return result, receiver
 
 
 _SUPER_SETITEM = (
@@ -75,64 +81,54 @@ def _source_class(source: str):
     return value
 
 
-def test_super_setitem_returns_none_and_carries_updated_namespace() -> None:
-    """The builtin base call has two products; neither may replace the other."""
+def _the_one_call(outcome, name: str) -> CallSiteValue:
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == f"UnknownCallee:super.{name}"
+    _binds, call = peel_walrus_binds(done.value)
+    assert isinstance(call, CallSiteValue), type(call)
+    assert call.body is None
+    assert outcome.owed_items()
+    return call
+
+
+def test_super_setitem_into_dict_is_the_one_call() -> None:
     receiver, _context = _source_receiver(_SUPER_SETITEM)
     # ``type(receiver).__mro__`` is EnumNamespace, dict, object: the class
-    # after the cell that binds ``__setitem__`` is ``dict``.
-    selected_super = BuiltinSuperValue(
+    # after the cell is ``dict``, which no namespace row states.
+    outcome = BuiltinSuperValue(
         current_class=receiver.defining_class,
         receiver=receiver,
-    )
-
-    outcome = selected_super.call_method_value(
+    ).call_method_value(
         "__setitem__",
         (StringValue("_member_map_"), TermValue(7)),
         owner="test_enum_setitem_lineage",
         blame="super-setitem-site",
     )
-    _result, updated = _mutation_products(outcome)
 
-    assert updated.identity == receiver.identity
-    assert updated.entries == ((StringValue("_member_map_"), TermValue(7)),)
+    call = _the_one_call(outcome, "__setitem__")
+    assert not isinstance(call, ReceiverOwnedMutationResult)
 
 
-def test_type_new_consumes_the_post_setitem_namespace_not_its_pre_state() -> None:
-    """Deleting receiver transport makes ``_member_map_`` vanish at type.__new__."""
+def test_super_new_into_type_builds_no_class_here() -> None:
     metaclass = _source_class(_METACLASS)
     # ``super()`` in a metaclass's ``__new__`` binds the metaclass itself, a
-    # class whose own MRO (EnumMeta, type, object) it walks: ``type.__new__``.
-    type_super = BuiltinSuperValue(current_class=metaclass, receiver=metaclass)
+    # class whose own MRO (EnumMeta, type, object) it walks.
     namespace, _context = _source_receiver(_SUPER_SETITEM)
-    dict_super = BuiltinSuperValue(
-        current_class=namespace.defining_class,
-        receiver=namespace,
-    )
-    mutation = dict_super.call_method_value(
-        "__setitem__",
-        (StringValue("_member_map_"), TermValue(7)),
-        owner="test_enum_setitem_lineage",
-        blame="super-setitem-site",
-    )
-    _result, updated = _mutation_products(mutation)
-
-    created = type_super.call_method_value(
+    outcome = BuiltinSuperValue(
+        current_class=metaclass, receiver=metaclass
+    ).call_method_value(
         "__new__",
         (
             TermValue("metaclass"),
             StringValue("Made"),
             TupleValue(()),
-            updated,
+            namespace,
         ),
         owner="test_enum_setitem_lineage",
         blame="type-new-site",
     )
 
-    assert created.completed_value() is not None
-    assert isinstance(created.completed_value(), RuntimeClassValue)
-    class_dict = created.completed_value().attribute("__dict__", "dict-site", None)
-    assert class_dict.completed_value() is not None
-    assert class_dict.completed_value().entries == (
-        (StringValue("_member_map_"), TermValue(7)),
-    )
-    assert class_dict.completed_value().entries != namespace.entries
+    call = _the_one_call(outcome, "__new__")
+    assert not isinstance(call, RuntimeClassValue)
