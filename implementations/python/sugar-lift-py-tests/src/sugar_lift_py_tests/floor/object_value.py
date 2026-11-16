@@ -501,21 +501,67 @@ class ObjectValue(FloorValue):
         MRO binds ``__setitem__`` (``object`` does not), the store raises
         ``TypeError`` ("object does not support item assignment") before
         anything is stored; nothing else answers it.  Any other answer -- a
-        class that binds it, a builtin base that does, a lookup not decided
-        -- is not written here and still refuses by name."""
+        class that binds it, a builtin base that does (a ``dict`` subclass),
+        a lookup not decided -- is the implicit special-method call
+        (``_implicit_item_call``)."""
         if self.lacks_item_method("__setitem__"):
             return self._item_method_absent(site, owner="ObjectValue.setitem")
-        return super().setitem(index, value, site, ctx)
+        return self._implicit_item_call("__setitem__", (index, value), site, ctx)
 
     def delitem(self, index, site, ctx):
         """``del self[index]``: ``type(self).__delitem__``
         (``PyObject_DelItem``), the same implicit lookup as ``setitem``.  No
         class of the MRO binding it raises ``TypeError`` ("object doesn't
-        support item deletion") whatever the key; any other answer is not
-        written here and still refuses by name."""
+        support item deletion") whatever the key; any other answer is the
+        implicit special-method call (``_implicit_item_call``)."""
         if self.lacks_item_method("__delitem__"):
             return self._item_method_absent(site, owner="ObjectValue.delitem")
-        return super().delitem(index, site, ctx)
+        return self._implicit_item_call("__delitem__", (index,), site, ctx)
+
+    def _implicit_item_call(self, name, arguments, site, ctx):
+        """``obj[k] = v`` / ``del obj[k]`` through ``type(obj).<name>``: the
+        implicit special-method call, through the one door every such call
+        takes (``call_method_value``) -- the dispatched call prove's one walk
+        decides where the receiver's class is named, a source override and a
+        builtin base's method alike (#7757 L3, S1), and the unanswered call
+        where the lookup does not decide it.  No body or base storage is
+        read here, so what the call left of the receiver is not read: on
+        each completed face the receiver after it is unknown
+        (``python:receiver_after_call``), as for any undecided mutation, and
+        what the method's contract states about it is joined at prove (step
+        7).  The call's value is read through the one operand door
+        (``consume_operands``), so every write it carries rides on to the
+        statement."""
+        if ctx is None:
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner=f"ObjectValue.{name}",
+                blame=site,
+                observed=f"implicit {name} without reduction context",
+                requested="the store statement's context",
+                fix="thread the caller context; zero-arg super requires its __class__ cell",
+            )
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+            _unknown_after,
+        )
+
+        return self.call_method_value(
+            name,
+            arguments,
+            owner=f"ObjectValue.{name}",
+            blame=site,
+            ctx=ctx,
+        ).and_then(
+            lambda applied: consume_operands(
+                lambda _call: ExitSet.completed(_unknown_after(site, name)),
+                applied,
+            )
+        )
 
     def lacks_item_method(self, method: str) -> bool:
         """Whether ``type(self)`` binds no ``method`` (``__getitem__``,

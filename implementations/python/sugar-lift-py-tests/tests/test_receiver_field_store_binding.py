@@ -1,13 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import (
-    MappingObjectValue,
     ObjectValue,
     ReceiverFieldStoreValue,
     ReturnValue,
-    StringValue,
     TermValue,
 )
 from sugar_lift_py_tests.outcome import Completed, ExitSet
@@ -178,15 +176,15 @@ def test_receiver_field_store_rebinds_the_same_receiver_for_the_tail():
     assert exits[0].value.entries[-1] is stored
 
 
-def test_returned_alias_observes_updated_mapping_receiver_identity():
-    receiver = MappingObjectValue(
+def test_returned_alias_observes_updated_receiver_identity():
+    receiver = ObjectValue(
         "Namespace",
         (),
         identity="receiver-1",
-        entries=((StringValue("member"), TermValue(1)),),
         allocation=FRAME_FRESH,
     )
-    alias = receiver.mapping_with_entries(receiver.entries)
+    # A second value of the same object (the same identity).
+    alias = replace(receiver)
     context = ReduceContext.root(owner="receiver-alias")
     temporal = context.temporal.bind_value("self", receiver)
     temporal = temporal.bind_value("alias", alias)
@@ -201,18 +199,17 @@ def test_returned_alias_observes_updated_mapping_receiver_identity():
     returned = next(
         entry for entry in exits[0].value.entries if isinstance(entry, ReturnValue)
     ).value
-    assert isinstance(returned, MappingObjectValue)
+    assert isinstance(returned, ObjectValue)
     assert returned.identity == receiver.identity
-    assert returned.entries == receiver.entries
     read_back = returned.attribute("payload", "test", None)
     assert read_back == ExitSet.completed(TermValue(17))
 
 
 def test_same_class_different_receiver_identity_is_not_rewritten():
-    receiver = MappingObjectValue(
+    receiver = ObjectValue(
         "Namespace", (), identity="receiver-1", allocation=FRAME_FRESH
     )
-    distinct = MappingObjectValue(
+    distinct = ObjectValue(
         "Namespace", (), identity="receiver-2", allocation=FRAME_FRESH
     )
     context = ReduceContext.root(owner="receiver-alias")
@@ -277,12 +274,11 @@ def test_shadow_store_does_not_rewrite_distinct_alias_return() -> None:
     assert not isinstance(returned.value, ReceiverFieldStoreState)
 
 
-def test_receiver_field_post_state_preserves_mapping_identity_and_entries() -> None:
-    receiver = MappingObjectValue(
+def test_receiver_field_post_state_preserves_identity() -> None:
+    receiver = ObjectValue(
         "Namespace",
         (),
         identity="receiver-1",
-        entries=((StringValue("member"), TermValue(1)),),
         allocation=FRAME_FRESH,
     )
 
@@ -294,9 +290,8 @@ def test_receiver_field_post_state_preserves_mapping_identity_and_entries() -> N
     ).desugar(None)
 
     assert any(isinstance(face, Completed) for face in outcome.exits), outcome
-    assert isinstance(outcome.completed_value(), MappingObjectValue)
+    assert isinstance(outcome.completed_value(), ObjectValue)
     assert outcome.completed_value().identity == receiver.identity
-    assert outcome.completed_value().entries == receiver.entries
     read_back = outcome.completed_value().attribute("owner", "test", None)
     assert read_back == ExitSet.completed(TermValue(7))
 

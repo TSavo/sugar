@@ -980,18 +980,6 @@ def test_the_doors_post_state_names_its_receivers_allocation():
             assert post.arrival == receiver.arrival
 
 
-def test_a_dict_subclass_instances_dict_state_is_not_current():
-    # Whether an instance's ``dict`` base state is its state now is not
-    # decided (its currency is not threaded through a source override's
-    # post-state): never read as fresh, whatever the instance's own.
-    from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
-    from sugar_lift_py_tests.floor.object_identity import contents_current
-
-    state = MappingObjectValue.__new__(MappingObjectValue)
-    object.__setattr__(state, "entries", ((StringValue("k"), TermValue(1)),))
-    assert not contents_current(state._builtin_dict())
-
-
 def test_a_str_method_over_an_opaque_argument_keeps_its_marker():
     from types import SimpleNamespace
 
@@ -1040,12 +1028,11 @@ def _instance_made_and_arrived():
     return made, arrived(made, "binding-read")
 
 
-@pytest.mark.parametrize("kind", ["ObjectValue", "MappingObjectValue"])
-def test_an_instance_built_without_an_allocation_is_refused(kind):
-    from sugar_lift_py_tests import floor
+def test_an_instance_built_without_an_allocation_is_refused():
+    from sugar_lift_py_tests.floor import ObjectValue
 
     with pytest.raises(TypeError):
-        getattr(floor, kind)("C", ())
+        ObjectValue("C", ())
 
 
 def test_arrived_takes_the_allocation_off_an_instance_and_all_it_holds():

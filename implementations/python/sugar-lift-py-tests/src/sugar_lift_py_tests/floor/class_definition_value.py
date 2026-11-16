@@ -689,13 +689,15 @@ class ClassDefinitionValue(GuardStableValue):
         its fields are its fields now (``object_identity.contents_current``).
         Required: None, with the ``arrival`` that names it, when no class
         call of the reading frame made it (an initializer's own universe,
-        where the receiver reached ``__init__`` by binding)."""
-        from sugar_lift_py_tests.floor import MappingObjectValue, ObjectValue
+        where the receiver reached ``__init__`` by binding).
 
-        receiver_type = (
-            MappingObjectValue if self._has_authenticated_dict_base() else ObjectValue
-        )
-        return receiver_type(
+        A ``dict`` subclass's instance is this same instance: its members,
+        ``dict``'s among them, are read and called through the one
+        class-namespace lookup and the dispatched call prove's walk decides
+        (#7757 S1), never answered from base storage held here."""
+        from sugar_lift_py_tests.floor import ObjectValue
+
+        return ObjectValue(
             self.class_name,
             (),
             methods=self._object_methods(),
@@ -734,23 +736,6 @@ class ClassDefinitionValue(GuardStableValue):
             blame=self.class_definition_cid,
             owner="ClassDefinitionValue._c3_tail",
         )
-
-    def _has_authenticated_dict_base(self) -> bool:
-        from sugar_lift_py_tests.floor.builtin_dict_class_value import (
-            BuiltinDictClassValue,
-        )
-
-        pending = list(self.base_classes)
-        seen: set[int] = set()
-        while pending:
-            base = pending.pop()
-            if isinstance(base, BuiltinDictClassValue):
-                return True
-            if not isinstance(base, ClassDefinitionValue) or id(base) in seen:
-                continue
-            seen.add(id(base))
-            pending.extend(base.base_classes)
-        return False
 
 
 def _instance_class_symbol(definition) -> str | None:

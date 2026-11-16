@@ -410,7 +410,7 @@ def _ground_floor(raw, site, depth=0, *, visits):
     if kind is type({}.items()):
         # ``d.items()``: the tuple of its ``(key, value)`` pairs, in the dict's
         # order -- the value the floor holds for an items view
-        # (``DictValue``/``MappingObjectValue`` ``items``).
+        # (``DictValue`` ``items``).
         members = tuple(
             _ground_floor(pair, site, depth + 1, visits=visits) for pair in raw
         )
