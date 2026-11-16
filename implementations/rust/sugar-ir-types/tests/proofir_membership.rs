@@ -361,44 +361,56 @@ fn python_bare_attribute_annotation_receiver_survives_rust_membership() {
     assert_eq!(free_vars(term), ["receiver".to_string()].into());
 }
 
+fn has_lambda(term: &Term) -> bool {
+    match term {
+        Term::Lambda { .. } => true,
+        Term::Ctor { args, .. } => args.iter().any(has_lambda),
+        Term::Let { body, .. } => has_lambda(body),
+        _ => false,
+    }
+}
+
+/// A symbolic comprehension's proof term (#7757): its kind over its source
+/// occurrence and the evaluation that made it,
+/// `<kind>(python:source-occurrence(...), python:occurrence(...))`
+/// (`ComprehensionSugar._own_coordinate`). No member binder (a lambda) is
+/// stated: no term table carries one, and the mint failed on it.
+fn assert_own_coordinate(term: &Term, kind: &str) {
+    let Term::Ctor { name, args } = term else {
+        panic!("comprehension must remain a constructor coordinate: {term:?}")
+    };
+    assert_eq!(name, kind);
+    let [occurrence, evaluation] = args.as_slice() else {
+        panic!("own coordinate is its occurrence and its evaluation: {term:?}")
+    };
+    assert!(
+        matches!(occurrence, Term::Ctor { name, .. } if name == "python:source-occurrence"),
+        "{occurrence:?}"
+    );
+    assert!(
+        matches!(evaluation, Term::Ctor { name, .. } if name == "python:occurrence"),
+        "{evaluation:?}"
+    );
+    assert!(!has_lambda(term), "no member binder is stated: {term:?}");
+}
+
 #[test]
-fn python_comprehension_lambda_survives_rust_parse_and_membership() {
+fn python_comprehension_states_its_own_coordinate_after_rust_parse_and_membership() {
     let term = document_post_term(python_comprehension_document(
         "[f(x, y) for x in xs]",
         "xs, y",
     ));
-    let Term::Ctor { args, .. } = &term else {
-        panic!("comprehension must remain a constructor coordinate")
-    };
-    let transform = args.get(1).expect("comprehension transform");
-    assert!(matches!(transform, Term::Lambda { .. }));
-    assert_eq!(free_vars(transform.clone()), ["y".to_string()].into());
-    assert_eq!(
-        free_vars(term.clone()),
-        ["xs".to_string(), "y".to_string()].into()
-    );
+    assert_own_coordinate(&term, "py.listcomp");
+    // Neither the iterable, the element's free name nor the member is in it.
+    assert_eq!(free_vars(term.clone()), std::collections::BTreeSet::new());
 
     let formula = Formula::Atomic {
         name: "=".to_string(),
         args: vec![term],
     };
-    let sorts = BTreeMap::from([
-        (
-            "xs".to_string(),
-            Sort::Primitive {
-                name: "Value".into(),
-            },
-        ),
-        (
-            "y".to_string(),
-            Sort::Primitive {
-                name: "Value".into(),
-            },
-        ),
-    ]);
-    OpenFormula::from_ir_formula_with_sorts(formula, sorts.clone())
-        .scope(sorts)
-        .expect("membership admits xs and y without admitting bound x");
+    OpenFormula::from_ir_formula_with_sorts(formula, BTreeMap::new())
+        .scope(BTreeMap::new())
+        .expect("membership admits the coordinate with nothing in scope");
 }
 
 #[test]
@@ -426,16 +438,12 @@ fn bound_transform_spelling_does_not_turn_a_ctor_into_a_binder() {
 }
 
 #[test]
-fn same_spelling_binds_only_transform_body_after_rust_parse() {
+fn same_spelling_iterable_and_member_state_no_binder_after_rust_parse() {
+    // `[f(x) for x in x]`: the coordinate names neither the iterable `x`
+    // nor the member `x`, so no spelling can be captured by a binder.
     let term = document_post_term(python_comprehension_document("[f(x) for x in x]", "x"));
-    let Term::Ctor { args, .. } = &term else {
-        panic!("comprehension must remain a constructor coordinate")
-    };
-    assert_eq!(
-        free_vars(args[1].clone()),
-        std::collections::BTreeSet::new()
-    );
-    assert_eq!(free_vars(term), ["x".to_string()].into());
+    assert_own_coordinate(&term, "py.listcomp");
+    assert_eq!(free_vars(term), std::collections::BTreeSet::new());
 }
 
 #[test]
@@ -443,38 +451,12 @@ fn python_generator_expression_stays_lazy_after_rust_parse() {
     let eager = document_post_term(python_comprehension_document("[f(x) for x in xs]", "xs"));
     let lazy = document_post_term(python_comprehension_document("(f(x) for x in xs)", "xs"));
 
-    let Term::Ctor {
-        name: eager_name,
-        args: eager_args,
-    } = &eager
-    else {
-        panic!("eager comprehension must remain a constructor coordinate")
-    };
-    let Term::Ctor {
-        name: lazy_name,
-        args: lazy_args,
-    } = &lazy
-    else {
-        panic!("generator expression must remain a constructor coordinate")
-    };
-
-    assert_eq!(eager_name, "py.listcomp");
-    assert_eq!(lazy_name, "py.generatorexp");
+    // The kind heads the coordinate: a list and a generator never share a
+    // term, and neither states the call its element makes.
+    assert_own_coordinate(&eager, "py.listcomp");
+    assert_own_coordinate(&lazy, "py.generatorexp");
     assert_ne!(eager, lazy, "eager and lazy coordinates must stay distinct");
-
-    let Some(Term::Lambda { body, .. }) = lazy_args.get(1) else {
-        panic!("generator transform must remain a real lambda binder")
-    };
-    assert!(
-        matches!(body.as_ref(), Term::Ctor { name, .. } if name == "call:f"),
-        "generator creation must retain the call inside the unforced transform"
-    );
-    assert_eq!(
-        eager_args.get(1),
-        lazy_args.get(1),
-        "only the eager/lazy consumer coordinate differs"
-    );
-    assert_eq!(free_vars(lazy), ["xs".to_string()].into());
+    assert_eq!(free_vars(lazy), std::collections::BTreeSet::new());
 }
 
 #[test]
@@ -512,31 +494,15 @@ fn concrete_filtered_set_and_dict_displays_survive_rust_parse() {
 }
 
 #[test]
-fn nested_python_comprehension_lambdas_survive_rust_parse() {
+fn nested_python_comprehension_states_only_its_own_coordinate_after_rust_parse() {
+    // The inner comprehension is reduced at lift for the outer member; the
+    // proof states the outer one's coordinate and nothing inside it.
     let term = document_post_term(python_comprehension_document(
         "[[f(x, y, z) for y in ys] for x in xs]",
         "xs, ys, z",
     ));
-    let Term::Ctor { name, args } = &term else {
-        panic!("outer comprehension must remain a constructor coordinate")
-    };
-    assert_eq!(name, "py.listcomp");
-    let Some(Term::Lambda { body, .. }) = args.get(1) else {
-        panic!("outer transform must remain a real lambda binder")
-    };
-    let Term::Ctor {
-        name: inner_name,
-        args: inner_args,
-    } = body.as_ref()
-    else {
-        panic!("nested comprehension must remain inside the outer transform")
-    };
-    assert_eq!(inner_name, "py.listcomp");
-    assert!(matches!(inner_args.get(1), Some(Term::Lambda { .. })));
-    assert_eq!(
-        free_vars(term),
-        ["xs".to_string(), "ys".to_string(), "z".to_string()].into()
-    );
+    assert_own_coordinate(&term, "py.listcomp");
+    assert_eq!(free_vars(term), std::collections::BTreeSet::new());
 }
 
 #[test]
@@ -545,18 +511,6 @@ fn nested_python_generator_coordinates_stay_lazy_after_rust_parse() {
         "((f(x, y) for y in ys) for x in xs)",
         "xs, ys",
     ));
-    let Term::Ctor { name, args } = &term else {
-        panic!("outer generator must remain a constructor coordinate")
-    };
-    assert_eq!(name, "py.generatorexp");
-    let Some(Term::Lambda { body, .. }) = args.get(1) else {
-        panic!("outer generator transform must remain a real lambda binder")
-    };
-    assert!(matches!(
-        body.as_ref(),
-        Term::Ctor { name, args }
-            if name == "py.generatorexp"
-                && matches!(args.get(1), Some(Term::Lambda { .. }))
-    ));
-    assert_eq!(free_vars(term), ["xs".to_string(), "ys".to_string()].into());
+    assert_own_coordinate(&term, "py.generatorexp");
+    assert_eq!(free_vars(term), std::collections::BTreeSet::new());
 }
