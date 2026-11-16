@@ -5206,6 +5206,149 @@ pub(crate) fn apply_bv32_contagion(formula: &Formula) -> Formula {
     promote_bv32_siblings_formula(formula, &subjects)
 }
 
+/// A predicate the kit carries as a value is the truth of that value.
+///
+/// The kit projects a boolean atom it holds as a Python value to the
+/// same-name constructor term (`PredicateValue.to_term`): `out.append(c ==
+/// 0)` stores `python:compare_result("Eq", c, 0, <key>)` as a term, while
+/// `assert r[0] == r[1]` states a `python:compare_result(...)` atom. One
+/// head in term position and in boolean position was declared once, as the
+/// Int-valued ctor (`compile_formula`'s preamble skips a predicate a ctor
+/// already names), and then applied in Bool position: the script was
+/// ill-sorted, z3 and vampire rejected it and cvc5 hung up on its stdin.
+///
+/// Such an atom is rewritten to the Python truth of the value its head
+/// names, `py.truthy(<head>(<args>))`: the value stays the one Int-universe
+/// term, the atom reads its truth through the one truth reading
+/// (`py_truth_reading`), and a stored comparison and the comparison's
+/// truth are the same unknown. A formula in which no non-builtin predicate
+/// head is also a ctor head is returned unchanged.
+pub(crate) fn apply_predicate_value_truth(formula: &Formula) -> Formula {
+    let mut heads = BTreeSet::new();
+    collect_value_heads_formula(formula, &mut heads);
+    if heads.is_empty() {
+        return formula.clone();
+    }
+    predicate_value_truth_formula(formula, &heads)
+}
+
+fn collect_value_heads_formula(formula: &Formula, out: &mut BTreeSet<String>) {
+    match formula {
+        Formula::Atomic { args, .. } => {
+            for arg in args {
+                collect_value_heads_term(arg, out);
+            }
+        }
+        Formula::And { operands }
+        | Formula::Or { operands }
+        | Formula::Not { operands }
+        | Formula::Implies { operands } => {
+            for operand in operands {
+                collect_value_heads_formula(operand, out);
+            }
+        }
+        Formula::Forall { body, .. }
+        | Formula::Exists { body, .. }
+        | Formula::Choice { body, .. } => collect_value_heads_formula(body, out),
+        Formula::DivergenceBetween { source, target } => {
+            collect_value_heads_formula(source, out);
+            collect_value_heads_formula(target, out);
+        }
+        Formula::Substitute { .. } | Formula::Apply { .. } => {}
+    }
+}
+
+fn collect_value_heads_term(term: &Term, out: &mut BTreeSet<String>) {
+    match term {
+        Term::Ctor { name, args, .. } => {
+            out.insert(name.clone());
+            for arg in args {
+                collect_value_heads_term(arg, out);
+            }
+        }
+        Term::Lambda { body, .. } => collect_value_heads_term(body, out),
+        Term::Let { bindings, body } => {
+            for binding in bindings {
+                collect_value_heads_term(&binding.bound_term, out);
+            }
+            collect_value_heads_term(body, out);
+        }
+        Term::Var { .. } | Term::Const { .. } => {}
+    }
+}
+
+/// Whether the atom `name(args)` is one the predicate-decl pass declares as
+/// an uninterpreted Bool predicate (`collect_predicate_decls_formula`), the
+/// declaration a same-name ctor displaces. `py.truthy` itself is the reading
+/// the rewrite lands on, so it is never rewritten.
+fn is_declared_predicate_atom(name: &str, args: &[Term]) -> bool {
+    !args.is_empty()
+        && name != "identity"
+        && name != PYTHON_VALUE_BUILTIN
+        && name != PY_TRUTHY
+        && !crate::literal_encoding::routes_to_bv32_theory(name)
+        && !is_builtin_atomic_predicate(name)
+}
+
+fn predicate_value_truth_formula(formula: &Formula, heads: &BTreeSet<String>) -> Formula {
+    let map = |operands: &Vec<Formula>| -> Vec<Formula> {
+        operands
+            .iter()
+            .map(|operand| predicate_value_truth_formula(operand, heads))
+            .collect()
+    };
+    match formula {
+        Formula::Atomic { name, args }
+            if heads.contains(name) && is_declared_predicate_atom(name, args) =>
+        {
+            Formula::Atomic {
+                name: PY_TRUTHY.to_string(),
+                args: vec![Term::Ctor {
+                    name: name.clone(),
+                    args: args.clone(),
+                }],
+            }
+        }
+        Formula::Atomic { .. } => formula.clone(),
+        Formula::And { operands } => Formula::And {
+            operands: map(operands),
+        },
+        Formula::Or { operands } => Formula::Or {
+            operands: map(operands),
+        },
+        Formula::Not { operands } => Formula::Not {
+            operands: map(operands),
+        },
+        Formula::Implies { operands } => Formula::Implies {
+            operands: map(operands),
+        },
+        Formula::Forall { name, sort, body } => Formula::Forall {
+            name: name.clone(),
+            sort: sort.clone(),
+            body: Box::new(predicate_value_truth_formula(body, heads)),
+        },
+        Formula::Exists { name, sort, body } => Formula::Exists {
+            name: name.clone(),
+            sort: sort.clone(),
+            body: Box::new(predicate_value_truth_formula(body, heads)),
+        },
+        Formula::Choice {
+            var_name,
+            sort,
+            body,
+        } => Formula::Choice {
+            var_name: var_name.clone(),
+            sort: sort.clone(),
+            body: Box::new(predicate_value_truth_formula(body, heads)),
+        },
+        Formula::DivergenceBetween { source, target } => Formula::DivergenceBetween {
+            source: Box::new(predicate_value_truth_formula(source, heads)),
+            target: Box::new(predicate_value_truth_formula(target, heads)),
+        },
+        Formula::Substitute { .. } | Formula::Apply { .. } => formula.clone(),
+    }
+}
+
 fn collect_string_tainted_subjects(formula: &Formula, out: &mut Vec<Term>) {
     match formula {
         Formula::Atomic { name, args } => {
@@ -5236,7 +5379,7 @@ fn collect_string_tainted_subjects(formula: &Formula, out: &mut Vec<Term>) {
 
 pub fn compile_formula(formula: &Formula) -> Result<CompiledFormula, CompileError> {
     reset_py_value_functions();
-    let formula = &apply_bv32_contagion(formula);
+    let formula = &apply_predicate_value_truth(&apply_bv32_contagion(formula));
     {
         let mut tainted = Vec::new();
         collect_string_tainted_subjects(formula, &mut tainted);
@@ -5401,7 +5544,7 @@ pub fn compile_formula(formula: &Formula) -> Result<CompiledFormula, CompileErro
 
 pub fn compile_asserted_formula(formula: &Formula) -> Result<CompiledFormula, CompileError> {
     reset_py_value_functions();
-    let formula = &apply_bv32_contagion(formula);
+    let formula = &apply_predicate_value_truth(&apply_bv32_contagion(formula));
     {
         let mut tainted = Vec::new();
         collect_string_tainted_subjects(formula, &mut tainted);
