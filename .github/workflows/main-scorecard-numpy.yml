@@ -1,0 +1,224 @@
+name: Main scorecard numpy
+
+# WHY THIS EXISTS (#8416)
+#
+# numpy is the second yardstick of the nine-step lane. Its compiled C is the
+# boundary of the Python lifter: a call into C is an `undecided` member with
+# reason `unanswered` (an unbound edge, its halt kept), which is correct and
+# not counted against the lane. A Python function or module body the lifter
+# refuses by name is an `undecided` member with reason `refused`: a miss.
+#
+# The corpus is the numpy the measured closure already pins beside pandas
+# 3.0.3 (`numpy==2.5.1` in sugar-lift-py-tests[test]), resolved and
+# authenticated by authenticated_pytest.authenticated_numpy_corpus: the
+# environment authentication pandas uses (exact version, this interpreter's
+# own site-packages, dist-info agreeing), then every enrolled file checked
+# byte for byte against numpy's RECORD. Enrollment is the pandas rule
+# (SourceTree.paths: every *.py, tests included).
+#
+# Every enrolled file goes through tools/nine_step_lift_lane.py, the one lane
+# script the pandas lane also runs: `sugar mint`, `sugar dump`, `sugar prove`
+# per file, LIFT_SEATS seats of --slice i/K on one runner, then the join. The
+# row on the "Main scorecard" issue carries
+# `numpy_lift_files=M/N numpy_lift_funcs=F/T numpy_refused=R` and the top
+# refusal names, posted with `--lane` (the poster's label-generic lane
+# measure, sticky best per label).
+#
+# Gate, wait and supersede are the board's (main-scorecard-board.yml): the
+# fast lane measures first, an hourly run never replaces a push run, and a
+# merge burst measures the numpy lane of its head.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: main-scorecard-numpy-${{ github.sha }}${{ github.event_name == 'schedule' && '-schedule' || '' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  # Seats run side by side on one runner, as the board's do.
+  LIFT_SEATS: "4"
+  LIFT_SEAT_CAP_S: "7200"
+  LIFT_JOIN_CAP_S: "300"
+  SCORECARD_ISSUE_TITLE: "Main scorecard"
+  SCORECARD_MEASURES: "lift"
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  supersede:
+    name: cancel superseded runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: tools/main_scorecard_supersede.sh
+          sparse-checkout-cone-mode: false
+      - name: Cancel older runs on other commits
+        shell: bash
+        run: bash tools/main_scorecard_supersede.sh main-scorecard-numpy.yml
+
+  gate:
+    name: schedule gate
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      measure: ${{ steps.gate.outputs.measure }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: tools/main_scorecard_schedule_gate.sh
+          sparse-checkout-cone-mode: false
+      - name: Does this head still need a row?
+        id: gate
+        shell: bash
+        run: bash tools/main_scorecard_schedule_gate.sh main-scorecard-numpy.yml
+
+  wait:
+    name: wait for the fast lane
+    needs: [gate]
+    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    outputs:
+      measure: ${{ steps.wait.outputs.measure }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: tools/main_scorecard_wait_fast_lane.sh
+          sparse-checkout-cone-mode: false
+      - name: Wait until the fast lane on this commit finished
+        id: wait
+        shell: bash
+        run: bash tools/main_scorecard_wait_fast_lane.sh
+
+  lift:
+    name: numpy lift
+    needs: [gate, wait]
+    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' && needs.wait.outputs.measure != 'false' }}
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 150
+    steps:
+      - name: Start the job clock
+        shell: bash
+        run: echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv, gh)
+        shell: bash
+        run: bash tools/main_scorecard_env.sh
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+      - name: Install z3 (cached on the runner)
+        shell: bash
+        run: tools/ci-apt-install.sh z3
+      - name: Resolve authenticated numpy corpus
+        id: corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          from sugar_lift_py_tests.authenticated_pytest import authenticated_numpy_corpus
+          c = authenticated_numpy_corpus()
+          import sys
+          print(f"root={c.root}")
+          print(f"version={c.version}")
+          print(f"files={c.file_count}")
+          print(f"cid={c.manifest_cid}")
+          print(
+              f"numpy corpus: {c.distribution}=={c.version} files={c.file_count} "
+              f"manifestCid={c.manifest_cid} root={c.root}",
+              file=sys.stderr,
+          )
+          PY
+      - name: Seats + join (sugar mint + sugar prove per file)
+        shell: bash
+        env:
+          NUMPY_CORPUS: ${{ steps.corpus.outputs.root }}
+          NUMPY_FILES: ${{ steps.corpus.outputs.files }}
+        run: |
+          set +e -uo pipefail
+          export SUGAR_HOME="$GITHUB_WORKSPACE/.sugar"
+          export SUGAR_BIN="$(bin/sugarbin --profile release)"
+          bin/sugarbin --profile release --bin sugar-ir-smt-lib >/dev/null
+          OUT="$GITHUB_WORKSPACE/numpy-lift"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          K="$LIFT_SEATS"
+          for i in $(seq 0 $((K - 1))); do
+            (
+              timeout -s KILL "$LIFT_SEAT_CAP_S" \
+                python -u tools/nine_step_lift_lane.py \
+                  --corpus-root "$NUMPY_CORPUS" \
+                  --label numpy \
+                  --slice "$i/$K" \
+                  --out-dir "$OUT/s$i" \
+                  > "$OUT/s$i.log" 2>&1
+              echo $? > "$OUT/s$i.rc"
+            ) &
+          done
+          wait
+          dirs=()
+          for i in $(seq 0 $((K - 1))); do
+            echo "numpy lift seat s$i rc=$(cat "$OUT/s$i.rc" 2>/dev/null || echo missing)"
+            dirs+=("$OUT/s$i")
+          done
+          timeout -s KILL "$LIFT_JOIN_CAP_S" \
+            python -u tools/nine_step_lift_lane.py --join "${dirs[@]}" \
+              --label numpy --enrolled "$NUMPY_FILES" \
+              --out "$OUT/summary.json" --refusals "$OUT/refusals.json" \
+              > "$OUT/join.log" 2>&1
+          echo "join rc=$?"
+          cat "$OUT/join.log"
+      - name: Post the numpy lane (final row)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set +e -uo pipefail
+          # A missing summary is unmeasured, never a partial count.
+          python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final \
+            --lane numpy-lift/summary.json
+      - name: Upload the compact refusal list
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: numpy-lift-refusals
+          path: numpy-lift/refusals.json
+          if-no-files-found: warn
+      - name: Upload seat logs and the join
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: numpy-lift
+          path: |
+            numpy-lift/*.log
+            numpy-lift/*.rc
+            numpy-lift/summary.json
+            numpy-lift/s*/rows.jsonl
+          if-no-files-found: warn
+      - name: Job wall time
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"

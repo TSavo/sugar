@@ -536,6 +536,83 @@ def authenticated_pandas_corpus() -> AuthenticatedPandasCorpus:
     )
 
 
+def authenticate_against_record(name: str, root: Path, paths: Iterable[Path]) -> int:
+    """Every enrolled file's bytes match the sha256 its wheel's RECORD states.
+
+    The installed dist-info RECORD is the distribution's own manifest of the
+    bytes it shipped. A file it does not list, or whose bytes hash otherwise,
+    is not the pinned distribution's file, and the corpus refuses.
+    """
+    import base64
+
+    distribution = metadata.distribution(name)
+    recorded: dict[Path, str] = {}
+    for entry in distribution.files or ():
+        if entry.hash is None or entry.hash.mode != "sha256":
+            continue
+        recorded[Path(distribution.locate_file(entry)).resolve()] = entry.hash.value
+    count = 0
+    for path in paths:
+        resolved = Path(path).resolve()
+        expected = recorded.get(resolved)
+        if expected is None:
+            raise ExecutionEnvironmentMismatch(
+                f"{name} corpus file {resolved} is not in the {name} RECORD; "
+                "refusing a file the pinned distribution did not ship"
+            )
+        digest = hashlib.sha256(resolved.read_bytes()).digest()
+        observed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+        if observed != expected:
+            raise ExecutionEnvironmentMismatch(
+                f"{name} corpus file {resolved} hashes sha256={observed}; "
+                f"its RECORD states {expected}"
+            )
+        count += 1
+    if count == 0:
+        raise ExecutionEnvironmentMismatch(f"{name} corpus is empty under {root}")
+    return count
+
+
+@lru_cache(maxsize=1)
+def authenticated_numpy_corpus() -> AuthenticatedPandasCorpus:
+    """The numpy corpus: the installed numpy the measured closure pins.
+
+    The same environment authentication as pandas (``authenticate_environment``:
+    the exact pinned version, imported from this interpreter's own
+    site-packages, its dist-info agreeing), then every enrolled file
+    (``SourceTree.paths``, the enumeration the pandas corpus uses, tests
+    included) is checked byte for byte against numpy's RECORD. The content
+    manifest CID over those files is measured with the pandas function
+    (``corpus_manifest_cid``) and, when ``numpy-manifest-cid`` is declared
+    beside ``pandas-manifest-cid`` in pyproject.toml, required to equal it.
+    """
+    from sugar_source_tree.tree import SourceTree
+
+    _, numpy_identity, _, _ = authenticate_environment()
+    root = numpy_identity.loaded_from.parent
+    files = list(SourceTree(root).paths())
+    authenticate_against_record("numpy", root, files)
+    observed_cid, file_count = corpus_manifest_cid(root, files)
+    try:
+        package_root = sugar_lift_py_tests_package_root()
+    except RepoRootUnresolved as error:
+        raise ExecutionEnvironmentMismatch(str(error)) from error
+    data = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = data["tool"]["sugar"]["measured-corpus"].get("numpy-manifest-cid")
+    if declared is not None and str(declared) != observed_cid:
+        raise ExecutionEnvironmentMismatch(
+            "numpy corpus content manifest CID mismatch: "
+            f"observed {observed_cid} over {file_count} files; required {declared}"
+        )
+    return AuthenticatedPandasCorpus(
+        root=root,
+        distribution="numpy",
+        version=numpy_identity.version,
+        manifest_cid=observed_cid,
+        file_count=file_count,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         pandas_identity, numpy_identity, lift_identity, manifest_cid = (
