@@ -8,6 +8,9 @@ is now also compared with its best since the baseline.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import repo_root_test_support  # noqa: F401 -- puts tools/ on sys.path
 
 import main_scorecard_post as post
@@ -95,7 +98,7 @@ def test_baseline_marker_resets_best():
     assert [r["sha"] for r in window["board"]] == ["7d757bcb9dddd", "9bd3d4dddcccc"]
     line = status(bodies, board_now(1237, 179), set(FAST))
     assert line.startswith("OK ")
-    assert "baseline suite,twins,federation,board,rust,tree,source@9bd3d4ddd" in line
+    assert "baseline suite,twins,federation,board,rust,tree,source,lift@9bd3d4ddd" in line
     # Without the marker the same row is still regressed.
     assert status(bodies[:-1], board_now(1237, 179), set(FAST)).startswith("STILL REGRESSED: ")
 
@@ -223,3 +226,193 @@ def test_baseline_marker_can_name_source():
     assert post.parse_baselines("scorecard-baseline: 9bd3d4ddd source") == [
         ("9bd3d4ddd", ("source",))
     ]
+
+
+# Lanes: a corpus through the nine steps (tools/nine_step_lift_lane.py). One
+# way for every corpus: each label writes `<label>_lift_files=M/N
+# <label>_lift_funcs=F/T <label>_refused=R` (plus ierr/missing), and is
+# compared only with rows that carried the same label.
+
+ALL_CELLS = set(post.CELL_MEASURES)
+
+
+def lane_cells(label: str, files: int | str, funcs: int | str, refused: int | str,
+               files_total: int | str = 1421, funcs_total: int | str = 28264) -> dict[str, str]:
+    return {
+        f"{label}_lift_files": f"{files}/{files_total}",
+        f"{label}_lift_funcs": f"{funcs}/{funcs_total}",
+        f"{label}_refused": str(refused),
+        f"{label}_lift_ierr": "0",
+        f"{label}_lift_missing": "0",
+    }
+
+
+def lane_row(sha: str, run: str, *cells: dict[str, str]) -> str:
+    text = " ".join(f"{k}={v}" for c in cells for k, v in c.items())
+    return (
+        f"OK\n\nsha={sha} prev=x run={run} suite=-/- twins=-/- federation=- "
+        f"rust=-/- tree=-/- source=-/- board=-/- cpanic=- {text} issues=1 prs= pending=none\n"
+    )
+
+
+def lane_status(bodies: list[str], cells: dict[str, str], lanes: list[str]) -> str:
+    earlier, window, baseline = post.read_history(bodies, "now")
+    current = {**board_now(1421, 0), **cells}
+    drops, still = post.judge(current, earlier, window, ALL_CELLS, lanes=lanes)
+    return post.headline(drops, still, first=not earlier)
+
+
+def test_lane_cells_parse_and_old_rows_have_none():
+    row = post.parse_row(lane_row("c1aaaaaaa", "1", lane_cells("pandas", 900, 20000, 40)))
+    assert row is not None and row["pandas_lift_files"] == "900/1421"
+    assert post.row_measured(row, "pandas_lift")
+    assert not post.row_measured(row, "numpy_lift")
+    old = post.parse_row(board_row("b1aaaaaaa", "1", 1421, 0))
+    assert old is not None and not post.row_measured(old, "pandas_lift")
+    # The first lane row has nothing to compare with.
+    line = lane_status([board_row("b1aaaaaaa", "1", 1421, 0)],
+                       lane_cells("pandas", 900, 20000, 40), ["pandas"])
+    assert line.startswith("OK ")
+
+
+def test_lane_drop_is_regression_then_still_regressed():
+    bodies = [lane_row("c1aaaaaaa", "1", lane_cells("pandas", 900, 20000, 40))]
+    line = lane_status(bodies, lane_cells("pandas", 880, 19500, 55), ["pandas"])
+    assert line.startswith("REGRESSION: ")
+    assert "pandas_lift_files 900 -> 880" in line
+    assert "pandas_lift_funcs 20000 -> 19500" in line
+    assert "pandas_refused 40 -> 55" in line
+    assert "STILL REGRESSED" not in line
+    bodies.append(lane_row("c2aaaaaaa", "2", lane_cells("pandas", 880, 19500, 55)))
+    line = lane_status(bodies, lane_cells("pandas", 880, 19500, 55), ["pandas"])
+    assert line.startswith("STILL REGRESSED: ")
+    assert "pandas_lift_files 880 < best 900 @c1aaaaaaa" in line
+    assert "pandas_lift_funcs 19500 < best 20000 @c1aaaaaaa" in line
+    assert "pandas_refused 55 > best 40 @c1aaaaaaa" in line
+    assert "OK" not in line
+    assert lane_status(bodies, lane_cells("pandas", 950, 21000, 30), ["pandas"]).startswith("OK ")
+
+
+def test_lane_unmeasured_is_regression():
+    bodies = [lane_row("c1aaaaaaa", "1", lane_cells("pandas", 900, 20000, 40))]
+    line = lane_status(bodies, lane_cells("pandas", "?", "?", "?", "?", "?"), ["pandas"])
+    assert line.startswith("REGRESSION: ")
+    assert "pandas_lift_files unmeasured (was 900)" in line
+    assert "pandas_lift_funcs unmeasured (was 20000)" in line
+    assert "pandas_refused unmeasured (was 40)" in line
+
+
+def test_two_labels_compare_only_their_own_rows():
+    # pandas rows and numpy rows interleave on the issue; each label's
+    # previous and best come only from rows that carried that label.
+    bodies = [
+        lane_row("c1aaaaaaa", "1", lane_cells("pandas", 900, 20000, 40)),
+        lane_row("d1aaaaaaa", "2", lane_cells("numpy", 300, 5000, 10, 600, 9000)),
+        lane_row("c2aaaaaaa", "3", lane_cells("pandas", 910, 20100, 38)),
+        lane_row("d2aaaaaaa", "4", lane_cells("numpy", 280, 4800, 12, 600, 9000)),
+    ]
+    # A pandas-only row never reads numpy's best, and holds its own.
+    pandas = lane_status(bodies, lane_cells("pandas", 910, 20100, 38), ["pandas"])
+    assert pandas.startswith("OK "), pandas
+    # A numpy-only row is still regressed against numpy's best, not pandas'.
+    numpy = lane_status(bodies, lane_cells("numpy", 280, 4800, 12, 600, 9000), ["numpy"])
+    assert numpy.startswith("STILL REGRESSED: numpy_lift_files 280 < best 300 @d1aaaaaaa")
+    assert "pandas" not in numpy
+    # One row carrying both labels judges both.
+    both = lane_status(
+        bodies,
+        {**lane_cells("pandas", 905, 20100, 38), **lane_cells("numpy", 300, 5000, 10, 600, 9000)},
+        ["pandas", "numpy"],
+    )
+    assert both.startswith("REGRESSION: pandas_lift_files 910 -> 905")
+    assert "numpy" not in both
+
+
+def test_lane_baseline_markers():
+    assert post.parse_baselines("scorecard-baseline: 9bd3d4ddd pandas_lift") == [
+        ("9bd3d4ddd", ("pandas_lift",))
+    ]
+    assert post.parse_baselines("scorecard-baseline: 9bd3d4ddd lift") == [
+        ("9bd3d4ddd", ("lift",))
+    ]
+    assert post.parse_baselines("scorecard-baseline: 9bd3d4ddd pandas_lifts") == []
+    bodies = [
+        lane_row("c1aaaaaaa", "1", lane_cells("pandas", 900, 20000, 40),
+                 lane_cells("numpy", 300, 5000, 10, 600, 9000)),
+        lane_row("c2aaaaaaa", "2", lane_cells("pandas", 800, 18000, 90),
+                 lane_cells("numpy", 250, 4000, 20, 600, 9000)),
+    ]
+    regressed = lane_cells("pandas", 800, 18000, 90)
+    numpy_low = lane_cells("numpy", 250, 4000, 20, 600, 9000)
+    # A pandas_lift marker resets pandas only.
+    marked = bodies + ["scorecard-baseline: c2aaaaaaa pandas_lift"]
+    assert lane_status(marked, regressed, ["pandas"]).startswith("OK ")
+    assert lane_status(marked, numpy_low, ["numpy"]).startswith("STILL REGRESSED: ")
+    # `lift` resets every lane.
+    marked = bodies + ["scorecard-baseline: c2aaaaaaa lift"]
+    assert lane_status(marked, regressed, ["pandas"]).startswith("OK ")
+    assert lane_status(marked, numpy_low, ["numpy"]).startswith("OK ")
+
+
+def _bank(monkeypatch, tmp_path, measures: str, lanes: str, *sources: str) -> Path:
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("GITHUB_RUN_ID", "1")
+    monkeypatch.setenv("SCORECARD_MEASURES", measures)
+    monkeypatch.setenv("SCORECARD_LANES", lanes)
+    monkeypatch.delenv("JOB_T0", raising=False)
+    runs = tmp_path / "runs" / "1-1"
+    args = ["--runs", str(runs), "--no-post"]
+    for source in sources:
+        args += ["--lane", source]
+    assert post.main(args) == 0
+    return runs
+
+
+SUMMARY = {
+    "label": "pandas", "files_lifted": 900, "files_total": 1421, "files_minted": 1000,
+    "files_missing": 2, "instrument_errors": 3, "funcs_lifted": 20000,
+    "funcs_total": 28000, "refused": 40, "refusals_top": "TemporalContext x30",
+}
+
+
+def test_lane_summary_is_banked_under_its_label(monkeypatch, tmp_path):
+    summary = tmp_path / "pandas-lift" / "summary.json"
+    summary.parent.mkdir()
+    summary.write_text(json.dumps(SUMMARY))
+    runs = _bank(monkeypatch, tmp_path, "board,lift", "pandas", str(summary))
+    lanes, pending = post.load_lanes(runs, final=True)
+    assert pending == []
+    assert lanes["pandas"]["measured"] is True
+    assert lanes["pandas"]["files_lifted"] == 900
+    assert lanes["pandas"]["instrument_errors"] == 3
+    assert lanes["pandas"]["files_missing"] == 2
+
+
+def test_missing_or_partial_summary_is_unmeasured(monkeypatch, tmp_path):
+    missing = tmp_path / "numpy-lift" / "summary.json"
+    runs = _bank(monkeypatch, tmp_path, "lift", "", str(missing))
+    lanes, _ = post.load_lanes(runs, final=True)
+    assert lanes["numpy"]["measured"] is False
+    partial = tmp_path / "p" / "summary.json"
+    partial.parent.mkdir()
+    partial.write_text(json.dumps({k: v for k, v in SUMMARY.items() if k != "instrument_errors"}))
+    runs = _bank(monkeypatch, tmp_path, "lift", "", str(partial))
+    lanes, _ = post.load_lanes(runs, final=True)
+    assert lanes["pandas"]["measured"] is False
+    assert "instrument_errors" in lanes["pandas"]["note"]
+
+
+def test_expected_lane_is_pending_then_unmeasured(monkeypatch, tmp_path):
+    runs = _bank(monkeypatch, tmp_path, "board,lift", "pandas")
+    assert post.load_lanes(runs, final=False) == ({"pandas": {}}, ["pandas_lift"])
+    lanes, pending = post.load_lanes(runs, final=True)
+    assert pending == [] and lanes["pandas"]["measured"] is False
+
+
+def test_a_workflow_without_lift_carries_no_lane(monkeypatch, tmp_path):
+    summary = tmp_path / "pandas-lift" / "summary.json"
+    summary.parent.mkdir()
+    summary.write_text(json.dumps(SUMMARY))
+    runs = _bank(monkeypatch, tmp_path, "board,lift", "", str(summary))
+    monkeypatch.setenv("SCORECARD_MEASURES", "suite,twins,federation,rust,tree,source")
+    assert post.load_lanes(runs, final=True) == ({}, [])

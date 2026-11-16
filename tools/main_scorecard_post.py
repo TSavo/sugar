@@ -66,7 +66,9 @@ marker comment). The newest marker naming a measure wins.
 Comment shape (first line, then one machine-readable line of key=value):
   OK ... | REGRESSION: ... | STILL REGRESSED: ... ; then
   sha= prev= run= suite=p/t twins=p/t federation= rust=p/t tree=p/t source=p/t
-  board=c/t cpanic= issues= prs= pending= rerun= carried= wall=
+  board=c/t cpanic= [<label>_lift_files=m/n <label>_lift_funcs=f/t <label>_refused=
+  <label>_lift_ierr= <label>_lift_missing= ...] issues= prs= pending= rerun=
+  carried= wall=
 
 ``rerun=`` and ``carried=`` keep their shape (``suite:N,twins:N,board:N``),
 but nothing is carried any more (#8416): rerun is each measure's total and
@@ -91,6 +93,42 @@ suite's shards and are their own number; the alarm (REGRESSION and STILL
 REGRESSED) fires when source failing rises or its total falls beyond the
 tolerance. Rows written before it existed have no ``source=`` key and count as
 not measured.
+
+Lanes: a corpus through the nine steps (docs/path-forward.md). The board
+(``board=``) only builds trees and never reduces, so it cannot say how much
+of a corpus goes through; a lane can. tools/nine_step_lift_lane.py puts every
+file of a corpus through ``sugar mint`` and ``sugar prove`` (the commands the
+solver twins and examples/python-base64-federation/run.sh use) and its join
+writes one SUMMARY.json naming its ``label``. A workflow whose
+SCORECARD_MEASURES names ``lift`` posts it with
+
+    main_scorecard_post.py --runs DIR --lane SUMMARY.json [--lane ...]
+
+A row carries only the labels this run banked, plus any SCORECARD_LANES
+names as expected (``pandas``); so a pandas-only or a numpy-only row never
+compares the other label's cells. Each label writes its own cells, one way
+for every corpus:
+
+  ``<label>_lift_files=M/N``  files minted to a ``.proof`` that states no
+                              refusal, of the enrolled files
+  ``<label>_lift_funcs=F/T``  functions of minted files that no refusal names
+  ``<label>_refused=R``       refusals by name (``undecided`` members whose
+                              reason is ``refused``, plus a file mint packaged
+                              no proof for)
+  ``<label>_lift_ierr=I``     files the instrument failed on
+  ``<label>_lift_missing=X``  enrolled files with no row (a lost seat)
+
+plus a ``<label>_refusals_top`` note line. Instrument errors and missing
+files are shown, never counted as lifted (and their functions are outside
+T). An owed member or an unbound edge (a call into numpy) is carried, not
+refused. The alarm (REGRESSION and STILL REGRESSED, best since the baseline,
+per label) reads lift_files and lift_funcs as higher is better and refused as
+lower is better. A missing or unreadable SUMMARY.json is that lane
+unmeasured (its label: the one SCORECARD_LANES names, else the summary's
+directory spelled ``<label>-...``); an expected label that never reported is
+pending, then unmeasured under ``--final``. ``scorecard-baseline: <sha>
+<label>_lift`` resets one lane's best; ``lift``, or a marker naming no
+measure, resets every lane.
 """
 
 from __future__ import annotations
@@ -106,7 +144,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-MEASURES = ("suite", "twins", "federation", "board", "rust", "tree", "source")
+MEASURES = ("suite", "twins", "federation", "board", "rust", "tree", "source", "lift")
+# `lift` is the nine-step lanes: it owns no row cell of its own; each lane
+# label writes its own `<label>_...` cells (see "Lanes" above).
+CELL_MEASURES = MEASURES[:-1]
 # Required for a comment to count as a row. `rust`, `tree` and `source` are
 # read optionally: rows written before they existed have no such key and must
 # still parse.
@@ -118,9 +159,30 @@ TOTAL_DROP_TOLERANCE = float(os.environ.get("SCORECARD_TOTAL_DROP_TOLERANCE") or
 FAILING_MEASURES = ("suite", "twins", "rust", "tree", "source")
 # A human or coordinator resets the best on purpose with this line.
 BASELINE_RE = re.compile(
-    r"^[ \t]*scorecard-baseline:[ \t]*([0-9a-fA-F]{7,40})(?:[ \t]+([a-z][a-z, \t]*?))?[ \t]*$",
+    r"^[ \t]*scorecard-baseline:[ \t]*([0-9a-fA-F]{7,40})(?:[ \t]+([a-z][a-z0-9_, \t]*?))?[ \t]*$",
     re.MULTILINE,
 )
+# A lane's label (SCORECARD_LANES, a SUMMARY.json's `label`), and the cells
+# one lane writes in a row.
+LABEL_RE = re.compile(r"[a-z][a-z0-9]*")
+LANE_CELL_RE = re.compile(r"([a-z][a-z0-9]*)_lift_files")
+# The SUMMARY.json keys a lane needs to count as measured.
+LANE_KEYS = (
+    "files_lifted", "files_total", "funcs_lifted", "funcs_total",
+    "refused", "instrument_errors", "files_missing",
+)
+
+
+def lane_token(label: str) -> str:
+    """A lane's name in a baseline marker, a pending list and the window."""
+    return f"{label}_lift"
+
+
+def lane_label(token: str) -> str | None:
+    """The label a ``<label>_lift`` token names, or None."""
+    if token.endswith("_lift") and LABEL_RE.fullmatch(token[: -len("_lift")]):
+        return token[: -len("_lift")]
+    return None
 
 
 def gh(*args: str) -> str | None:
@@ -165,8 +227,10 @@ def parse_baselines(body: str) -> list[tuple[str, tuple[str, ...]]]:
         if not named:
             markers.append((sha, MEASURES))
             continue
-        known = tuple(m for m in MEASURES if m in named)
-        unknown = [m for m in named if m not in MEASURES]
+        known = tuple(m for m in MEASURES if m in named) + tuple(
+            m for m in named if lane_label(m) is not None
+        )
+        unknown = [m for m in named if m not in MEASURES and lane_label(m) is None]
         if unknown or not known:
             print(f"::warning::ignored scorecard-baseline line naming {unknown}: {match.group(0).strip()}")
             continue
@@ -194,14 +258,33 @@ def read_history(
         for sha, measures in parse_baselines(body):
             markers.append((index, sha, measures))
     start = {m: 0 for m in MEASURES}
+    # Lanes are named by the rows themselves: a marker naming no measure
+    # resets every lane (lanes_start), a `<label>_lift` marker one lane.
+    lanes_start = 0
+    lane_start: dict[str, int] = {}
     baseline: dict[str, str] = {}
     for index, sha, measures in markers:  # oldest first: the newest marker wins
         at = next((j for j, row in rows if j < index and row["sha"].lower().startswith(sha)), index)
+        if measures == MEASURES or "lift" in measures:
+            lanes_start, lane_start = at, {}
         for measure in measures:
-            start[measure] = at
+            label = lane_label(measure)
+            if label is not None:
+                lane_start[label] = at
+            else:
+                start[measure] = at
             baseline[measure] = sha
     earlier = [row for _, row in reversed(rows)]
     window = {m: [row for j, row in reversed(rows) if j >= start[m]] for m in MEASURES}
+    labels = sorted({
+        match.group(1)
+        for _, row in rows
+        for key in row
+        if (match := LANE_CELL_RE.fullmatch(key))
+    })
+    for label in labels:
+        begin = lane_start.get(label, lanes_start)
+        window[lane_token(label)] = [row for j, row in reversed(rows) if j >= begin]
     return earlier, window, baseline
 
 
@@ -217,13 +300,17 @@ def judge(
     earlier: list[dict[str, str]],
     window: dict[str, list[dict[str, str]]],
     skip: set[str] | frozenset[str] = frozenset(),
+    lanes: tuple[str, ...] | list[str] = (),
 ) -> tuple[list[str], list[str]]:
     """Compare this row's cells with the previous measured rows and with the best.
 
     ``current`` holds this row's cells by row key (suite, twins, rust, tree,
-    source, board, cpanic, federation); ``skip`` names measures that are pending or not
-    this workflow's. Returns (fresh drops against the previous measured row,
-    numbers still worse than their best since the baseline).
+    source, board, cpanic, federation, and each lane's ``<label>_lift_files``,
+    ``<label>_lift_funcs``, ``<label>_refused``); ``skip`` names measures that
+    are pending or not this workflow's; ``lanes`` names the lane labels to
+    compare (this workflow's, reported). Returns (fresh drops against the
+    previous measured row, numbers still worse than their best since the
+    baseline).
     """
     drops: dict[tuple[str, str], str] = {}
     still: dict[tuple[str, str], str] = {}
@@ -316,6 +403,27 @@ def judge(
         if cur_panic is not None and top is not None and cur_panic > top[0]:
             still[("board", "cpanic")] = f"cpanic {cur_panic} > best {top[0]} @{top[1][:9]}"
 
+    for label in lanes:
+        # A lane: more files and functions lifted is better, more refusals by
+        # name is worse. Each cell is compared with the newest earlier row
+        # that measured it and with its best since the baseline.
+        for key, part, better, sign in (
+            (f"{label}_lift_files", 0, higher, "<"),
+            (f"{label}_lift_funcs", 0, higher, "<"),
+            (f"{label}_refused", None, lower, ">"),
+        ):
+            read = lambda r, key=key, part=part: digit(r, key, part)  # noqa: E731
+            cur = read(current)
+            before = newest(earlier, read)
+            if before is not None:
+                if cur is None:
+                    drops[(label, key)] = f"{key} unmeasured (was {before})"
+                elif better(before, cur):
+                    drops[(label, key)] = f"{key} {before} -> {cur}"
+            top = best(window.get(lane_token(label), []), read, better)
+            if cur is not None and top is not None and better(top[0], cur):
+                still[(label, key)] = f"{key} {cur} {sign} best {top[0]} @{top[1][:9]}"
+
     if "federation" not in skip:
         fed = current.get("federation", "?")
         verdict = lambda r: r.get("federation") if r.get("federation") in ("PASS", "FAIL") else None  # noqa: E731
@@ -401,9 +509,82 @@ def own_measures() -> tuple[str, ...]:
     return tuple(m for m in MEASURES if m in named)
 
 
+def own_lanes() -> tuple[str, ...]:
+    """The lane labels this workflow reports (SCORECARD_LANES; default none)."""
+    raw = os.environ.get("SCORECARD_LANES", "").strip()
+    named = tuple(label.strip() for label in raw.split(",") if label.strip())
+    bad = [label for label in named if not LABEL_RE.fullmatch(label)]
+    if bad:
+        sys.exit(f"::error::bad SCORECARD_LANES {raw!r}")
+    return tuple(dict.fromkeys(named))
+
+
 def row_measured(row: dict[str, str], measure: str) -> bool:
-    value = row.get(measure, "").split("/")[0]
+    """Whether a row measured a measure, or a lane (by its `<label>_lift` token)."""
+    label = lane_label(measure)
+    key = f"{label}_lift_files" if label is not None else measure
+    value = row.get(key, "").split("/")[0]
     return value.isdigit() or value in ("PASS", "FAIL")
+
+
+def lane_result(summary: object) -> dict:
+    """A lane's banked result from its SUMMARY.json (measured only when whole)."""
+    if not isinstance(summary, dict):
+        return {"measured": False, "note": "lane summary is not an object"}
+    lacking = [k for k in LANE_KEYS if not isinstance(summary.get(k), int)]
+    if lacking:
+        return {"measured": False, "note": "lane summary lacks " + ", ".join(lacking)}
+    result = {k: summary[k] for k in LANE_KEYS}
+    for key in ("files_minted", "unanswered_edges"):
+        if isinstance(summary.get(key), int):
+            result[key] = summary[key]
+    result["refusals_top"] = str(summary.get("refusals_top") or "none")
+    result["measured"] = True
+    return result
+
+
+def missing_lane_label(source: str) -> str | None:
+    """The label of a lane whose SUMMARY.json is missing: the one label in
+    SCORECARD_LANES, else the summary's directory spelled ``<label>[-...]``
+    (``numpy-lift/summary.json`` is numpy's)."""
+    named = own_lanes()
+    if len(named) == 1:
+        return named[0]
+    head = Path(source).parent.name.split("-", 1)[0]
+    if LABEL_RE.fullmatch(head) and (not named or head in named):
+        return head
+    return None
+
+
+def load_lanes(runs: Path, final: bool) -> tuple[dict[str, dict], list[str]]:
+    """The lanes this row carries: every lane banked for this run, and each
+    label SCORECARD_LANES expects (pending, or unmeasured under --final).
+    Only a workflow that owns ``lift`` carries lanes; a row carries only its
+    own labels, so it never compares another label's cells."""
+    if "lift" not in own_measures():
+        return {}, []
+    results: dict[str, dict] = {}
+    for directory in reversed(attempt_dirs(runs)):  # this attempt wins
+        for path in sorted(directory.glob("lane-*.json")):
+            label = path.stem[len("lane-"):]
+            if not LABEL_RE.fullmatch(label):
+                continue
+            try:
+                results[label] = json.loads(path.read_text())
+            except (OSError, ValueError):
+                continue
+    pending: list[str] = []
+    for label in own_lanes():
+        if label in results:
+            continue
+        if final:
+            results[label] = {"measured": False, "note": "lane did not report"}
+        else:
+            pending.append(lane_token(label))
+            results[label] = {}
+    if not results and not final:
+        pending.append("lift")
+    return dict(sorted(results.items())), pending
 
 
 def attempt_dirs(runs: Path) -> list[Path]:
@@ -425,7 +606,7 @@ def load_results(runs: Path, final: bool) -> tuple[dict[str, dict], list[str]]:
     results: dict[str, dict] = {}
     pending: list[str] = []
     own = own_measures()
-    for measure in MEASURES:
+    for measure in CELL_MEASURES:
         if measure not in own:
             results[measure] = {}
             continue
@@ -500,6 +681,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="MEASURE.KEY[.KEY]=VALUE",
         help="build a measure's result from values (measured=true unless set)",
     )
+    parser.add_argument(
+        "--lane",
+        action="append",
+        default=[],
+        metavar="SUMMARY.json",
+        help="bank a nine-step lane's join summary (tools/nine_step_lift_lane.py) under its label",
+    )
     parser.add_argument("--final", action="store_true")
     parser.add_argument("--no-post", action="store_true", help="bank only")
     args = parser.parse_args(argv)
@@ -515,7 +703,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for item in args.put:
         measure, _, source = item.partition("=")
-        if measure not in MEASURES:
+        if measure not in CELL_MEASURES:
             sys.exit(f"::error::unknown measure {measure!r}")
         tmp = runs / f".{measure}.{os.getpid()}.tmp"
         shutil.copyfile(source, tmp)
@@ -524,7 +712,7 @@ def main(argv: list[str] | None = None) -> int:
     for item in args.set:
         path, _, value = item.partition("=")
         measure, *keys = path.split(".")
-        if measure not in MEASURES or not keys:
+        if measure not in CELL_MEASURES or not keys:
             sys.exit(f"::error::bad --set {item!r}")
         target = built.setdefault(measure, {"measured": True})
         for key in keys[:-1]:
@@ -542,6 +730,30 @@ def main(argv: list[str] | None = None) -> int:
         tmp = runs / f".{measure}.{os.getpid()}.tmp"
         tmp.write_text(json.dumps(result, sort_keys=True) + "\n")
         os.replace(tmp, runs / f"{measure}.json")
+    for source in args.lane:
+        try:
+            summary = json.loads(Path(source).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            # A missing or unreadable summary is the lane unmeasured, under the
+            # label its workflow expects.
+            label = missing_lane_label(source)
+            if label is None:
+                print(f"::warning::lane summary {source!r} unreadable and its label unknown")
+                continue
+            result = {
+                "measured": False,
+                "note": f"lane summary {source} unreadable ({type(error).__name__})",
+            }
+        else:
+            label = summary.get("label") if isinstance(summary, dict) else None
+            if not isinstance(label, str) or not LABEL_RE.fullmatch(label):
+                sys.exit(f"::error::lane summary {source!r} has no valid label: {label!r}")
+            result = lane_result(summary)
+        if t0:
+            result["jobWallSeconds"] = int(time.time() - float(t0))
+        tmp = runs / f".lane-{label}.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps(result, sort_keys=True) + "\n")
+        os.replace(tmp, runs / f"lane-{label}.json")
     if args.no_post:
         return 0
 
@@ -551,10 +763,35 @@ def main(argv: list[str] | None = None) -> int:
 
 def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path, final: bool) -> int:
     results, pending = load_results(runs, final)
+    lanes, lanes_pending = load_lanes(runs, final)
+    pending = pending + lanes_pending
     suite, twins, fed_r, board, rust, tree, source = (
         results[m] for m in ("suite", "twins", "federation", "board", "rust", "tree", "source")
     )
     own = own_measures()
+    # Lanes reported by this run (pending ones are written `?` and not compared).
+    reported_lanes = [label for label in lanes if lane_token(label) not in lanes_pending]
+
+    def lane_cells(label: str) -> dict[str, str]:
+        result = lanes[label]
+        if not result.get("measured"):
+            files = funcs = "?/?"
+            refused = ierr = missing = "?"
+        else:
+            files = f"{num(result.get('files_lifted'))}/{num(result.get('files_total'))}"
+            funcs = f"{num(result.get('funcs_lifted'))}/{num(result.get('funcs_total'))}"
+            refused = num(result.get("refused"))
+            ierr = num(result.get("instrument_errors"))
+            missing = num(result.get("files_missing"))
+        return {
+            f"{label}_lift_files": files,
+            f"{label}_lift_funcs": funcs,
+            f"{label}_refused": refused,
+            f"{label}_lift_ierr": ierr,
+            f"{label}_lift_missing": missing,
+        }
+
+    lane_row = {key: value for label in lanes for key, value in lane_cells(label).items()}
     # Not this workflow's number: written "-", never pending, never compared.
     outside = [m for m in MEASURES if m not in own]
 
@@ -597,14 +834,17 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         url = gh("issue", "create", "--title", title, "--body",
                  "One row per run of .github/workflows/main-scorecard.yml (suite, "
                  "twins, federation, rust, tree, source) and of main-scorecard-board.yml (the pandas "
-                 "board), on every push to main, hourly, on demand. Each measuring "
+                 "board and its nine-step lane), on every push to main, hourly, on demand. "
+                 "Each measuring "
                  "job edits its run's comment as soon as its own number lands; `?` "
                  "is pending until then and `-` is the other workflow's number. "
                  "Each comment starts with OK, REGRESSION: or STILL REGRESSED: "
                  "(a number worse than its best since the baseline; reset the best "
                  "with a comment line `scorecard-baseline: <sha> [measures]`), then one "
                  "machine-readable line: sha= prev= run= suite= twins= federation= "
-                 "rust= tree= source= board= cpanic= issues= prs= pending= rerun= carried= wall=.")
+                 "rust= tree= source= board= cpanic= <label>_lift_files= <label>_lift_funcs= "
+                 "<label>_refused= <label>_lift_ierr= <label>_lift_missing= issues= prs= "
+                 "pending= rerun= carried= wall=.")
         if url is None:
             print("::error::could not create the scorecard issue")
             return 1
@@ -637,7 +877,11 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         pass
     # The previous row is the newest earlier row that measured one of this
     # workflow's numbers, so the PR range is the range those numbers moved in.
-    comparable = [row for row in earlier if any(row_measured(row, m) for m in own)]
+    comparable = [
+        row for row in earlier
+        if any(row_measured(row, m) for m in own)
+        or any(row_measured(row, lane_token(label)) for label in lanes)
+    ]
     prev_sha = (comparable or earlier)[0]["sha"] if earlier else "none"
 
     prs: list[str] = []
@@ -671,8 +915,11 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         "board": f"{board_done}/{board_total}",
         "cpanic": cpanic,
         "federation": fed,
+        **lane_row,
     }
-    drops, still = judge(current, earlier, window, set(pending) | set(outside))
+    drops, still = judge(
+        current, earlier, window, set(pending) | set(outside), lanes=reported_lanes
+    )
 
     range_txt = f"PRs {prs_cell or 'none'} ({prev_sha[:9]}..{sha[:9]})"
     status = headline(
@@ -682,7 +929,10 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         first=not earlier,
         pending=pending,
         range_txt=range_txt if (earlier or prev_error) else "",
-        baseline={m: s for m, s in baseline.items() if m in own},
+        baseline={
+            m: s for m, s in baseline.items()
+            if m in own or (lane_label(m) or "") in lanes
+        },
     )
 
     def carry_cell(field: str) -> str:
@@ -708,7 +958,9 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         f"twins={twins_pass}/{twins_total} federation={fed} "
         f"rust={rust_pass}/{rust_total} tree={tree_pass}/{tree_total} "
         f"source={source_pass}/{source_total} "
-        f"board={board_done}/{board_total} cpanic={cpanic} issues={issues} "
+        f"board={board_done}/{board_total} cpanic={cpanic} "
+        + "".join(f"{key}={value} " for key, value in lane_row.items())
+        + f"issues={issues} "
         f"prs={prs_cell} pending={','.join(pending) or 'none'} "
         f"rerun={carry_cell('rerun')} carried={carry_cell('carried')} wall={wall}"
     )
@@ -729,16 +981,35 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         f"source {source_pass}/{source_total} failed+error "
         f"{num(source.get('failed'))} (job {job_wall(source)}) | "
         f"board {board_done}/{board_total} cpanic={cpanic} (job {job_wall(board)}) | "
-        f"run wall {wall} | open issues {issues} | [run]({run_url})"
+        + "".join(
+            f"{label} lift files {lane_row[f'{label}_lift_files']} funcs "
+            f"{lane_row[f'{label}_lift_funcs']} refused {lane_row[f'{label}_refused']} "
+            f"instrument errors {lane_row[f'{label}_lift_ierr']} missing "
+            f"{lane_row[f'{label}_lift_missing']} (job {job_wall(lanes[label])}) | "
+            for label in lanes
+        )
+        + f"run wall {wall} | open issues {issues} | [run]({run_url})"
     )
     notes = []
     if fed_r.get("last_fail"):
         notes.append(f"federation last FAIL line: `{fed_r['last_fail']}`")
     if board.get("line"):
         notes.append(f"board line: `{board['line']}`")
-    for measure in MEASURES:
+    for measure in CELL_MEASURES:
         if results[measure].get("note"):
             notes.append(f"{measure}: {results[measure]['note']}")
+    for label, lane in lanes.items():
+        if lane.get("measured"):
+            notes.append(f"{label}_refusals_top: {str(lane.get('refusals_top') or 'none')[:600]}")
+            unlifted = int(lane.get("instrument_errors") or 0) + int(lane.get("files_missing") or 0)
+            if unlifted:
+                notes.append(
+                    f"{label}: {lane.get('instrument_errors')} instrument errors and "
+                    f"{lane.get('files_missing')} missing files are not lifted; their "
+                    "functions are outside lift_funcs's total"
+                )
+        if lane.get("note"):
+            notes.append(f"{label}_lift: {lane['note']}")
     body = f"{status}\n\n{row}\n\n{details}\n" + "".join(f"\n{n}" for n in notes) + "\n"
 
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
