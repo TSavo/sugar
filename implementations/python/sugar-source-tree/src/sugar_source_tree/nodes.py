@@ -11487,7 +11487,13 @@ class ClassDef(Statement):
         (``Node.written_keys``, ``_class_body_block``, which refuses by name
         a bound name with no key); a ``def`` and a ``class`` (in the body
         itself); ``pass``; the docstring; an ``if`` or a ``with`` over the
-        same; and a ``def`` under an ``if`` or a ``with``.  A ``with`` is the
+        same; a ``for`` or a ``while`` (#8957: the one loop recurrence the
+        threading makes of every loop, ``LoopRecurrenceStatement``, whose
+        writes the namespace reads through what it publishes,
+        ``LoopRecurrenceStatement.written_keys``, as a module or function
+        body's reader does; its body is the loop's, built by its own
+        statement rule, never unrolled here); and a ``def`` under an ``if``
+        or a ``with``.  A ``with`` is the
         one ``with`` statement (``With._construct_sugar``), its body's
         statements read as the body's own rows: they run on every face the
         ``with`` completes on, and a face where its manager suppressed a raise
@@ -11497,7 +11503,7 @@ class ClassDef(Statement):
         it; it is in no method roster, so the class statement's reduction
         refuses it by name (``ClassDefinitionSugar._namespace``,
         ``unrostered_definitions``), never drops it.  Any other compound
-        statement (a loop, ``try``, ``match``: its writes are not read here),
+        statement (``try``, ``match``: its writes are not read here),
         a walrus (its write is its own node's, not its statement's), and a
         ``class`` under an ``if`` or a ``with`` (its class statement binds no
         key there), are refused here, never dropped."""
@@ -11510,6 +11516,12 @@ class ClassDef(Statement):
                 continue
             if isinstance(item, With) and not _walrus_targets(item):
                 self._require_class_members(item.body, top=False)
+                continue
+            if isinstance(item, (For, While, LoopRecurrenceStatement)):
+                # The source loop is admitted because the threading makes it
+                # the one loop recurrence; the threaded body is read again
+                # here, and ``_class_body_block`` refuses by name a loop the
+                # threading left anything else.
                 continue
             if not top and isinstance(item, (FunctionDef, AsyncFunctionDef)):
                 continue
@@ -11713,6 +11725,20 @@ class ClassDef(Statement):
                 unrostered.append(item.fragment.seal().cid)
                 bound.add(item.name)
                 return False
+            if isinstance(item, (For, While)):
+                # The threading makes every loop of a block the one loop
+                # recurrence (``_substitute_body_tracked``); a loop it left a
+                # loop has no publication the namespace reads.
+                raise SugarNotWritten(
+                    blame=item.fragment,
+                    owner="ClassDef._construct_sugar",
+                    observed=(
+                        f"class-body {item.kind} the threading did not make "
+                        "the one loop recurrence"
+                    ),
+                    requested="the LoopRecurrenceStatement the block threads",
+                    fix="thread the class body before constructing its statements",
+                )
             written(item, in_branch, bound, armed)
             return False
 
@@ -11730,10 +11756,30 @@ class ClassDef(Statement):
             # module name's state after the call, not the class's.  A name
             # only an arm of an earlier ``if`` bound may or may not be the
             # class's: refused by name.
+            #
+            # A loop (the one loop recurrence, ``LoopRecurrenceStatement``)
+            # binds in the class namespace each name a node of it in the
+            # class body's own scope binds (``_class_scope_nodes``, the rule
+            # ``_class_scope_binds`` reads): its target, each assignment's,
+            # each mutation statement's ``rebinds``, a nested loop's.  It
+            # writes them under the keys it publishes them under as it
+            # leaves (``written_keys``), read here like any statement's.  A
+            # ``def`` under it is in no method roster: refused at the class's
+            # reduction (``unrostered``), as one under an ``if``.
             own = set(item.names_bound_here())
             assigned = getattr(item, "rebinds", None)
             if isinstance(assigned, str):
                 own.add(assigned)
+            if isinstance(item, LoopRecurrenceStatement):
+                for node in _class_scope_nodes(item):
+                    if node is item or isinstance(node, (Global, Nonlocal)):
+                        continue
+                    own.update(node.names_bound_here())
+                    rebound = getattr(node, "rebinds", None)
+                    if isinstance(rebound, str):
+                        own.add(rebound)
+                    if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+                        unrostered.append(node.fragment.seal().cid)
             # An assignment of any target shape binds each name under its
             # projection of the statement's evaluation, as the field rows
             # above read (``target_evaluations``).
