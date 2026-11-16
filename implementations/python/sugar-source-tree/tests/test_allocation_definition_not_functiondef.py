@@ -59,13 +59,14 @@ def test_recursive_name_call_sugar_does_not_raise_attribute_error() -> None:
             ) from exc
 
 
-def test_functiondef_is_not_authenticated_default_attribute_class() -> None:
-    """Defense: source_class_has_* refuses non-ClassDef without AttributeError."""
+def test_functiondef_is_not_a_plain_source_class_body() -> None:
+    """Defense: the one class-body rule refuses non-ClassDef without
+    AttributeError (the default-attribute rule it subsumed is deleted)."""
     source = _source_file("def f():\n    return 1\n")
     function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
     # Would AttributeError before the isinstance guard.
     assert (
-        function.unit.source_class_has_authenticated_default_attribute_behavior(
+        function.unit.source_class_has_plain_source_body(
             function  # type: ignore[arg-type]
         )
         is False

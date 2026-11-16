@@ -71,8 +71,10 @@ class AttributeSugar(ConstructedTermSugar):
            dispatched method states, so it waits on no caller's actual and
            is no dispatched call, its value keyed per evaluation
            (``floor_value.undecided_attribute_result``, #7757)
-        2. Else Floor ``receiver.attribute(name, site, ctx)`` (a property
-           getter applies under the reading caller's ``ctx``; a symbolic
+        2. Else Floor ``receiver.attribute(name, site, ctx)`` (no getter body
+           runs at lift: a ``def`` the class wrote, a ``property`` among
+           them, is the dispatched read prove's walk decides,
+           ``ObjectValue.attribute``; a symbolic
            receiver is the same two-faced undecided read,
            ``floor_value.undecided_attribute_result``; a call's result is its
            coordinate, never its callee's body, #7757 step 6)

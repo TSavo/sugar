@@ -4913,47 +4913,6 @@ class SourceUnit:
         return definition
 
     @staticmethod
-    def source_class_has_authenticated_default_attribute_behavior(
-        definition: "ClassDef",
-    ) -> bool:
-        """Whether ordinary attribute storage/lookup is source-constructed."""
-        # Defense in depth: allocation definition must be ClassDef. A FunctionDef
-        # here is not "no default attributes" — it is not an allocation at all.
-        if not isinstance(definition, ClassDef):
-            return False
-        forbidden_methods = {
-            "__new__",
-            "__getattr__",
-            "__getattribute__",
-            "__setattr__",
-            "__delattr__",
-            "__getitem__",
-            "__setitem__",
-            "__delitem__",
-        }
-        return not (
-            definition.bases
-            or definition.keywords
-            or definition.decorators
-            or definition.type_params
-            or any(
-                not isinstance(member, (Pass, FunctionDef))
-                for member in definition.body
-            )
-            or any(
-                isinstance(member, FunctionDef)
-                and (
-                    member.name in forbidden_methods
-                    or (
-                        member.decorators
-                        and definition._method_descriptor_kind(member) is None
-                    )
-                )
-                for member in definition.body
-            )
-        )
-
-    @staticmethod
     def _is_simple_class_field_statement(member: "Node") -> bool:
         """A class-body name assignment, not a hook or a computed target."""
         if isinstance(member, Assign):
@@ -5061,12 +5020,12 @@ class SourceUnit:
     ) -> bool:
         """Whether this class call may carry its source constructor frame.
 
-        Ordinary classes already pass through default-attribute behavior.
-        A class whose body is only methods and simple name assignments, and
+        One body rule (``source_class_has_plain_source_body``): a class whose
+        body is only methods and simple name assignments, and
         whose MRO, read by binding, is the same kind of authenticated local
         class, ``object``, or a builtin exception class whose constructor is
-        BaseException's (``source_class_has_plain_source_body``), carries the
-        frame: its constructor is the first ``__init__`` of that order, so
+        BaseException's, carries the frame (a class with no base is one: its
+        order is the class and ``object``): its constructor is the first ``__init__`` of that order, so
         the call constructs.  Unauthenticated or computed bases stay outside
         this door.  A
         decorated class binds its name to the decorators' result: a call of
@@ -5086,9 +5045,7 @@ class SourceUnit:
             return False
         if isinstance(definition, ClassDef) and definition.initializer_entry() is None:
             return False
-        return SourceUnit.source_class_has_authenticated_default_attribute_behavior(
-            definition
-        ) or SourceUnit.source_class_has_plain_source_body(definition)
+        return SourceUnit.source_class_has_plain_source_body(definition)
 
     @staticmethod
     def _module_statement_bound_names(statement: "Node") -> set[str]:
