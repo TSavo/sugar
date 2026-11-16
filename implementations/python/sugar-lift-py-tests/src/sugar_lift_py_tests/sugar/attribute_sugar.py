@@ -65,11 +65,17 @@ class AttributeSugar(ConstructedTermSugar):
         The law shared by ordinary AttributeSugar and Attribute AugAssign:
 
         1. Formal receiver → its ``field:`` input where the field is one
-           (``receiver_dispatch.receiver_field_read``), else the
-           undischarged ``attribute_named`` carrier
+           (``receiver_dispatch.receiver_field_read``), else the one
+           undecided read of arm 3: a read is ``__getattribute__`` then
+           ``__getattr__`` and the descriptors they find, a protocol no one
+           dispatched method states, so it waits on no caller's actual and
+           is no dispatched call, its value keyed per evaluation
+           (``floor_value.undecided_attribute_result``, #7757)
         2. Authenticated CallSiteValue body → ``force_floor`` then attribute
         3. Else Floor ``receiver.attribute(name, site, ctx)`` (a property
-           getter applies under the reading caller's ``ctx``)
+           getter applies under the reading caller's ``ctx``; a symbolic
+           receiver is the two-faced undecided read,
+           ``FloorValue.undecided_attribute``)
         Callers that already hold a reduced receiver (AugAssign) enter here
         without re-evaluating the receiver expression.
         """
@@ -86,17 +92,11 @@ class AttributeSugar(ConstructedTermSugar):
             field_read = receiver_field_read(receiver, name, site)
             if field_read is not None:
                 return field_read
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-            from sugar_lift_py_tests.floor import StringValue
+            # The formal's own read, arm 3: no import receipt or call frame
+            # names a parameter.
+            from sugar_lift_py_tests.floor.object_identity import arrived_outcome
 
-            return NativeOperationExitCarrierV1.mint(
-                site=site,
-                operator="attribute_named",
-                operands=(receiver, StringValue(name)),
-                coordinates=(formal_coordinate, None),
-            )
+            return arrived_outcome(receiver.attribute(name, site, ctx), site)
 
         if (
             isinstance(receiver, CallSiteValue)

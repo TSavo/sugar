@@ -1,4 +1,10 @@
-"""Discharged native-operation halts retain reducer-owned temporal state."""
+"""Discharged native-operation halts retain reducer-owned temporal state.
+
+The carrier read here is a formal ``left + right`` (``add``).  It was a
+formal ``obj.field = value`` (``setattr_named``) until an attribute store
+became the one attribute mutation, which mints no carrier
+(``store_effect_sugar.attribute_mutation``, #7757 NEW-1); the subject --
+the reducer's pre-effect state on a carrier and its halt -- is unchanged."""
 
 from __future__ import annotations
 
@@ -16,7 +22,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
-from sugar_lift_py_tests.floor import ObjectValue, TermValue
+from sugar_lift_py_tests.floor import NoneValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
@@ -34,8 +40,8 @@ SOURCE = (
     "    def field(self):\n"
     "        return 1\n"
     "\n"
-    "def helper(obj, value):\n"
-    "    obj.field = value\n"
+    "def helper(left, right):\n"
+    "    return left + right\n"
 )
 
 
@@ -59,13 +65,14 @@ def _pending_and_receiver():
     pending = helper.sugar().desugar(None)
     assert isinstance(receiver, ObjectValue)
     assert isinstance(pending, NativeOperationExitCarrierV1)
+    assert pending.demand.operator == "add"
     return pending, receiver
 
 
-def _attribute_error_discharge():
+def _type_error_discharge():
     pending, receiver = _pending_and_receiver()
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
+    left_cid, right_cid = pending.demand.operand_coordinate_cids
+    exits = pending.discharge(None, {left_cid: NoneValue(), right_cid: TermValue(2)})
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     halted = exits.exits[0]
@@ -94,13 +101,13 @@ def _route(exits: ExitSet, expected: str):
     )
 
 
-def test_setattr_exception_and_boundary_share_exact_pre_effect_state() -> None:
-    pending, _, halted = _attribute_error_discharge()
+def test_operation_exception_and_boundary_share_exact_pre_effect_state() -> None:
+    pending, _, halted = _type_error_discharge()
     testimony = pending.pre_effect_state
     assert testimony is not None
     assert halted.state is testimony.state
-    assert halted.effect.exception_name == "AttributeError"
-    assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
+    assert halted.effect.exception_name == "TypeError"
+    assert "TypeError" in repr(halted.effect.exception_type_coordinate)
     assert (
         isinstance(halted.effect.occurrence_id, str)
         and ":" in halted.effect.occurrence_id
@@ -109,7 +116,7 @@ def test_setattr_exception_and_boundary_share_exact_pre_effect_state() -> None:
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
 
-    routed = _route(ExitSet((halted,)), "AttributeError")
+    routed = _route(ExitSet((halted,)), "TypeError")
     assert len(routed.exits) == 1
     completed = routed.exits[0]
     assert isinstance(completed, Completed)
@@ -117,7 +124,7 @@ def test_setattr_exception_and_boundary_share_exact_pre_effect_state() -> None:
 
 
 def test_wrong_boundary_retains_identical_halt_effect_and_state() -> None:
-    _, _, halted = _attribute_error_discharge()
+    _, _, halted = _type_error_discharge()
 
     routed = _route(ExitSet((halted,)), "ValueError")
     assert len(routed.exits) == 1

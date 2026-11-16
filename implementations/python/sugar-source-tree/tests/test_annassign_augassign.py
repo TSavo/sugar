@@ -134,15 +134,27 @@ def _red_effects(source):
     ]
 
 
-def test_attribute_aug_assign_formal_get_is_attribute_named_carrier():
-    """Attribute OP= on formals: undischarged attribute_named get (not RuntimeEffect)."""
+def test_attribute_aug_assign_formal_get_is_the_undecided_read():
+    """Attribute OP= on formals: the get leg is the one two-faced undecided
+    read (``SymbolicValue.attribute``, its halt kept), never an
+    ``attribute_named`` carrier waiting on a caller's actual (#7757 audit 2
+    row NEW-1).  The in-place operator over the formal ``y`` is another
+    family's operation; where it still defers, its carrier discharged with
+    no actual keeps every arm composed beside it (#7825)."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
 
     outcome = _fn("def A(obj, y):\n    obj.a += y\n    return y\n").sugar().desugar()
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "attribute_named"
+    assert getattr(getattr(outcome, "demand", None), "operator", None) != (
+        "attribute_named"
+    )
+    if isinstance(outcome, NativeOperationExitCarrierV1):
+        outcome = outcome.discharge(None, {})
+    assert isinstance(outcome, ExitSet)
+    assert "SymbolicValue.attribute" in [
+        face.effect.producer_node_owner for face in outcome.halts()
+    ]
 
 
 def test_subscript_aug_assign_formal_get_is_subscript_carrier():

@@ -430,7 +430,7 @@ def test_production_arithmetic_halt_blocks_store() -> None:
 
 
 def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
-    """Store AttributeError via shared project_setattr: one halted arm, never a completion."""
+    """Store AttributeError via the one field store: one halted arm, never a completion."""
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
     class _RefuseSet(ObjectValue):
@@ -464,60 +464,58 @@ def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Formal undischarged / authenticated discharge
+# Formal: the undecided read / a decided receiver through the same doors
 # ---------------------------------------------------------------------------
 
 
-def test_helper_alone_is_undischarged_attribute_named_get_carrier() -> None:
-    _, pending = _helper_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    # First demand is the get leg (attribute_named), not setattr.
-    assert pending.demand.operator == "attribute_named"
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
+def _own_exits(outcome) -> ExitSet:
+    """The helper's own proof's exits: a carrier another operation of the
+    chain still mints (the in-place ``iadd`` over a formal ``rhs``, not this
+    family) discharged with no actual, every arm composed beside it kept
+    (#7825); an ``ExitSet`` as it stands."""
+    if isinstance(outcome, NativeOperationExitCarrierV1):
+        return outcome.discharge(None, {})
+    assert isinstance(outcome, ExitSet), type(outcome)
+    return outcome
 
-    # No caller actual: the get leg is the cited unanswered face (#7825).
-    exits = pending.discharge(None, {})
-    assert pending.unanswered_call() in owed_calls(exits)
+
+def test_helper_alone_get_leg_is_the_undecided_read_not_a_carrier() -> None:
+    """Expected shape changed (#7757 audit 2 row NEW-1): the get leg
+    ``obj.field`` on a formal was an ``attribute_named`` carrier waiting on
+    a caller's actual production never supplies.  A read is
+    ``__getattribute__`` then ``__getattr__``, a protocol no one dispatched
+    method states, so on a formal it is the one two-faced undecided read
+    (``SymbolicValue.attribute``): its halt kept, the undecided member
+    owed, never a completion."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    _, outcome = _helper_definition()
+    assert getattr(getattr(outcome, "demand", None), "operator", None) != (
+        "attribute_named"
+    )
+    exits = _own_exits(outcome)
+    halts = [
+        face
+        for face in exits.halts()
+        if face.effect.producer_node_owner == "SymbolicValue.attribute"
+    ]
+    assert len(halts) == 1, exits
+    (halt,) = halts
+    assert unanswered_call(None, halt.effect.site) in owed_calls(exits)
     assert exits.completed_value() is None
 
 
-def test_authenticated_discharge_get_iadd_setattr_updates_field() -> None:
-    function, pending = _helper_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    coords = {
-        c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
-    }
+def test_decided_receiver_get_iadd_setattr_updates_field() -> None:
+    """The check that rode the carrier's discharge, on the decided actual
+    through the same doors: the read (``AttributeSugar.project_attribute``),
+    the in-place edge, and the one field store, ``1 + 10`` stored."""
     receiver = _obj_with_field(1)
-    exits = pending.discharge(
-        None,
-        {
-            coords["obj"]: receiver,
-            coords["rhs"]: TermValue(10),
-        },
-    )
+    exits = _production_desugar(receiver, TermValue(10))
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
-    value = exits.exits[0].value
-    # The one field store's record: the store on the receiver.
-    if isinstance(value, ReceiverFieldStoreValue):
-        assert value.value == TermValue(11)
-    else:
-        # The function's record carries the receiver as the one field store
-        # left it (``ObjectValue.with_field_store``): the caller's object, by
-        # its identity, its ``field`` now the in-place result and known
-        # stored on it.
-        record = getattr(value, "record", None)
-        assert record is not None
-        receivers = [
-            s
-            for s in record.statements
-            if isinstance(s, ObjectValue) and s.identity == receiver.identity
-        ]
-        assert receivers, record.statements
-        stored = receivers[-1]
-        assert "field" in stored.stored_fields
-        assert {f.name: f.value for f in stored.fields}["field"] == TermValue(11)
+    stored = _stored(exits)
+    assert stored.value == TermValue(11)
 
 
 def test_enum_attribute_augassign_owner_reads_its_undecided_global_as_its_input() -> (
@@ -568,16 +566,21 @@ def test_enum_attribute_augassign_owner_reads_its_undecided_global_as_its_input(
 
 
 def test_unrelated_source_attribute_augassign_uses_the_same_projection() -> None:
-    """A renamed source helper uses the same read/inplace/store carrier chain."""
-    function, pending = _helper_definition(
+    """A renamed source helper uses the same read/inplace/store chain: its
+    get leg is the undecided read on its formal, never an
+    ``attribute_named`` carrier, and a decided receiver completes through
+    the same doors."""
+    _, outcome = _helper_definition(
         "def renamed(receiver, increment):\n" "    receiver.total += increment\n"
     )
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "attribute_named"
-    coordinates = {
-        coordinate.declared_name: coordinate.coordinate_cid
-        for coordinate in function.sugar().formal_coordinates
-    }
+    assert getattr(getattr(outcome, "demand", None), "operator", None) != (
+        "attribute_named"
+    )
+    assert [
+        face
+        for face in _own_exits(outcome).halts()
+        if face.effect.producer_node_owner == "SymbolicValue.attribute"
+    ]
     receiver = ObjectValue(
         "Renamed",
         (ObjectField("total", TermValue(4)),),
@@ -587,17 +590,12 @@ def test_unrelated_source_attribute_augassign_uses_the_same_projection() -> None
         allocation=FRAME_FRESH,
     )
 
-    result = pending.discharge(
-        None,
-        {
-            coordinates["receiver"]: receiver,
-            coordinates["increment"]: TermValue(3),
-        },
-    )
+    result = _production_desugar(receiver, TermValue(3), attr="total")
 
     assert isinstance(result, ExitSet)
     assert len(result.exits) == 1
     assert isinstance(result.exits[0], Completed)
+    assert _stored(result).value == TermValue(7)
 
 
 def test_formal_operands_mint_iadd_not_ordinary_add() -> None:

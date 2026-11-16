@@ -414,22 +414,19 @@ def production_native_operation_operators() -> frozenset[str]:
       ``NativeOperationExitCarrierV1.mint(operator=...)``
     * ``_BINARY_OPERATOR_COORDINATE`` keys (``operator=owner`` formal binary path)
     * ``COMPARE_METHODS`` values (``operator=method`` formal ordering path)
-    * contracted store operators whose producers pin the mint shape for this
-      table even when the live store path still carries dual-face halted
-      instrumentation (``setattr_named`` window 17534).  An item store or
-      delete mints no carrier: it is the one item mutation
-      (``store_effect_sugar.item_mutation``, #7757 step 7).
+
+    An item store or delete mints no carrier: it is the one item mutation
+    (``store_effect_sugar.item_mutation``, #7757 step 7); nor does an
+    attribute store, delete or read (``store_effect_sugar.
+    attribute_mutation``, ``AttributeSugar.project_attribute``).
 
     The projector table's key set must equal this set exactly, both directions.
     """
     from sugar_lift_py_tests.floor.floor_value import _BINARY_OPERATOR_COORDINATE
     from sugar_lift_py_tests.sugar.comparison_op_sugar import COMPARE_METHODS
 
-    # Store/delete producers pin these operator strings for n-ary discharge.
-    # Keep them in the production set so a missing projector cannot merge green.
     # Equality tooth: this frozenset union MUST equal
     # frozenset(_NATIVE_OPERATION_PROJECTORS) both directions.
-    contracted_store_operators = frozenset({"setattr_named", "delattr_named"})
     # AugAssign production mint set — from BinaryOperator class attributes,
     # NEVER from the projector table (circular equality tooth).
     from sugar_source_tree.operators import production_augassign_inplace_operators
@@ -439,19 +436,8 @@ def production_native_operation_operators() -> frozenset[str]:
         _typed_minted_native_operator_constants()
         | frozenset(_BINARY_OPERATOR_COORDINATE)
         | frozenset(COMPARE_METHODS.values())
-        | contracted_store_operators
         | contracted_inplace_operators
     )
-
-
-def _project_delattr_named(receiver, name, site, ctx):
-    """Python protocol ``__delattr__(self, name)`` — (receiver, StringValue name).
-
-    ``name`` arrives as StringValue from the mint; unwrap with ``.value``.
-    Readability never authorizes deletion: Floor ``delattr`` refuses
-    getter-only properties without consulting the read path.
-    """
-    return receiver.delattr(name.value, site, ctx)
 
 
 def _project_inplace(left, right, site, ctx, *, surface):
@@ -572,16 +558,10 @@ _INPLACE_NATIVE_OPERATION_PROJECTORS = {
 # answer).  The table is the contract: producers mint operands in the
 # *discharge* order these parameters declare.
 #
-# Discharge order for stores is not source evaluation order.  Python evaluates
-# ``receiver.name = value`` as RHS, then receiver — but the resolved operation
-# is called as ``receiver.setattr(name, value)``.  Those two orders are
-# distinct; the producer (window 17534) owns the source chain, and these
-# projectors own the call signature.  An item store or delete mints no
-# carrier (``store_effect_sugar.item_mutation``, #7757 step 7).
-#
-# Delete protocol (store-family twin):
-#   delattr_named  → ``receiver.delattr(name.value, site, ctx)`` (__delattr__)
-# Name deletion (``del name`` / DeleteNameSugar) is out of scope here.
+# An item store or delete mints no carrier
+# (``store_effect_sugar.item_mutation``, #7757 step 7), nor does an attribute
+# store, delete or read (``store_effect_sugar.attribute_mutation``,
+# ``AttributeSugar.project_attribute``).
 #
 # In-place protocol (AugAssign formal path):
 #   explicit project_iadd / project_isub / … each call Floor methods directly.
@@ -681,9 +661,6 @@ _NATIVE_OPERATION_PROJECTORS = {
     "unary_minus": _project_unary_minus,
     "unary_plus": _project_unary_plus,
     "bitwise_invert": _project_bitwise_invert,
-    "attribute_named": lambda receiver, name, site, ctx: receiver.attribute_named(
-        name, site, ctx
-    ),
     # Formal subscript load (#6611): receiver[index] — binary, not the store.
     # The actual answers through the one subscript door a source subscript
     # takes (``discharge_subscript``), under the caller's context.
@@ -705,15 +682,6 @@ _NATIVE_OPERATION_PROJECTORS = {
     "equals": lambda left, right, site, ctx: left.equals(right, site, ctx),
     **ORDERING_FLOOR_OPERATIONS,
     "contains": lambda container, item, site, ctx: container.contains(item, site),
-    # Attribute store: name arrives as StringValue; unwrap with .value.
-    # Window 17534 mints operator="setattr_named" with operands
-    # (receiver, StringValue(name), value).  Discharge order: receiver,
-    # name, value — never RHS-first.
-    "setattr_named": lambda receiver, name, value, site, ctx: receiver.setattr(
-        name.value, value, site, ctx
-    ),
-    # Binary delete protocol — explicit projector (Python protocol signature).
-    "delattr_named": _project_delattr_named,
 }
 
 
@@ -774,8 +742,8 @@ class NativeOperationExitCarrierV1:
     arm until an enclosing effect boundary consumes it.
 
     Discharge routes through :data:`_NATIVE_OPERATION_PROJECTORS`: each operator
-    names its Floor signature explicitly so n-ary stores (``setitem``,
-    ``setattr_named``) are first-class, and a missing projector stays
+    names its Floor signature explicitly so n-ary operations are
+    first-class, and a missing projector stays
     undischarged rather than panicking.
 
     A caller that has no actual for one of its formals still discharges it:
@@ -807,12 +775,6 @@ class NativeOperationExitCarrierV1:
     pre_effect_state: ReducerPreEffectStateV1 | None = dataclass_field(
         default=None, compare=False, repr=False
     )
-    # ``class:<param>`` for a ``setattr_named`` store on a parameter whose
-    # class is an input of the contract (``receiver_dispatch.
-    # stored_class_input``): where the store is the plain ``__dict__`` store
-    # (``python:plain_store``, decided at prove on the class the caller
-    # binds), it completes (#7757 step 7, ``_unanswered_exits``).
-    plain_store_input: str | None = None
     # The occurrence path the operation was evaluated under where it was
     # minted (``occurrence.current_path``): an item of a live loop, an
     # unrolled iteration, a callee frame.  The operation's own exits are
@@ -1073,7 +1035,6 @@ class NativeOperationExitCarrierV1:
             )
             value = ctor("python:native_operation_result", (operation,))
             guard = atomic("python:unanswered_native_operation.completes", [operation])
-            guard = self._completes_where_the_store_is_plain(guard)
         if truth is not None:
             from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 
@@ -1103,28 +1064,6 @@ class NativeOperationExitCarrierV1:
                 None if self.pre_effect_state is None else self.pre_effect_state.state
             ),
         )
-
-    def _completes_where_the_store_is_plain(self, guard):
-        """``guard`` for a field store on a parameter whose class is a
-        contract input (``plain_store_input``): ``or(python:plain_store(
-        class:<param>, "<attr>"), guard)``.  Where the store is the plain
-        ``__dict__`` store -- ``object``'s ``__setattr__``, no data
-        descriptor of the name, an instance with a ``__dict__`` -- it
-        completes, whatever the value; prove decides that on the class the
-        caller binds, and nowhere else is it decided.  Its complement, the
-        halt, is the store that is not plain and raises.  Any other
-        operation's guard is returned as it is (#7757 step 7)."""
-        from sugar_lift_py_tests.floor.string_value import StringValue
-        from sugar_lift_py_tests.ir import make_var, or_
-        from sugar_lift_py_tests.receiver_dispatch import plain_store_atom
-
-        if self.plain_store_input is None or self.demand.operator != "setattr_named":
-            return guard
-        name = self.operands[1] if len(self.operands) == 3 else None
-        if not isinstance(name, StringValue):
-            return guard
-        plain = plain_store_atom(make_var(self.plain_store_input), name.value)
-        return or_([plain, guard])
 
     def short_circuit(
         self,

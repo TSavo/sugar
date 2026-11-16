@@ -45,10 +45,11 @@ class ReceiverFieldStoreSugar(Sugar):
       same instance with its contents not current, so no field of it is
       decided), bound under ``after``, the key the receiver's post-state
       reads it through after the statement.
-    - any other value takes the ordinary store
-      (``store_effect_sugar.project_setattr``): a formal with no
-      actual is the undischarged ``setattr_named`` demand, a decided runtime
-      type its floor's store, an undecided one the store's two faces.
+    - any other value takes the one attribute store
+      (``store_effect_sugar.attribute_mutation``): a formal is the undecided
+      store, completing also where prove decides it the plain store, a
+      decided runtime type its floor's store, an undecided one the store's
+      two faces.
 
     ``value`` is the read of what the statement bound under its key
     (``KeyedStoreSugar``) when the statement was substituted, or the
@@ -66,7 +67,7 @@ class ReceiverFieldStoreSugar(Sugar):
     after: str | None = field(default=None, compare=False)
     # The module the store stands in: what a store on a parameter whose
     # class is a contract input reads that input off
-    # (``receiver_dispatch.stored_class_input``, #7757 step 7).  A lookup
+    # (``store_effect_sugar.attribute_mutation``, #7757 step 7).  A lookup
     # aid, never testimony; walking it would walk the unit's memos.
     unit: object = field(
         default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
@@ -98,19 +99,18 @@ class ReceiverFieldStoreSugar(Sugar):
         from sugar_lift_py_tests.floor.receiver_field_store_value import (
             ReceiverFieldStoreValue,
         )
-        from sugar_lift_py_tests.sugar.store_effect_sugar import project_setattr
+        from sugar_lift_py_tests.sugar.store_effect_sugar import attribute_mutation
 
         receiver = floored_receiver(receiver, ctx)
         if not isinstance(receiver, ObjectValue):
-            from sugar_lift_py_tests.receiver_dispatch import stored_class_input
-
-            return project_setattr(
+            return attribute_mutation(
+                "__setattr__",
                 receiver,
                 self.attr,
-                value,
+                (value,),
                 self.site,
                 ctx,
-                plain_store_input=stored_class_input(receiver, self.attr, self.unit),
+                unit=self.unit,
             )
         if not receiver.field_store_runs_code(self.attr):
             return receiver.setattr(self.attr, value, self.site, ctx).and_then(

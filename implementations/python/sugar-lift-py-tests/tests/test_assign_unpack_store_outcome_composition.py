@@ -59,7 +59,9 @@ from test_store_outcome_composition import (
 )
 
 # Free undecided ``o`` keeps dual-face AttributeStoreRuntimeEffect composition.
-# Formal receivers mint setattr_named (see test_setattr_named_formal_caller).
+# A formal receiver's store is the undecided store, no carrier
+# (``store_effect_sugar.attribute_mutation``, see
+# test_setattr_named_formal_caller).
 # ``o`` is free only because a star import may bind it (``_FREE_O``): a name
 # nothing in the module binds is a NameError halt, and its store never runs.
 UNPACK_MIXED = (

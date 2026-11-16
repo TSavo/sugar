@@ -65,7 +65,7 @@ def test_undecided_carried_operand_mutates_through_the_one_attribute_door(
     tmp_path, operation
 ):
     """A carried operand whose type is not decided goes through the one
-    attribute door (``project_setattr`` / ``project_delattr``): the store's
+    attribute door (``store_effect_sugar.attribute_mutation``): the store's
     two faces, its halt kept, never the carried value's own floor gap."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor import SymbolicValue

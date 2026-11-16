@@ -1,4 +1,4 @@
-"""Variadic binding through formal setattr_named.
+"""Variadic binding through a field store on a formal.
 
 Concrete signatures:
 
@@ -8,15 +8,16 @@ Concrete signatures:
     def helper(obj, **values):
         obj.field = values
 
-*values / **values reach the declared stored value without self/name shifting:
-  - mint operands stay ``(receiver, StringValue(\"field\"), value_formal)``
-  - name coordinate remains null (static attribute name, not a formal)
-  - value formal is the variadic pack (TupleValue / DictValue)
+The store is the one attribute mutation (``store_effect_sugar.
+attribute_mutation``, #7757 NEW-1): on the formal ``obj`` it is the undecided
+store, never a carrier waiting on a caller's actuals.  *values / **values
+reach the declared stored value without self/name shifting:
+  - the store's completes atom names the receiver formal ``obj`` and the
+    static name ``"field"`` -- never the pack, never a phantom self
+  - the value is the variadic pack (TupleValue / DictValue) the binder packs
   - no phantom self/name formal steals the pack slot
 
 Getter-only property stays named AttributeError (store path, not read).
-
-Does not touch carrier/ExitSet, store producer/projector/Floor; no second binder.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import pytest
 from frame_fresh import FRAME_FRESH, fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
     DictValue,
     ObjectValue,
@@ -34,7 +36,9 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
+from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+from sugar_lift_py_tests.sugar import store_effect_sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -57,11 +61,77 @@ def _helper(program: str):
 
 
 def _identity(name: str):
-    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.ir import ctor
 
     return ctor(
         "python:exception_type_identity",
         [str_const("builtins"), str_const(name)],
+    )
+
+
+def _undecided_store(outcome) -> Halted:
+    """The undecided attribute store in a helper's own proof: no carrier,
+    one ``UndeterminedRaiseEffect`` halt owned by ``UndecidedSetattr`` kept
+    with the state the store began from (the block's record), the undecided
+    member owed on every face, never a completion."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedSetattr"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.state is not None
+    owed = unanswered_call(None, halt.effect.site)
+    assert owed in owed_calls(outcome)
+    assert owed in halt.owed
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    assert all(owed in face.owed for face in completed)
+    assert outcome.completed_value() is None
+    return halt
+
+
+def _setattr_atoms(outcome):
+    """Every ``python:setattr(<receiver>, <name>, <occurrence>)`` operation
+    the completed faces' guards name (the undecided store's completes atom)."""
+
+    def walk(node, depth=0):
+        if getattr(node, "name", None) == "python:setattr":
+            yield node
+        if depth > 64:
+            return
+        for child in (
+            *(getattr(node, "args", ()) or ()),
+            *(getattr(node, "operands", ()) or ()),
+        ):
+            yield from walk(child, depth + 1)
+
+    return [
+        atom
+        for face in outcome.exits
+        if isinstance(face, Completed)
+        for atom in walk(face.guard)
+    ]
+
+
+def _stored(function, receiver, value):
+    """``receiver.field = value`` through the one attribute mutation at the
+    helper's store site, the receiver and the pack values the lift decides
+    (what a caller supplies and the binder packs)."""
+    return store_effect_sugar.attribute_mutation(
+        "__setattr__",
+        receiver,
+        "field",
+        (value,),
+        function.body[0].fragment,
+        None,
+        unit=None,
     )
 
 
@@ -81,58 +151,52 @@ def _source_class_and_helper(class_body: str, helper_source: str, field: str = "
         class_value.class_definition_cid, allocation=FRAME_FRESH
     )
     assert isinstance(receiver, ObjectValue)
-    pending = helper.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setattr_named"
-    return helper, pending, receiver
+    _undecided_store(helper.sugar().desugar(None))
+    return helper, receiver
 
 
 # ---------------------------------------------------------------------------
-# Helper alone → Undischarged setattr_named; no self/name shifting
+# Helper alone → the undecided store over obj; no self/name shifting
 # ---------------------------------------------------------------------------
 
 
-def test_helper_star_alone_undischarged_without_self_name_shift() -> None:
-    function, pending = _helper(HELPER_STAR)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setattr_named"
-    # Static name slot is null; value formal is *values — not shifted by self/name.
-    obj_cid, name_cid, values_cid = pending.demand.operand_coordinate_cids
-    assert name_cid is None
-    assert obj_cid is not None
-    assert values_cid is not None
-    assert obj_cid != values_cid
-    assert isinstance(pending.operands[1], StringValue)
-    assert pending.operands[1].value == "field"
-    assert pending.operands[0].term.name == "obj"
-    assert pending.operands[2].term.name == "values"
+def test_helper_star_alone_is_undecided_store_without_self_name_shift() -> None:
+    function, outcome = _helper(HELPER_STAR)
+    _undecided_store(outcome)
+    # The store names the receiver formal ``obj`` and the static name, not
+    # the ``*values`` pack.
+    atoms = _setattr_atoms(outcome)
+    assert atoms, outcome
+    for atom in atoms:
+        receiver, name, _key = atom.args
+        assert getattr(receiver, "name", None) == "obj", receiver
+        assert name == str_const("field")
     kinds = tuple(c.parameter_kind for c in function.sugar().formal_coordinates)
     names = tuple(c.declared_name for c in function.sugar().formal_coordinates)
     assert kinds == ("positional-or-keyword", "variadic-positional")
     assert names == ("obj", "values")
     # Exactly two formals — no phantom self or name formal.
     assert len(function.sugar().formal_coordinates) == 2
-    formal_cids = {c.coordinate_cid for c in function.sugar().formal_coordinates}
-    assert obj_cid in formal_cids and values_cid in formal_cids
 
 
-def test_helper_kw_alone_undischarged_without_self_name_shift() -> None:
-    function, pending = _helper(HELPER_KW)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setattr_named"
-    obj_cid, name_cid, values_cid = pending.demand.operand_coordinate_cids
-    assert name_cid is None
-    assert pending.operands[1].value == "field"
-    assert pending.operands[2].term.name == "values"
+def test_helper_kw_alone_is_undecided_store_without_self_name_shift() -> None:
+    function, outcome = _helper(HELPER_KW)
+    _undecided_store(outcome)
+    atoms = _setattr_atoms(outcome)
+    assert atoms, outcome
+    for atom in atoms:
+        receiver, name, _key = atom.args
+        assert getattr(receiver, "name", None) == "obj", receiver
+        assert name == str_const("field")
     kinds = tuple(c.parameter_kind for c in function.sugar().formal_coordinates)
     assert kinds == ("positional-or-keyword", "variadic-keyword")
     assert len(function.sugar().formal_coordinates) == 2
 
 
 def test_helper_alone_is_not_completed_discrimination() -> None:
-    _, pending = _helper(HELPER_STAR)
+    _, outcome = _helper(HELPER_STAR)
     with pytest.raises(AssertionError):
-        assert isinstance(pending, Completed)
+        assert outcome.completed_value() is not None
 
 
 # ---------------------------------------------------------------------------
@@ -141,54 +205,33 @@ def test_helper_alone_is_not_completed_discrimination() -> None:
 
 
 def test_star_values_reach_declared_stored_value() -> None:
-    helper, pending, receiver = _source_class_and_helper("    pass\n", HELPER_STAR)
-    obj_cid, name_cid, values_cid = pending.demand.operand_coordinate_cids
-    assert name_cid is None
+    helper, receiver = _source_class_and_helper("    pass\n", HELPER_STAR)
     pack = TupleValue((TermValue(1), TermValue(2)))
-    exits = pending.discharge(None, {obj_cid: receiver, values_cid: pack})
+    exits = _stored(helper, receiver, pack)
     assert isinstance(exits, ExitSet)
     assert isinstance(exits.exits[0], Completed)
     stored = exits.exits[0].value
-    record = getattr(stored, "record", None)
-    assert record is not None
-    assert any(
-        isinstance(s, ObjectValue)
-        and s.fields
-        and s.fields[-1].name == "field"
-        and s.fields[-1].value == pack
-        for s in record.statements
-    )
-    del helper
+    assert isinstance(stored, ObjectValue)
+    assert stored.fields[-1].name == "field"
+    assert stored.fields[-1].value == pack
 
 
 def test_kw_values_reach_declared_stored_value() -> None:
-    helper, pending, receiver = _source_class_and_helper("    pass\n", HELPER_KW)
-    obj_cid, name_cid, values_cid = pending.demand.operand_coordinate_cids
-    assert name_cid is None
+    helper, receiver = _source_class_and_helper("    pass\n", HELPER_KW)
     mapping = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
-    exits = pending.discharge(None, {obj_cid: receiver, values_cid: mapping})
+    exits = _stored(helper, receiver, mapping)
     assert isinstance(exits.exits[0], Completed)
-    record = exits.exits[0].value.record
-    assert any(
-        isinstance(s, ObjectValue)
-        and s.fields
-        and s.fields[-1].name == "field"
-        and s.fields[-1].value == mapping
-        for s in record.statements
-    )
-    del helper
+    stored = exits.exits[0].value
+    assert isinstance(stored, ObjectValue)
+    assert stored.fields[-1].name == "field"
+    assert stored.fields[-1].value == mapping
 
 
 def test_empty_star_stores_honest_empty_tuple() -> None:
-    _, pending, receiver = _source_class_and_helper("    pass\n", HELPER_STAR)
-    obj_cid, _, values_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, values_cid: TupleValue(())})
+    helper, receiver = _source_class_and_helper("    pass\n", HELPER_STAR)
+    exits = _stored(helper, receiver, TupleValue(()))
     assert isinstance(exits.exits[0], Completed)
-    record = exits.exits[0].value.record
-    assert any(
-        isinstance(s, ObjectValue) and s.fields and s.fields[-1].value == TupleValue(())
-        for s in record.statements
-    )
+    assert exits.exits[0].value.fields[-1].value == TupleValue(())
 
 
 def _applied_frame(program: str):
@@ -217,7 +260,7 @@ def test_bind_actuals_packs_star_without_self_name_shift() -> None:
     """SourceCallFrame.bind_actuals packs remaining positionals into *values.
 
     Frame parameters are exactly ``(obj, values)`` — no phantom self/name
-    formal steals the pack slot (name is static StringValue on the mint).
+    formal steals the pack slot (the attribute name is static).
     """
     from sugar_lift_py_tests.floor import ListValue
 
@@ -266,17 +309,11 @@ def test_bind_actuals_packs_kw_without_self_name_shift() -> None:
 
 
 def test_getter_only_property_named_attributeerror_with_star_pack() -> None:
-    _, pending, receiver = _source_class_and_helper(
+    helper, receiver = _source_class_and_helper(
         "    @property\n" "    def field(self):\n" "        return 1\n",
         HELPER_STAR,
     )
-    obj_cid, name_cid, values_cid = pending.demand.operand_coordinate_cids
-    assert name_cid is None
-    assert pending.pre_effect_state is not None
-    exits = pending.discharge(
-        None,
-        {obj_cid: receiver, values_cid: TupleValue((TermValue(9),))},
-    )
+    exits = _stored(helper, receiver, TupleValue((TermValue(9),)))
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert not isinstance(halted, Completed)
@@ -288,35 +325,31 @@ def test_getter_only_property_named_attributeerror_with_star_pack() -> None:
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
-    assert halted.state is not None
-    assert pending.pre_effect_state.state is halted.state
+    # The carrier's pre-effect state is gone with the carrier (#7757 NEW-1):
+    # the helper's own store halt keeps the block's record as its state
+    # (``_undecided_store`` in ``_source_class_and_helper``).
 
 
 def test_getter_only_discrimination_not_completed() -> None:
-    _, pending, receiver = _source_class_and_helper(
+    helper, receiver = _source_class_and_helper(
         "    @property\n" "    def field(self):\n" "        return 1\n",
         HELPER_KW,
     )
-    obj_cid, _, values_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            obj_cid: receiver,
-            values_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
-        },
+    exits = _stored(
+        helper, receiver, fresh(DictValue, ((StringValue("a"), TermValue(1)),))
     )
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed)
 
 
-def test_no_self_name_shift_operand_order_discrimination() -> None:
-    """Bite: name is static StringValue at slot 1; pack is value at slot 2."""
-    _, pending = _helper(HELPER_STAR)
-    assert isinstance(pending.operands[1], StringValue)
-    assert pending.operands[1].value == "field"
-    assert pending.operands[2].term.name == "values"
-    # Must not look like (self, values, field) or (values, field, obj).
+def test_no_self_name_shift_receiver_discrimination() -> None:
+    """Bite: the store's receiver is ``obj``, its name the static
+    ``"field"``; never the pack, never a formal name."""
+    _, outcome = _helper(HELPER_STAR)
+    atoms = _setattr_atoms(outcome)
+    assert atoms, outcome
+    receiver, name, _key = atoms[0].args
     with pytest.raises(AssertionError):
-        assert pending.operands[0].term.name == "values"
+        assert getattr(receiver, "name", None) == "values"
     with pytest.raises(AssertionError):
-        assert pending.demand.operand_coordinate_cids[1] is not None
+        assert name != str_const("field")

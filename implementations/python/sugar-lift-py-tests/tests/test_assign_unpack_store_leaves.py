@@ -182,7 +182,8 @@ def _post(tmp_path: Path, source: str, stem: str = "assign_case"):
 
 # Free undecided ``o`` (``_UNREAD_STAR_IMPORT``) keeps dual-face
 # AttributeStoreRuntimeEffect arms.
-# Formal receivers mint setattr_named (vertical completion).
+# A formal receiver's store is the undecided store, no carrier
+# (``store_effect_sugar.attribute_mutation``, #7757).
 TWO_ATTRIBUTE = "def f(p, q):\n    o.x, o.y = p, q\n    return p\n"
 
 

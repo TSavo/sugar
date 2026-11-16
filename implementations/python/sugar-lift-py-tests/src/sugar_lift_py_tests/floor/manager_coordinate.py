@@ -88,24 +88,20 @@ class ExitValueCoordinate(FloorValue):
         return _term_content_cid(self.to_term(owner="exit value coordinate"))
 
     def attribute(self, name, site, ctx):
-        """Defer lookup and its consumers until the real exit value is known.
+        """``exc.name`` on the parametric exit value: the one two-faced
+        undecided read (``undecided_attribute``).
 
         An exit slot does not authenticate a field's existence, runtime type,
-        descriptor effects, or rich comparison dispatch. Preserve the native
-        lookup occurrence rather than minting a completed getattr term; the
-        lookup discharges later under the context of the caller that fills it.
+        descriptor effects, or rich comparison dispatch, so the read may
+        complete with any member or raise anything; no completed getattr
+        term is minted outside its completes atom.  Nothing fills the slot
+        later: no frame discharges an operation on it
+        (``SourceCallFrame.project_native_carrier`` passes it by), so the
+        read waits on no actual (#7757).
         """
         del ctx
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-        from sugar_lift_py_tests.floor.string_value import StringValue
-
-        return NativeOperationExitCarrierV1.mint(
-            site=site,
-            operator="attribute_named",
-            operands=(self, StringValue(name)),
-            coordinates=(self, None),
+        return self.undecided_attribute(
+            name, site, owner="ExitValueCoordinate.attribute"
         )
 
 

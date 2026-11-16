@@ -102,7 +102,14 @@ def _assert_two_faced_read(outcome, owner: str):
     assert len(halts) == 1
     completed = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     assert completed
-    assert any("python:attribute.completes" in repr(arm.guard) for arm in completed)
+    # A read on a parameter is keyed per evaluation (``attribute_op``,
+    # ``floor_value.undecided_attribute_result``); any other undecided read
+    # keeps its ``attribute`` atom.
+    assert any(
+        "python:attribute.completes" in repr(arm.guard)
+        or "python:attribute_op.completes" in repr(arm.guard)
+        for arm in completed
+    )
     assert "AttributeError" not in repr(halts[0].effect)
     assert any(item.site is not None for item in owed_calls(outcome))
     return halts[0]

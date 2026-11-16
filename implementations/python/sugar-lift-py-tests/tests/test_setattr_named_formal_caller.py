@@ -1,26 +1,36 @@
-"""Vertical completion: formal ``setattr_named`` through the n-ary projector.
+"""Vertical completion: a field store on a formal through the one attribute
+mutation.
 
 Python semantic law made constructible:
 
   For ``helper(obj, value)`` whose body is ``obj.field = value``, the store
   dispatches ``__setattr__`` / descriptor ``__set__`` — a different method and
-  obligation from the read path.  Helper alone stays undischarged.  An ordinary
+  obligation from the read path.  Helper alone stays owed.  An ordinary
   source caller (positional, keyword, or default) supplies authenticated
-  actuals; discharge projects Completed field stores or named exceptional
-  faces whose origin is Floor ``setattr``, never an enclosing boundary type.
+  actuals; the store on what the caller passes projects Completed field
+  stores or named exceptional faces whose origin is Floor ``setattr``, never
+  an enclosing boundary type.
+
+Every attribute store is the one attribute mutation (``store_effect_sugar.
+attribute_mutation``, #7757 step 7), never a carrier waiting on a caller's
+actuals (the ``setattr_named`` carrier is deleted):
+
+  - ``obj`` above is stored into and used no other way, so its class is an
+    input of ``helper``'s contract and the store is the undecided store
+    (``undecided_attribute_mutation_faces``): it completes under
+    ``or(python:plain_store(class:obj, "field"), python:setattr.completes(
+    ...))`` -- the plain ``__dict__`` store prove decides on the class each
+    caller binds -- and raises something undetermined under the complement,
+    both faces owing the undecided member.
+  - On a receiver whose type the lift decides (an object a caller built, a
+    tuple, ``None``) it is the floor's own store, every face kept; the floor
+    tests below read it through the same door (``_stored``).
 
 Source-defined class vertical (the three acceptance faces):
 
   writable field          → Completed
   property getter, no set → named AttributeError (store path, not read)
   wrong boundary type     → exceptional edge remains unconsumed
-
-Mint contract (matches #6614 projector):
-
-  operator ``setattr_named``
-  operands ``(receiver, StringValue(name), value)``
-  coordinates ``(receiver.formal_coordinate, None, value_coordinate)``
-  projector: ``receiver.setattr(name.value, value, site)``
 
 Corpus (pandas 3.0.3, content verified on installed seat):
 
@@ -38,8 +48,12 @@ import pytest
 
 from frame_fresh import FRAME_FRESH
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
+from sugar_lift_py_tests.caller_parameter_contract import (
+    NativeOperationExitCarrierV1,
+    _NATIVE_OPERATION_PROJECTORS,
+)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
     NoneValue,
     ObjectField,
@@ -53,6 +67,7 @@ from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValu
 from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+from sugar_lift_py_tests.sugar import store_effect_sugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef, FunctionDef
@@ -77,10 +92,72 @@ def _tree(source: str, name: str = "setattr_caller.py") -> SourceFile:
 
 
 def _helper_definition():
+    """``helper`` alone and its own proof's reduction: ``obj.field = value``
+    on a formal whose class is an input of the contract is the undecided
+    store, completing also where prove decides the store plain."""
     source = "def helper(obj, value):\n    obj.field = value\n"
     tree = _tree(source, "helper_alone.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     return function, function.sugar().desugar(None)
+
+
+def _names(term, depth=0):
+    """Every constructor and atom name in ``term``, at any depth."""
+    names = {getattr(term, "name", None)}
+    if depth > 64:
+        return names
+    children = (
+        *(getattr(term, "args", ()) or ()),
+        *(getattr(term, "operands", ()) or ()),
+    )
+    body = getattr(term, "body", None)
+    for child in (*children, *(() if body is None else (body,))):
+        names |= _names(child, depth + 1)
+    return names
+
+
+def _undecided_store(outcome) -> Halted:
+    """The undecided attribute store (``undecided_attribute_mutation_faces``)
+    in a helper's own proof: no carrier, one ``UndeterminedRaiseEffect`` halt
+    owned by ``UndecidedSetattr`` kept with the state the store began from,
+    and every completed face and the halt owing the undecided member at the
+    store's site -- owed, never a completion."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedSetattr"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.state is not None
+    owed = unanswered_call(None, halt.effect.site)
+    assert owed in owed_calls(outcome)
+    assert owed in halt.owed
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    assert all(owed in face.owed for face in completed)
+    assert outcome.completed_value() is None
+    return halt
+
+
+def _stored(function, receiver, value):
+    """``receiver.field = value`` through the one attribute mutation at the
+    helper's store site, the receiver a value the lift decides (what a
+    caller supplies): the floor's own store, every face kept."""
+    return store_effect_sugar.attribute_mutation(
+        "__setattr__",
+        receiver,
+        "field",
+        (value,),
+        function.body[0].fragment,
+        None,
+        unit=None,
+    )
 
 
 def _caller_edge(signature: str, actuals: str):
@@ -88,13 +165,12 @@ def _caller_edge(signature: str, actuals: str):
     contract row (``function_universe_outcome``).
 
     A same-file call is its coordinate and edge, joined at prove (#7757
-    steps 5 and 6, #8705): the lifter never discharges the helper's
-    ``setattr_named`` carrier at the call.  The call completes under its
-    ``completes`` atom and halts under the complement; the named
-    ``AttributeError`` the helper's contract states for ``1.field = 2`` is
-    its panic locus, which prove joins at the call (#8690) with the type the
-    contract states (#8749).  Returns the row's outcome and the call value
-    its one completed face returns."""
+    steps 5 and 6, #8705): the helper's store never waits on the call's
+    actuals.  The call completes under its ``completes`` atom and halts
+    under the complement; the named ``AttributeError`` the helper's store
+    raises for ``1.field = 2`` is its panic locus, which prove joins at the
+    call (#8690) with the type the contract states (#8749).  Returns the
+    row's outcome and the call value its one completed face returns."""
     from sugar_lift_py_tests.floor import CallSiteValue
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
@@ -162,9 +238,10 @@ def _int_class(key: str):
 def _source_class_and_helper(class_body: str, field: str = "field"):
     """Build a source-defined class + formal store helper in one tree.
 
-    Receivers for discharge are constructed from the ClassDef floor value —
+    Receivers for the store are constructed from the ClassDef floor value —
     the same door that source instantiation uses for method/descriptor
-    enrollment — not hand-rolled ObjectValue fields.
+    enrollment — not hand-rolled ObjectValue fields.  The helper alone is
+    the undecided store.
     """
     source = (
         f"class Widget:\n"
@@ -186,43 +263,69 @@ def _source_class_and_helper(class_body: str, field: str = "field"):
         class_value.class_definition_cid, allocation=FRAME_FRESH
     )
     assert isinstance(receiver, ObjectValue)
-    pending = helper.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setattr_named"
-    return helper, pending, receiver
+    _undecided_store(helper.sugar().desugar(None))
+    return helper, receiver
 
 
 # ---------------------------------------------------------------------------
-# Helper alone → Undischarged
+# Helper alone → the undecided store, owed
 # ---------------------------------------------------------------------------
 
 
-def test_helper_alone_is_undischarged_setattr_named_carrier() -> None:
-    _, pending = _helper_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setattr_named"
-    assert len(pending.operands) == 3
-    assert len(pending.demand.operand_coordinate_cids) == 3
-    # Static attribute name slot is null — not a formal.
-    assert pending.demand.operand_coordinate_cids[1] is None
-    # Receiver and value formals are present and distinct.
-    assert pending.demand.operand_coordinate_cids[0] is not None
-    assert pending.demand.operand_coordinate_cids[2] is not None
-    assert (
-        pending.demand.operand_coordinate_cids[0]
-        != pending.demand.operand_coordinate_cids[2]
-    )
+def test_helper_alone_is_the_undecided_store() -> None:
+    """``obj.field = value`` alone: the undecided store, its halt kept, owed.
+    ``obj``'s class is an input of the contract, so the store completes also
+    where prove decides it the plain ``__dict__`` store."""
+    _, outcome = _helper_definition()
+    _undecided_store(outcome)
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    for face in completed:
+        names = _names(face.guard)
+        assert "python:plain_store" in names, face.guard
+        assert "python:setattr.completes" in names, face.guard
 
 
-def test_setattr_named_mint_operand_order_matches_projector() -> None:
-    """#6613: same-length but swapped coordinate identity panics — pin order."""
-    _, pending = _helper_definition()
-    assert pending.demand.operator == "setattr_named"
-    # Operand 0 is the formal receiver; operand 1 is the static StringValue name.
-    from sugar_lift_py_tests.floor import StringValue
+def test_field_store_mints_no_setattr_carrier() -> None:
+    """The ``setattr_named`` carrier, its mint and its projector are deleted
+    (#7757 NEW-1): no store waits on a caller's actual."""
+    _, outcome = _helper_definition()
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert not hasattr(store_effect_sugar, "mint_setattr_named_carrier")
+    assert not hasattr(store_effect_sugar, "project_setattr")
+    assert "setattr_named" not in _NATIVE_OPERATION_PROJECTORS
 
-    assert isinstance(pending.operands[1], StringValue)
-    assert pending.operands[1].value == "field"
+
+def test_undecided_store_names_the_receiver_formal() -> None:
+    """The store's completes atom is ``python:setattr(<obj>, "field",
+    <occurrence>)``: the receiver formal and the static name, never the
+    value."""
+    from sugar_lift_py_tests.ir import str_const
+
+    _, outcome = _helper_definition()
+    _undecided_store(outcome)
+
+    def atoms(node, depth=0):
+        if getattr(node, "name", None) == "python:setattr":
+            yield node
+        if depth > 64:
+            return
+        for child in (
+            *(getattr(node, "args", ()) or ()),
+            *(getattr(node, "operands", ()) or ()),
+        ):
+            yield from atoms(child, depth + 1)
+
+    stores = [
+        atom
+        for face in outcome.exits
+        if isinstance(face, Completed)
+        for atom in atoms(face.guard)
+    ]
+    assert stores, outcome
+    for store in stores:
+        receiver, name, _key = store.args
+        assert getattr(receiver, "name", None) == "obj", receiver
+        assert name == str_const("field")
 
 
 # ---------------------------------------------------------------------------
@@ -230,41 +333,32 @@ def test_setattr_named_mint_operand_order_matches_projector() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_source_defined_writable_field_completes_via_setattr_named() -> None:
+def test_source_defined_writable_field_completes_via_setattr() -> None:
     """Writable instance field on a source class → Completed store face."""
-    helper, pending, receiver = _source_class_and_helper("    pass\n")
+    helper, receiver = _source_class_and_helper("    pass\n")
     # Empty class: no property descriptor; setattr is ordinary field store.
     assert receiver.methods == ()
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
+    exits = _stored(helper, receiver, TermValue(7))
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
     stored = exits.exits[0].value
-    record = getattr(stored, "record", None)
-    assert record is not None
-    assert any(
-        isinstance(s, ObjectValue)
-        and s.fields
-        and s.fields[-1].name == "field"
-        and s.fields[-1].value == TermValue(7)
-        for s in record.statements
-    )
-    del helper
+    assert isinstance(stored, ObjectValue)
+    assert stored.fields[-1].name == "field"
+    assert stored.fields[-1].value == TermValue(7)
 
 
 def test_source_defined_writable_field_completes_discrimination() -> None:
     """Bite: a completed store is not a Halted face."""
-    _, pending, receiver = _source_class_and_helper("    pass\n")
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
+    helper, receiver = _source_class_and_helper("    pass\n")
+    exits = _stored(helper, receiver, TermValue(7))
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Halted), "writable field must complete"
 
 
 def test_source_defined_property_without_setter_named_attribute_error() -> None:
     """Property getter without setter → named AttributeError on the store path."""
-    helper, pending, receiver = _source_class_and_helper(
+    helper, receiver = _source_class_and_helper(
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
     assert any(
@@ -273,6 +367,7 @@ def test_source_defined_property_without_setter_named_attribute_error() -> None:
     # Floor store path (not the read path) refuses the set.
     site = helper.body[0].fragment
     from sugar_lift_py_tests.effect import RaiseEffect
+
     direct = receiver.setattr("field", TermValue(7), site, None)
     assert direct.halts() == direct.exits
     (direct_halt,) = direct.halts()
@@ -280,8 +375,7 @@ def test_source_defined_property_without_setter_named_attribute_error() -> None:
     assert direct_halt.effect.exception_name == "AttributeError"
     assert direct_halt.effect.producer_node_owner == "ObjectValue.setattr"
 
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
+    exits = _stored(helper, receiver, TermValue(7))
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
@@ -291,17 +385,29 @@ def test_source_defined_property_without_setter_named_attribute_error() -> None:
 
 def test_source_defined_property_without_setter_discrimination() -> None:
     """Bite: the getter must not license a Completed store face."""
-    _, pending, receiver = _source_class_and_helper(
+    helper, receiver = _source_class_and_helper(
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(99)})
+    exits = _stored(helper, receiver, TermValue(99))
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed), "read path licensed a store"
 
 
-def test_source_defined_wrong_boundary_type_leaves_halt_unconsumed() -> None:
-    """Wrong expected exception type does not consume the store's halt edge."""
+class _Expected:
+    def __init__(self, name: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        self.identity = ctor(
+            "python:exception_type_identity",
+            [str_const("builtins"), str_const(name)],
+        )
+
+    def exception_type_identity(self):
+        return self.identity
+
+
+def _routed_past_wrong_boundary(produced):
+    """``produced`` past a boundary that expects ``ValueError``."""
     from sugar_lift_py_tests.context_manager_contract import (
         AuthenticatedRaiseMatcher,
         EffectBoundaryDisposition,
@@ -309,35 +415,28 @@ def test_source_defined_wrong_boundary_type_leaves_halt_unconsumed() -> None:
     from sugar_lift_py_tests.effect.expectation_not_met_effect import (
         ExpectationNotMetEffect,
     )
-    from sugar_lift_py_tests.ir import ctor, str_const
 
-    _, pending, receiver = _source_class_and_helper(
-        "    @property\n" "    def field(self):\n" "        return 1\n"
-    )
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    produced = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(1)})
-    original = produced.exits[0]
-    assert isinstance(original, Halted)
-    assert "AttributeError" in repr(original.effect.exception_type_coordinate)
-
-    class _Expected:
-        def __init__(self, name: str):
-            self.identity = ctor(
-                "python:exception_type_identity",
-                [str_const("builtins"), str_const(name)],
-            )
-
-        def exception_type_identity(self):
-            return self.identity
-
-    # Boundary expects ValueError; store produced AttributeError.
-    routed = produced.and_exit(
+    return produced.and_exit(
         ExitSet.completed(object()),
         disposition=EffectBoundaryDisposition(
             matcher=AuthenticatedRaiseMatcher(expected=_Expected("ValueError")),
             unmet=ExpectationNotMetEffect("raise", "assertion-site"),
         ),
     )
+
+
+def test_source_defined_wrong_boundary_type_leaves_halt_unconsumed() -> None:
+    """Wrong expected exception type does not consume the store's halt edge."""
+    helper, receiver = _source_class_and_helper(
+        "    @property\n" "    def field(self):\n" "        return 1\n"
+    )
+    produced = _stored(helper, receiver, TermValue(1))
+    original = produced.exits[0]
+    assert isinstance(original, Halted)
+    assert "AttributeError" in repr(original.effect.exception_type_coordinate)
+
+    # Boundary expects ValueError; store produced AttributeError.
+    routed = _routed_past_wrong_boundary(produced)
     remaining = [
         face
         for face in routed.exits
@@ -355,40 +454,13 @@ def test_source_defined_wrong_boundary_type_leaves_halt_unconsumed() -> None:
 
 def test_source_defined_wrong_boundary_type_discrimination() -> None:
     """Bite: claiming the wrong boundary consumed the edge must fail."""
-    from sugar_lift_py_tests.context_manager_contract import (
-        AuthenticatedRaiseMatcher,
-        EffectBoundaryDisposition,
-    )
-    from sugar_lift_py_tests.effect.expectation_not_met_effect import (
-        ExpectationNotMetEffect,
-    )
-    from sugar_lift_py_tests.ir import ctor, str_const
-
-    _, pending, receiver = _source_class_and_helper(
+    helper, receiver = _source_class_and_helper(
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    produced = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(1)})
+    produced = _stored(helper, receiver, TermValue(1))
     original = produced.exits[0]
     assert isinstance(original, Halted)
-
-    class _Expected:
-        def __init__(self, name: str):
-            self.identity = ctor(
-                "python:exception_type_identity",
-                [str_const("builtins"), str_const(name)],
-            )
-
-        def exception_type_identity(self):
-            return self.identity
-
-    routed = produced.and_exit(
-        ExitSet.completed(object()),
-        disposition=EffectBoundaryDisposition(
-            matcher=AuthenticatedRaiseMatcher(expected=_Expected("ValueError")),
-            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
-        ),
-    )
+    routed = _routed_past_wrong_boundary(produced)
     remaining = [
         face
         for face in routed.exits
@@ -399,33 +471,26 @@ def test_source_defined_wrong_boundary_type_discrimination() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Real callers → Completed or named Exceptional (same demand)
+# Real callers → Completed or named Exceptional
 # ---------------------------------------------------------------------------
 
 
-def test_positional_caller_completes_field_store_via_setattr() -> None:
+def test_object_receiver_completes_field_store_via_setattr() -> None:
     # Source-level int actuals hit TermValue.setattr → named AttributeError.
-    # Completion path is discharge with ObjectValue actuals (below).
-    function, pending = _helper_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
+    # Completion: the store on an object the caller built, through the door.
+    function, outcome = _helper_definition()
+    _undecided_store(outcome)
     receiver = ObjectValue(
         "R", (ObjectField("field", TermValue(0)),), allocation=FRAME_FRESH
     )
-    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
+    exits = _stored(function, receiver, TermValue(7))
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
-    # Stored field is the discharged value.
+    # The stored field is the value the caller supplies.
     stored = exits.exits[0].value
-    # UniverseValue record holds the completed store result.
-    record = getattr(stored, "record", None)
-    assert record is not None
-    statements = record.statements
-    assert any(
-        isinstance(s, ObjectValue) and s.fields and s.fields[-1].value == TermValue(7)
-        for s in statements
-    )
+    assert isinstance(stored, ObjectValue)
+    assert stored.fields[-1].value == TermValue(7)
 
 
 def test_positional_caller_halts_with_named_identity_from_setattr() -> None:
@@ -441,12 +506,11 @@ def test_positional_caller_halts_with_named_identity_from_setattr() -> None:
         _int_class("0"),
         _int_class("1"),
     )
-    # The halt prove joins at this call: the helper's own row discharged
-    # with what the caller supplies, ``1.field = 2``, is the named
-    # AttributeError at the store's site -- the helper's panic locus.
-    function, pending = _helper_definition()
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: TermValue(1), value_cid: TermValue(2)})
+    # The halt prove joins at this call: the store with what the caller
+    # supplies, ``1.field = 2``, is the named AttributeError at the store's
+    # site -- the helper's panic locus.
+    function, _ = _helper_definition()
+    exits = _stored(function, TermValue(1), TermValue(2))
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
@@ -480,12 +544,8 @@ def test_default_value_caller_reaches_same_demand() -> None:
 
 
 def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
-    function, pending = _helper_definition()
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {obj_cid: TupleValue((TermValue(1),)), value_cid: TermValue(9)},
-    )
+    function, _ = _helper_definition()
+    exits = _stored(function, TupleValue((TermValue(1),)), TermValue(9))
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
@@ -493,8 +553,7 @@ def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
     site = function.body[0].fragment
     assert halted.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
-    # Direct setattr owner is proven on the incomplete path before carrier
-    # re-projects the exceptional resolution.
+    # The statement form reaches the same door: the floor's own owner.
     from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
         ReceiverFieldStoreSugar,
     )
@@ -523,13 +582,26 @@ def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Property: readable ≠ settable through caller path
+# Property: readable ≠ settable through the store
 # ---------------------------------------------------------------------------
 
 
-def test_property_without_setter_reads_fine_and_halts_on_store_after_discharge() -> (
-    None
-):
+def _getter_only_receiver():
+    return ObjectValue(
+        "R",
+        (),
+        methods=(
+            ObjectMethodValue(
+                name="field",
+                parameters=("self",),
+                descriptor_kind="property",
+            ),
+        ),
+        allocation=FRAME_FRESH,
+    )
+
+
+def test_property_without_setter_reads_fine_and_halts_on_store() -> None:
     @dataclass(frozen=True)
     class _GetterBody(Sugar):
         def desugar(self, ctx=None):
@@ -542,37 +614,26 @@ def test_property_without_setter_reads_fine_and_halts_on_store_after_discharge()
         def witnesses(cls):
             return ()
 
-    receiver = ObjectValue(
-        "R",
-        (),
-        methods=(
-            ObjectMethodValue(
-                name="field",
-                parameters=("self",),
-                descriptor_kind="property",
-            ),
-        ),
-        allocation=FRAME_FRESH,
-    )
+    receiver = _getter_only_receiver()
     # Readable property is present as a data descriptor (getter enrolled).
     assert any(
         m.name == "field" and m.descriptor_kind == "property" for m in receiver.methods
     )
 
-    # Through formal discharge: store path raises AttributeError — never a
-    # completed field write licensed by the getter.
-    function, pending = _helper_definition()
+    # Store path raises AttributeError — never a completed field write
+    # licensed by the getter.
+    function, _ = _helper_definition()
     site = function.body[0].fragment
     store = receiver.setattr("field", TermValue(7), site, None)
     from sugar_lift_py_tests.effect import RaiseEffect
+
     assert store.halts() == store.exits
     (store_halt,) = store.halts()
     assert isinstance(store_halt.effect, RaiseEffect)
     assert store_halt.effect.exception_name == "AttributeError"
     assert store_halt.effect.producer_node_owner == "ObjectValue.setattr"
 
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
+    exits = _stored(function, receiver, TermValue(7))
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
@@ -580,33 +641,8 @@ def test_property_without_setter_reads_fine_and_halts_on_store_after_discharge()
 
 def test_lying_read_path_does_not_authorize_completed_store() -> None:
     """Borrowing __getattr__ evidence to complete a store must fail."""
-
-    @dataclass(frozen=True)
-    class _GetterBody(Sugar):
-        def desugar(self, ctx=None):
-            return ExitSet.completed(
-                BlockValue((ReturnValue(TermValue(1)),), can_fall_through=False)
-            )
-
-        @classmethod
-        def witnesses(cls):
-            return ()
-
-    receiver = ObjectValue(
-        "R",
-        (),
-        methods=(
-            ObjectMethodValue(
-                name="field",
-                parameters=("self",),
-                descriptor_kind="property",
-            ),
-        ),
-        allocation=FRAME_FRESH,
-    )
-    _, pending = _helper_definition()
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(99)})
+    function, _ = _helper_definition()
+    exits = _stored(function, _getter_only_receiver(), TermValue(99))
     assert isinstance(exits.exits[0], Halted)
     assert not isinstance(exits.exits[0], Completed)
 
@@ -618,15 +654,10 @@ def test_lying_read_path_does_not_authorize_completed_store() -> None:
 
 def test_wrong_expected_type_leaves_exceptional_edge_unconsumed() -> None:
     """Boundary verifies; it cannot create. Wrong T leaves the edge unconsumed."""
-    from sugar_lift_py_tests.context_manager_contract import (
-        AuthenticatedRaiseMatcher,
-        EffectBoundaryDisposition,
-    )
     from sugar_lift_py_tests.ir import ctor, str_const
 
-    function, pending = _helper_definition()
-    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: NoneValue(), value_cid: TermValue(1)})
+    function, _ = _helper_definition()
+    exits = _stored(function, NoneValue(), TermValue(1))
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     produced_type = halted.effect.exception_type_coordinate

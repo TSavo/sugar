@@ -11,7 +11,6 @@ from sugar_source_tree.tree import SourceFile
 
 from native_carrier_testimony import (
     completed_function_value,
-    native_carrier_for,
 )
 
 
@@ -61,18 +60,50 @@ def test_keyword_args_lift():
     assert kwarg.args[0].value == "default"
 
 
+def _attribute_operations(node, found, depth=0):
+    """Every ``python:attribute_result("<name>", <receiver>, <key>)`` in
+    ``node`` -- a parameter's read, keyed per evaluation
+    (``floor_value.undecided_attribute_result``): ``(receiver name,
+    attribute name)``."""
+    if depth > 64:
+        return found
+    if getattr(node, "name", None) == "python:attribute_result":
+        found.append((getattr(node.args[1], "name", None), node.args[0].value))
+    for child in (
+        *(getattr(node, "args", ()) or ()),
+        *(getattr(node, "operands", ()) or ()),
+    ):
+        _attribute_operations(child, found, depth + 1)
+    return found
+
+
 def test_spread_keyword_args_build_reference_method_call():
-    """Deleted expectation: formal attribute lookup completed before binding z."""
-    carrier = native_carrier_for(
-        _fn("def A(z, d):\n    return z.get(1, **d)\n"),
-        operator="attribute_named",
+    """Expected shape changed (#7757 audit 2 row NEW-1): the callee read
+    ``z.get`` on the formal ``z`` was an ``attribute_named`` carrier waiting
+    on a caller's actual.  It is the one two-faced undecided read
+    (``SymbolicValue.attribute``): its halt, naming ``z`` and ``get``, is
+    kept, and nothing completes with one value.  Whatever the call with
+    ``**d`` still defers (another family's operation) is discharged with no
+    actual, every arm beside it kept (#7825)."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
     )
-    receiver, name = carrier.operands
-    assert receiver.to_term(owner="method receiver carrier tooth").name == "z"
-    assert name.value == "get"
-    # The block's statement tail waits as an ExitSet-wide step
-    # (``after_discharge``), not as a continuation.
-    assert len(carrier.continuations) == 4
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    outcome = _fn("def A(z, d):\n    return z.get(1, **d)\n").sugar().desugar()
+    assert getattr(getattr(outcome, "demand", None), "operator", None) != (
+        "attribute_named"
+    )
+    if isinstance(outcome, NativeOperationExitCarrierV1):
+        outcome = outcome.discharge(None, {})
+    assert isinstance(outcome, ExitSet), outcome
+    assert outcome.completed_value() is None
+    (halt,) = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "SymbolicValue.attribute"
+    ]
+    assert _attribute_operations(halt.guard, []) == [("z", "get")]
 
 
 def test_spread_call_is_a_constructed_method_argument_coordinate():

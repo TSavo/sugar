@@ -146,8 +146,9 @@ def _store_entries(state):
 
 
 # Free undecided receiver ``o`` (not a formal) retains dual-face
-# AttributeStoreRuntimeEffect. Formal receivers now mint setattr_named carriers
-# (vertical completion); dual-face composition laws stay on this free shape.
+# AttributeStoreRuntimeEffect. A formal receiver's store is the undecided store
+# (``store_effect_sugar.attribute_mutation``, no carrier); dual-face
+# composition laws stay on this free shape.
 # ``o`` is free only because a star import the lifter cannot read may bind it:
 # a name nothing in the module binds is a NameError halt (#7757 item 30), and
 # its store never runs.

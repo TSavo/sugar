@@ -1,4 +1,4 @@
-"""Formal ``setattr_named`` through a bound-method receiver binding.
+"""A field store on a method's formal, beside a bound-method receiver.
 
 Concrete program:
 
@@ -9,28 +9,24 @@ Concrete program:
     Writer().store(target, 7)
 
 Python law: a bound method call supplies ``self`` first. That binding must not
-shift ``obj`` / ``value`` in the setattr_named demand. Discharge order remains
-``(receiver, StringValue(name), value)`` with coordinates
-``(obj.formal, None, value.formal)``; ``self`` is the method binder's slot, not
-a store operand.
+shift ``obj`` / ``value`` in the store: the store is ``type(obj).__setattr__(
+obj, "field", value)``; ``self`` is the method binder's slot, not a store
+operand.
+
+The store is the one attribute mutation (``store_effect_sugar.
+attribute_mutation``, #7757 NEW-1): in the method's own proof it is the
+undecided store over ``obj`` -- never a carrier waiting on a caller's actuals
+(the ``setattr_named`` carrier is deleted).  What a caller supplies is stored
+through the same door, the floor's own store with every face kept.
 
 Acceptance (each with a discrimination twin where noted):
 
-  1. Bound ``self`` does not shift obj/value coordinates.
-  2. Helper method alone retains the undischarged setattr_named demand.
-  3. Positional, keyword, and default method calls discharge.
-  4. Writable receiver completes.
-  5. Getter-only property → named AttributeError with exact pre-effect state;
-     matching boundary restores that state; wrong boundary retains the halt.
-  6. Off-by-one self-binding and read-authorizes-write twins fail.
-
-Exceptional pre-effect identity on the bound-method *call* producer path may
-stay red until codex-1's lossless reduce_body fix lands; formal *discharge*
-pre-effect identity is asserted here as the #6640 join instrument.
-
-Does not touch: function_universe_sugar, carrier/ExitSet, attribute-store
-producer/projector/Floor, parameter-name maps, unpack×attribute or pandas
-attribute-store lanes.
+  1. Bound ``self`` is not the store's receiver: the store names ``obj``.
+  2. Method alone is the undecided store, its halt kept, owed.
+  3. Writable receiver completes.
+  4. Getter-only property → named AttributeError; a wrong boundary retains
+     the halt.
+  5. Off-by-one self-binding and read-authorizes-write twins fail.
 """
 
 from __future__ import annotations
@@ -41,34 +37,23 @@ from sugar_lift_py_tests.context_manager_contract import (
     EffectBoundaryDisposition,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
-from sugar_lift_py_tests.floor import ObjectValue, StringValue, TermValue
-from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+from sugar_lift_py_tests.floor import ObjectValue, TermValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
-from sugar_lift_py_tests.floor.named_expression_value import (
-    caller_stores_of,
-    peel_walrus_binds,
-)
-from sugar_lift_py_tests.floor.receiver_field_store_value import (
-    ReceiverFieldStoreValue,
-)
+from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+from sugar_lift_py_tests.sugar import store_effect_sugar
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
+from sugar_source_tree.nodes import ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 from frame_fresh import FRAME_FRESH
 
 METHOD_BODY = (
     "class Writer:\n" "    def store(self, obj, value):\n" "        obj.field = value\n"
-)
-
-METHOD_DEFAULTS = (
-    "class Writer:\n"
-    "    def store(self, obj, value=7):\n"
-    "        obj.field = value\n"
 )
 
 # Empty writable class used as the store *target* (obj), not the method binder.
@@ -115,17 +100,8 @@ def _construct_class(source: str, class_name: str) -> ObjectValue:
     return receiver
 
 
-def _assert_bound_self_first(callsite: CallSiteValue) -> None:
-    """arg_values[0] is Writer; remaining are obj, value."""
-    assert callsite.parameters[0] == "self"
-    assert callsite.parameters[1:3] == ("obj", "value")
-    assert isinstance(callsite.arg_values[0], ObjectValue)
-    assert callsite.arg_values[0].class_name == "Writer"
-    assert len(callsite.arg_values) == len(callsite.parameters)
-
-
 def _identity(name: str):
-    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.ir import ctor
 
     return ctor(
         "python:exception_type_identity",
@@ -133,7 +109,76 @@ def _identity(name: str):
     )
 
 
-def _assert_named_halt(outcome, *, require_pre_effect_state: bool = True) -> Halted:
+def _undecided_store(outcome) -> Halted:
+    """The undecided attribute store in the method's own proof: no carrier,
+    one ``UndeterminedRaiseEffect`` halt owned by ``UndecidedSetattr`` kept
+    with the state the store began from, the undecided member owed on every
+    face, never a completion."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedSetattr"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.state is not None
+    owed = unanswered_call(None, halt.effect.site)
+    assert owed in owed_calls(outcome)
+    assert owed in halt.owed
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    assert all(owed in face.owed for face in completed)
+    assert outcome.completed_value() is None
+    return halt
+
+
+def _store_receivers(outcome):
+    """``(<receiver>, <name>)`` of every ``python:setattr(<receiver>,
+    <name>, <occurrence>)`` the completed faces' guards name: the undecided
+    store's completes atom."""
+
+    def walk(node, depth=0):
+        if getattr(node, "name", None) == "python:setattr":
+            yield node
+        if depth > 64:
+            return
+        for child in (
+            *(getattr(node, "args", ()) or ()),
+            *(getattr(node, "operands", ()) or ()),
+        ):
+            yield from walk(child, depth + 1)
+
+    pairs = [
+        (atom.args[0], atom.args[1])
+        for face in outcome.exits
+        if isinstance(face, Completed)
+        for atom in walk(face.guard)
+    ]
+    assert pairs, outcome
+    return pairs
+
+
+def _stored(method, receiver, value):
+    """``receiver.field = value`` through the one attribute mutation at the
+    method's store site, the receiver a value the lift decides (what a
+    caller supplies)."""
+    return store_effect_sugar.attribute_mutation(
+        "__setattr__",
+        receiver,
+        "field",
+        (value,),
+        method.body[0].fragment,
+        None,
+        unit=None,
+    )
+
+
+def _assert_named_halt(outcome) -> Halted:
     assert isinstance(outcome, ExitSet)
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
@@ -146,48 +191,7 @@ def _assert_named_halt(outcome, *, require_pre_effect_state: bool = True) -> Hal
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
-    if require_pre_effect_state:
-        # #6640: exceptional discharge stamps reducer-owned pre-effect state.
-        # Bound-method *call* producer path may stay red until codex-1 lossless
-        # reduce_body; formal discharge path must already stamp it.
-        assert halted.state is not None, (
-            "NativeOperationResolutionV1.project omitted the formal setattr_named "
-            "halt's real pre-effect state"
-        )
     return halted
-
-
-def _assert_completed_call(outcome) -> CallSiteValue:
-    """The call completes, carrying the store ``obj.field = value`` the body
-    made on the caller's ``Target()`` (``CallerStoreValue``,
-    ``caller_visible_stores``), and presents the call beneath it."""
-    value = outcome.completed_value()
-    assert value is not None, outcome
-    binds, presented = peel_walrus_binds(value)
-    walrus, stores = caller_stores_of(binds)
-    assert walrus == (), value
-    assert [(type(s), s.attr, s.value) for s in stores] == [
-        (ReceiverFieldStoreValue, "field", TermValue(7))
-    ], value
-    assert stores[0].receiver.class_name == "Target", value
-    assert isinstance(presented, CallSiteValue), value
-    return presented
-
-
-def _obj_value_cids(pending: NativeOperationExitCarrierV1):
-    """setattr_named demand: (obj, static name, value) — never self."""
-    assert pending.demand.operator == "setattr_named"
-    assert len(pending.demand.operand_coordinate_cids) == 3
-    assert isinstance(pending.operands[1], StringValue)
-    assert pending.operands[1].value == "field"
-    assert pending.demand.operand_coordinate_cids[1] is None
-    names = (
-        pending.operands[0].term.name,
-        pending.operands[2].term.name,
-    )
-    assert names == ("obj", "value"), names
-    obj_cid, _name_cid, value_cid = pending.demand.operand_coordinate_cids
-    return obj_cid, value_cid
 
 
 class _Expected:
@@ -209,126 +213,93 @@ def _route(exits: ExitSet, expected: str) -> ExitSet:
 
 
 # ---------------------------------------------------------------------------
-# 1. Bound self does not shift obj/value
+# 1. Bound self is not the store's receiver
 # ---------------------------------------------------------------------------
 
 
-def test_method_alone_mints_setattr_named_over_obj_value_not_self() -> None:
-    """Method body ``obj.field = value`` — setattr_named formals exclude self."""
-    _class_def, method, pending = _method_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setattr_named"
-    assert isinstance(pending.operands[1], StringValue)
-    assert pending.operands[1].value == "field"
-    assert pending.operands[0].term.name == "obj"
-    assert pending.operands[2].term.name == "value"
+def test_method_alone_stores_on_obj_not_self() -> None:
+    """Method body ``obj.field = value``: the undecided store names ``obj``
+    and the static name, never ``self``."""
+    _class_def, method, outcome = _method_definition()
+    _undecided_store(outcome)
+    for receiver, name in _store_receivers(outcome):
+        assert getattr(receiver, "name", None) == "obj", receiver
+        assert name == str_const("field")
     method_formals = tuple(p.name for p in method.params)
     assert method_formals[0] == "self"
     assert method_formals[1:] == ("obj", "value")
-    obj_cid, value_cid = _obj_value_cids(pending)
-    assert obj_cid is not None and value_cid is not None
-    assert obj_cid != value_cid
 
 
-def _floor_target_arg(arg) -> ObjectValue:
-    """Dig a constructed ``Target()`` CallSiteValue to ObjectValue."""
-    if isinstance(arg, ObjectValue):
-        return arg
-    assert isinstance(arg, CallSiteValue), arg
-    floored = arg.force_floor(None, owner="setattr-method-caller target dig")
-    assert isinstance(floored, ObjectValue), floored
-    return floored
-
-
-def test_discrimination_self_is_not_the_setattr_receiver_slot() -> None:
-    """Bite: setattr_named demand coordinates must not be the method's self formal."""
-    _class_def, method, pending = _method_definition()
-    self_coord = method.formal_coordinates()[0]
-    obj_cid, value_cid = _obj_value_cids(pending)
-    assert self_coord.coordinate_cid not in {obj_cid, value_cid}
+def test_discrimination_self_is_not_the_setattr_receiver() -> None:
+    """Bite: the store's receiver must not be the method's self formal."""
+    _class_def, _method, outcome = _method_definition()
+    receivers = {getattr(r, "name", None) for r, _name in _store_receivers(outcome)}
+    assert "self" not in receivers
+    assert "value" not in receivers
 
 
 # ---------------------------------------------------------------------------
-# 2. Helper method alone retains setattr_named demand
+# 2. Method alone is the undecided store
 # ---------------------------------------------------------------------------
 
 
-def test_helper_method_alone_retains_setattr_named_demand() -> None:
-    _, _method, pending = _method_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setattr_named"
-    assert len(pending.operands) == 3
-    assert pending.demand.operand_coordinate_cids[1] is None
-    assert pending.demand.operand_coordinate_cids[0] is not None
-    assert pending.demand.operand_coordinate_cids[2] is not None
+def test_method_alone_is_the_undecided_store_not_a_carrier() -> None:
+    _, _method, outcome = _method_definition()
+    _undecided_store(outcome)
+    assert not hasattr(store_effect_sugar, "mint_setattr_named_carrier")
 
 
 def test_discrimination_method_alone_is_not_completed() -> None:
-    """Bite: undischarged carrier is not a Completed store face."""
-    _, _method, pending = _method_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert not isinstance(pending, Completed)
-    assert not isinstance(pending, ExitSet)
+    """Bite: the undecided store is no unconditional completion."""
+    _, _method, outcome = _method_definition()
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.completed_value() is None
+    assert outcome.halts()
 
 
 # ---------------------------------------------------------------------------
-# 3. Positional, keyword, and default calls discharge
+# 3. What a caller supplies, through the one door
 # ---------------------------------------------------------------------------
 
 
-def test_writable_receiver_completes_via_method_discharge() -> None:
-    _, _method, pending = _method_definition()
+def test_writable_receiver_completes_through_the_door() -> None:
+    _, method, _outcome = _method_definition()
     target = _construct_class(TARGET_CLASS, "Target")
     assert target.methods == ()
-    obj_cid, value_cid = _obj_value_cids(pending)
-    exits = pending.discharge(None, {obj_cid: target, value_cid: TermValue(7)})
+    exits = _stored(method, target, TermValue(7))
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
     stored = exits.exits[0].value
-    record = getattr(stored, "record", None)
-    assert record is not None
-    assert any(
-        isinstance(s, ObjectValue)
-        and s.fields
-        and s.fields[-1].name == "field"
-        and s.fields[-1].value == TermValue(7)
-        for s in record.statements
-    )
+    assert isinstance(stored, ObjectValue)
+    assert stored.fields[-1].name == "field"
+    assert stored.fields[-1].value == TermValue(7)
 
 
-def test_getter_only_property_named_attribute_error_with_pre_effect_state() -> None:
-    """#6640 join on bound-method setattr_named: discharge stamps pre-state.
+def test_getter_only_property_named_attribute_error_retained_by_wrong_boundary() -> (
+    None
+):
+    """The store on a getter-only property halts with the named
+    ``AttributeError``; a wrong boundary retains the identical halt.
 
-    Formal discharge path (method alone → actuals) must carry exact reducer
-    testimony. Matching boundary restores it; wrong boundary retains the halt.
-    """
-    _, _method, pending = _method_definition()
+    Expected verdict changed (#7757 NEW-1): the carrier's pre-effect state
+    identity (``halted.state is pending.pre_effect_state.state``) has
+    nothing to compare against now -- the carrier is deleted.  The state
+    the method's own store halt keeps is the block's record
+    (``_undecided_store``)."""
+    _, method, outcome = _method_definition()
+    _undecided_store(outcome)
     target = _construct_class(PROPERTY_TARGET, "Target")
     assert any(
         m.name == "field" and m.descriptor_kind == "property" for m in target.methods
     )
-    testimony = pending.pre_effect_state
-    assert testimony is not None, (
-        "method body reducer did not enroll ReducerPreEffectStateV1 on the "
-        "formal setattr_named carrier"
-    )
-
-    obj_cid, value_cid = _obj_value_cids(pending)
-    exits = pending.discharge(None, {obj_cid: target, value_cid: TermValue(7)})
-    halted = _assert_named_halt(exits, require_pre_effect_state=True)
-    assert halted.effect.exception_type_coordinate == _identity("AttributeError")
+    exits = _stored(method, target, TermValue(7))
+    halted = _assert_named_halt(exits)
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
-    assert halted.state is testimony.state
+    site = method.body[0].fragment
+    assert halted.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
-    # Matching boundary restores the same pre-effect state object.
-    routed = _route(exits, "AttributeError")
-    assert len(routed.exits) == 1
-    completed = routed.exits[0]
-    assert isinstance(completed, Completed)
-    assert completed.value is testimony.state
-
-    # Wrong boundary retains the identical effect and pre-effect state.
+    # Wrong boundary retains the identical effect and state.
     retained = _route(exits, "ValueError")
     assert len(retained.exits) == 1
     face = retained.exits[0]
@@ -339,14 +310,13 @@ def test_getter_only_property_named_attribute_error_with_pre_effect_state() -> N
 
 def test_read_does_not_authorize_completed_store_on_getter_only_property() -> None:
     """Lying twin: property is readable but store must not complete."""
-    _, _method, pending = _method_definition()
+    _, method, _outcome = _method_definition()
     target = _construct_class(PROPERTY_TARGET, "Target")
     # Readable property is enrolled.
     assert any(
         m.name == "field" and m.descriptor_kind == "property" for m in target.methods
     )
-    obj_cid, value_cid = _obj_value_cids(pending)
-    exits = pending.discharge(None, {obj_cid: target, value_cid: TermValue(99)})
+    exits = _stored(method, target, TermValue(99))
     assert isinstance(exits.exits[0], Halted)
     assert not isinstance(exits.exits[0], Completed)
     assert exits.exits[0].effect.exception_type_coordinate == _identity(
@@ -356,9 +326,8 @@ def test_read_does_not_authorize_completed_store_on_getter_only_property() -> No
 
 def test_discrimination_writable_store_is_not_read_authorized_halt() -> None:
     """Positive twin of read-authorizes-write: empty class completes."""
-    _, _method, pending = _method_definition()
+    _, method, _outcome = _method_definition()
     target = _construct_class(TARGET_CLASS, "Target")
-    obj_cid, value_cid = _obj_value_cids(pending)
-    exits = pending.discharge(None, {obj_cid: target, value_cid: TermValue(99)})
+    exits = _stored(method, target, TermValue(99))
     assert isinstance(exits.exits[0], Completed)
     assert not isinstance(exits.exits[0], Halted)

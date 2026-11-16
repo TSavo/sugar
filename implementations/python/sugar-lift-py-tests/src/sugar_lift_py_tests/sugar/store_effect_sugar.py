@@ -7,100 +7,176 @@ from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
-def project_setattr(
-    receiver, attr: str, value, site, ctx, *, plain_store_input=None
-) -> ExitSet:
-    """``receiver.attr = value`` on a receiver that is no instance of a
-    source class: the ordinary store, already-evaluated receiver and value.
-    The one field store (``ReceiverFieldStoreSugar``) takes it for every
-    such receiver its value gives.  Dispatch is ``__setattr__`` / descriptor
-    ``__set__`` via Floor ``setattr`` — a different method and obligation
-    from the read path ``attribute`` / ``__getattr__`` /
-    ``__getattribute__``.
+#: ``(noun, owner)`` of each attribute mutation's undecided faces on a formal.
+_ATTRIBUTE_MUTATIONS = {
+    "__setattr__": ("setattr", "UndecidedSetattr"),
+    "__delattr__": ("delattr", "UndecidedDelattr"),
+}
 
-    1. Formal receiver → undischarged ``setattr_named`` carrier
-       (``mint_setattr_named_carrier``): the n-ary projector (#6614) unwraps
-       the name and calls ``receiver.setattr(name.value, value, site, ctx)``;
-       an ordinary source caller supplies actuals.  ``plain_store_input``
-       (``receiver_dispatch.stored_class_input``) is the class input of a
-       parameter whose class the contract takes: the store completes where
-       it is the plain store (#7757 step 7).
-    2. Decided runtime type → Floor ``setattr``; a raise is its halted arm
-       (halted store, not statement green)
-    3. Undecided non-formal → the two faces of the store (``store_faces``:
-       completes with ``AttributeStoreRuntimeEffect`` testimony or raises
-       something undetermined; never consumer ``SugarNotWritten``)
-    """
-    formal_coordinate = getattr(receiver, "formal_coordinate", None)
-    if formal_coordinate is not None:
-        return mint_setattr_named_carrier(
-            site=site,
-            receiver=receiver,
-            attr=attr,
-            value=value,
-            plain_store_input=plain_store_input,
+
+def attribute_mutation(method, receiver, attr: str, operands, site, ctx, *, unit):
+    """``receiver.attr = v`` (``__setattr__``, ``operands`` the value) or
+    ``del receiver.attr`` (``__delattr__``, no operand) on a receiver that is
+    no instance of a source class: THE attribute store or delete, one way
+    (#7757 step 7).  Python runs ``type(receiver).__setattr__(receiver,
+    "attr", v)`` / ``type(receiver).__delattr__(receiver, "attr")`` (data
+    descriptors are found inside it), a different method and obligation from
+    the read path (``attribute``, ``__getattribute__``, ``__getattr__``).
+    The one field store (``ReceiverFieldStoreSugar``), the one attribute
+    delete (``AttributeDeleteEffectSugar``) and a value that only carries
+    another (an authenticated exception-type operand) all take it.
+
+    - A formal of the function whose own proof this is (its plain value, a
+      ``SymbolicValue`` with a ``formal_coordinate``) waits on no caller's
+      actual:
+
+      - ``del p.f`` where ``p``'s class is a class input here
+        (``receiver_dispatch.dispatch_on_receiver``) is the dispatched call
+        ``call:dispatch:__delattr__(p, "f")``, resolved at prove at the class
+        the caller binds (a source ``__delattr__``'s contract; owed where
+        nothing answers it, ``object``'s included).  The receiver after it is
+        ``python:after(<call>, "0")`` (``receiver_after_dispatch``).
+      - any other store or delete on a formal is the undecided mutation
+        (``undecided_attribute_mutation_faces``): it completes under its own
+        atom or raises something undetermined, both faces owing the
+        undecided member.  A store on a parameter whose class is a contract
+        input (``receiver_dispatch.stored_class_input``) completes also
+        where the store is the plain ``__dict__`` store
+        (``python:plain_store(class:<p>, "<f>")``, decided at prove on the
+        class the caller binds, ``consistency::plain_store_holds``, and
+        nowhere else); its halt is the complement.
+    - A receiver whose type the lift decides is its floor's own store or
+      delete, every face of it (an ``AttributeError``, a ``TypeError``)
+      kept.
+    - Any other receiver -- an undecided call result, a free name -- is the
+      store's two faces (``store_faces``: completes with the runtime
+      effect's testimony or raises something undetermined)."""
+    noun, owner = _ATTRIBUTE_MUTATIONS[method]
+    if getattr(receiver, "formal_coordinate", None) is not None:
+        from sugar_lift_py_tests.floor import StringValue
+        from sugar_lift_py_tests.receiver_dispatch import (
+            dispatch_on_receiver,
+            plain_store_atom,
+            receiver_after_dispatch,
+            stored_class_input,
+        )
+
+        if method == "__delattr__":
+            dispatched = dispatch_on_receiver(
+                method, receiver, (StringValue(attr),), (), site, unit=unit
+            )
+            if dispatched is not None:
+                from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+                    _unknown_after,
+                )
+
+                def after(result):
+                    post = receiver_after_dispatch(receiver, result)
+                    return ExitSet.completed(
+                        post if post is not None else _unknown_after(site, method)
+                    )
+
+                return dispatched.and_then(after)
+        plain = None
+        if method == "__setattr__":
+            class_input = stored_class_input(receiver, attr, unit)
+            if class_input is not None:
+                from sugar_lift_py_tests.ir import make_var
+
+                plain = plain_store_atom(make_var(class_input), attr)
+        return undecided_attribute_mutation_faces(
+            receiver, attr, site, noun=noun, method=method, owner=owner, plain=plain
         )
 
     if receiver.runtime_type_is_decided():
-        return receiver.setattr(attr, value, site, ctx)
+        if method == "__setattr__":
+            return receiver.setattr(attr, *operands, site, ctx)
+        return receiver.delattr(attr, site, ctx)
 
     from sugar_lift_py_tests.effect import (
+        AttributeDeleteRuntimeEffect,
         AttributeStoreRuntimeEffect,
+        runtime_effect_evidence,
         runtime_effect_evidence_from_terms,
     )
     from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
     from sugar_lift_py_tests.ir import ctor, str_const
 
-    operation = ctor(
-        "python:attribute_store",
-        [
-            receiver.to_term(owner="project_setattr.receiver"),
-            str_const(attr),
-            value.to_term(owner="project_setattr.value"),
-        ],
+    if method == "__setattr__":
+        (value,) = operands
+        operation = ctor(
+            "python:attribute_store",
+            [
+                receiver.to_term(owner="attribute_mutation.receiver"),
+                str_const(attr),
+                value.to_term(owner="attribute_mutation.value"),
+            ],
+        )
+        return store_faces(
+            AttributeStoreRuntimeEffect(
+                "attribute assignment runtime boundary: attribute store "
+                f"target `.{attr}` -- receiver identity belongs to "
+                "Python's runtime __setattr__/descriptor dispatch; "
+                f"attr={attr} site={site}",
+                **runtime_effect_evidence_from_terms(operation, operation, site),
+            )
+        )
+    operand = ctor(
+        "python:attribute_delete_target",
+        [receiver.to_term(owner="attribute delete"), str_const(attr)],
     )
     return store_faces(
-        AttributeStoreRuntimeEffect(
-            "attribute assignment runtime boundary: attribute store "
-            f"target `.{attr}` -- receiver identity belongs to "
-            "Python's runtime __setattr__/descriptor dispatch; "
-            f"attr={attr} site={site}",
-            **runtime_effect_evidence_from_terms(operation, operation, site),
+        AttributeDeleteRuntimeEffect(
+            "attribute deletion runtime boundary: Python dispatches "
+            f"__delattr__/descriptor deletion for .{attr}",
+            **runtime_effect_evidence("py.delattr", operand, site),
         )
     )
 
 
-def mint_setattr_named_carrier(
-    *, site, receiver, attr: str, value, plain_store_input=None
+def undecided_attribute_mutation_faces(
+    receiver, attr: str, site, *, noun: str, method: str, owner: str, plain=None
 ):
-    """Producer-side contract for n-ary ``setattr_named`` discharge.
+    """Two faces for ``p.attr = v`` / ``del p.attr`` over a receiver whose
+    type nothing here decides.
 
-    Operand order matches the projector table (#6614):
-    ``receiver.setattr(name.value, value, site, ctx)`` after unwrap.
-    Coordinates: ``(receiver.formal, None, value.formal)`` — lengths and
-    order are load-bearing (#6613 ``__post_init__``).  ``plain_store_input``
-    rides on the carrier (``NativeOperationExitCarrierV1.plain_store_input``).
-    """
-    from dataclasses import replace
+    The mutation completes only under ``python:<noun>.completes(python:
+    <noun>(<receiver>, "<attr>", <occurrence>))`` -- the receiver named by
+    its identity (``identity_term``), keyed on this exact site and
+    occurrence so two mutations are never forced to agree, the spelling
+    ``ObjectValue._undecided_delattr`` already gives an undecided delete --
+    or under ``plain`` where it is given (``or(plain, <completes>)``: the
+    plain ``__dict__`` store, decided at prove).  Its post-state is
+    ``python:receiver_after_call(<occurrence>, <method>)``: the receiver's
+    contents after the call are unknown.  The complement halts with an
+    ``UndeterminedRaiseEffect`` (``owner``): a slot class, a read-only
+    property, a ``__setattr__`` / ``__delattr__`` that raises are not ruled
+    out, and no exception type is guessed."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.object_identity import identity_term
+    from sugar_lift_py_tests.ir import atomic, ctor, or_, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _unknown_after
 
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
+    key = occurrence_key(site)
+    receiver_term = identity_term(receiver, site, "receiver", owner=str(site))
+    guard = atomic(
+        f"python:{noun}.completes",
+        [ctor(f"python:{noun}", (receiver_term, str_const(attr), str_const(key)))],
     )
-    from sugar_lift_py_tests.floor import StringValue
-
-    formal_coordinate = getattr(receiver, "formal_coordinate", None)
-    if formal_coordinate is None:
-        raise ValueError("setattr_named carrier requires a receiver formal_coordinate")
-    value_coordinate = getattr(value, "formal_coordinate", None)
-    carrier = NativeOperationExitCarrierV1.mint(
+    if plain is not None:
+        guard = or_([plain, guard])
+    return ExitSet.two_faced(
+        _unknown_after(site, method),
+        UndeterminedRaiseEffect(
+            blame=str(site),
+            occurrence=key,
+            producer_node_owner=owner,
+            site=site,
+        ),
+        guard=guard,
         site=site,
-        operator="setattr_named",
-        operands=(receiver, StringValue(attr), value),
-        coordinates=(formal_coordinate, None, value_coordinate),
     )
-    if plain_store_input is None:
-        return carrier
-    return replace(carrier, plain_store_input=plain_store_input)
 
 
 @dataclass(frozen=True)

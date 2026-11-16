@@ -16569,8 +16569,9 @@ mod tests {
 
     #[test]
     fn a_completes_atom_keyed_by_its_occurrence_names_its_site() {
-        // A field store's carrier keys its completes atom by its
-        // `python:occurrence(<site>, <path>...)` term (#7757 step 7).
+        // A carrier's unanswered exit keys its completes atom by its
+        // `python:occurrence(<site>, <path>...)` term (whatever operator
+        // it names).
         let occurrence = json!({"kind": "ctor", "name": PYTHON_OCCURRENCE, "args": [
             string_const("site-a"),
             string_const("iteration-1"),
@@ -16578,7 +16579,7 @@ mod tests {
         let operation = json!({
             "kind": "ctor",
             "name": "python:unanswered_native_operation",
-            "args": [string_const("setattr_named"), occurrence],
+            "args": [string_const("op"), occurrence],
         });
         let atom = json!({
             "kind": "atomic",
@@ -16586,10 +16587,26 @@ mod tests {
             "args": [operation],
         });
         assert_eq!(completes_atom_any_site(&atom).as_deref(), Some("site-a"));
-        let guard = json!({"kind": "or", "operands": [plain_store(var("class:b"), "n"), atom]});
+        // A field store on a parameter whose class is an input completes
+        // under `or(python:plain_store(class:<p>, "<f>"),
+        // python:setattr.completes(python:setattr(<p>, "<f>", <key>)))`,
+        // its key the occurrence `<site>@<path>` it evaluated under (the
+        // kit's `store_effect_sugar.undecided_attribute_mutation_faces`,
+        // #7757 step 7).
+        let store = json!({
+            "kind": "atomic",
+            "name": "python:setattr.completes",
+            "args": [{"kind": "ctor", "name": "python:setattr", "args": [
+                var("b"),
+                string_const("n"),
+                string_const("site-c@loop:item#1"),
+            ]}],
+        });
+        assert_eq!(completes_atom_any_site(&store).as_deref(), Some("site-c"));
+        let guard = json!({"kind": "or", "operands": [plain_store(var("class:b"), "n"), store]});
         let mut sites = std::collections::BTreeSet::new();
         completes_sites(&guard, &mut sites);
-        assert_eq!(sites.into_iter().collect::<Vec<_>>(), vec!["site-a".to_string()]);
+        assert_eq!(sites.into_iter().collect::<Vec<_>>(), vec!["site-c".to_string()]);
         // `python:isinstance.completes(python:isinstance(<x>, <C>), <key>)`:
         // the key is the atom's own second argument.
         let isinstance = json!({

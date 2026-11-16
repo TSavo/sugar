@@ -85,7 +85,8 @@ class _OutcomeSugar(Sugar):
 
 def test_attribute_store_lifts_a_red_effect_and_the_block_continues():
     # Free undecided ``o`` retains dual-face AttributeStoreRuntimeEffect.
-    # Formal receivers mint setattr_named (see formal-caller twins).
+    # A formal receiver's store is the undecided store, no carrier
+    # (``store_effect_sugar.attribute_mutation``, see formal-caller twins).
     entries = _entries("def A(v):\n    o.a = v\n    return v\n")
     red = _red(entries)
     assert len(red) == 1

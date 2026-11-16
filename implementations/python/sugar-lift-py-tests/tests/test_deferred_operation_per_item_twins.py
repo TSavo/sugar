@@ -22,6 +22,12 @@ their completes atom over that result, and their halt at
 ``occurrence_key(site)``, each read where the call evaluates: inside a live
 item, that item's path.  So each item's ``c.bump()`` is its own term.
 
+An operation that mints no carrier on a formal -- an attribute read, the
+one undecided read -- keys its value term, its completes atom and its halt
+per evaluation where it evaluates (``occurrence_key(site)`` under the live
+item's path), as ``undecided_binary_terms`` does: each item's read of
+``c.count`` is its own ``python:attribute_result("count", c, <key>)``.
+
 A lying claim is never ``sat``; a truthful one is never ``unsat``.  Each
 half goes through ``run_source_through_real_solver``: real ``sugar mint``
 then real ``sugar prove``.
@@ -53,6 +59,23 @@ _COUNTER = (
     "        return self.k\n"
     "\n"
     "    def bump(self):\n"
+    "        self.k += 1\n"
+    "        return self.k\n"
+    "\n"
+    "\n"
+)
+
+_COUNTING_READER = (
+    "class Reader:\n"
+    "    def __init__(self):\n"
+    "        self.k = 0\n"
+    "\n"
+    "    @property\n"
+    "    def count(self):\n"
+    "        self.k += 1\n"
+    "        return self.k\n"
+    "\n"
+    "    def __getattr__(self, name):\n"
     "        self.k += 1\n"
     "        return self.k\n"
     "\n"
@@ -118,6 +141,40 @@ _SHAPES = {
         "\n"
         "def test_twice():\n"
         "    r = twice(Counter())\n"
+        "    assert {claim}\n",
+        "r[0] != r[1]",
+        "r[0] == r[1]",
+    ),
+    # An attribute read on a parameter mints no carrier: it is the one
+    # undecided read, keyed per evaluation where it evaluates
+    # (``floor_value.undecided_attribute_result``:
+    # ``python:attribute_result("<name>", c, <key>)``), so each item's read
+    # is its own term.  A property that counts, and a ``__getattr__`` that
+    # counts, return 1, then 2.
+    "attribute-property-per-item": (
+        _COUNTING_READER + "def twice(c):\n"
+        "    out = []\n"
+        "    for _ in (1, 2):\n"
+        "        out.append(c.count)\n"
+        "    return out\n"
+        "\n"
+        "\n"
+        "def test_twice():\n"
+        "    r = twice(Reader())\n"
+        "    assert {claim}\n",
+        "r[0] != r[1]",
+        "r[0] == r[1]",
+    ),
+    "attribute-getattr-per-item": (
+        _COUNTING_READER + "def twice(c):\n"
+        "    out = []\n"
+        "    for _ in (1, 2):\n"
+        "        out.append(c.missing)\n"
+        "    return out\n"
+        "\n"
+        "\n"
+        "def test_twice():\n"
+        "    r = twice(Reader())\n"
         "    assert {claim}\n",
         "r[0] != r[1]",
         "r[0] == r[1]",

@@ -64,7 +64,8 @@ def test_renamed_alias_has_the_same_single_binding_path():
 
 def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():
     # Free undecided receiver + ground-true branch: dual-face RuntimeEffect.
-    # Formal receivers mint setattr_named (vertical completion).
+    # A formal receiver's store is the undecided store, no carrier
+    # (``store_effect_sugar.attribute_mutation``).
     function = _function(
         "def arbitrary(constructed_value):\n"
         "    if True:\n"
