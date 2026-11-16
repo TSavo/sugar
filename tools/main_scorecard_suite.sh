@@ -176,10 +176,18 @@ run_pytest() {
   # Over budget: SIGINT, so pytest reports where it was and writes its
   # summary (exit 2); KILL a minute later if it does not stop. timeout exits 124.
   if [ "$budget" -gt 0 ]; then limit=(timeout -s INT -k 60 "$budget"); fi
+  # A test file that fails to import is one failing file, never a lost shard:
+  # without --continue-on-collection-errors one ImportError stops pytest
+  # before any test runs ("Interrupted: 1 error during collection", exit 2),
+  # and the shard's every other file goes unmeasured (main 3ff7cff91 lost
+  # source shards 0, 3, 5 and 7 that way). With it pytest runs the rest and
+  # exits 1; the summary names the file under collectionErrors, and
+  # scorecard_carry.py summarize counts each one as a failing test.
   local attempt
   for attempt in 1 2; do
     PYTHONFAULTHANDLER=1 PYTHONPATH="$repo/tools:$PYTHONPATH" \
       "${limit[@]}" python -m pytest "${paths[@]}" -v \
+      --continue-on-collection-errors \
       -p no:cacheprovider -p no:randomly \
       -p scorecard_carry_pytest \
       --carry-label "$label" --carry-summary "$summary" \

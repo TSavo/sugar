@@ -22,6 +22,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
     TupleValue,
 )
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.source_call_resolution import (
     UnknownCalleeCallV1,
@@ -32,9 +33,17 @@ from sugar_lift_py_tests.source_call_resolution import (
 )
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
+from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, LanguageCallee, Name
+from sugar_source_tree.tree import SourceFile
 
-from test_cited_unreadable_manager import _unit
+
+def _unit(source: str):
+    """The typed unit of ``source``: the reader asks it how names bind."""
+    return SourceFile(
+        (source, "e.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).unit
 
 
 def _call(source: str, name: str) -> Call:
