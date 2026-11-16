@@ -591,8 +591,6 @@ class ConstructedInstanceValue(FloorValue):
         for name, value in latest.items():
             if not current and name not in instance.stored_fields:
                 continue
-            if name in instance.deleted_instance_fields:
-                continue
             term = value.to_term(owner="ConstructedInstanceValue.post")
             if _names_an_object(term):
                 continue

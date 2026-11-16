@@ -107,8 +107,7 @@ def undecided_attribute_mutation_faces(
     The mutation completes only under ``python:<noun>.completes(python:
     <noun>(<receiver>, "<attr>", <occurrence>))`` -- the receiver named by
     its identity (``identity_term``), keyed on this exact site and
-    occurrence so two mutations are never forced to agree, the spelling
-    ``ObjectValue._undecided_delattr`` already gives an undecided delete --
+    occurrence so two mutations are never forced to agree --
     or under ``plain`` where it is given (``or(plain, <completes>)``: the
     plain ``__dict__`` store, decided at prove).  Its post-state is
     ``python:receiver_after_call(<occurrence>, <method>)``: the receiver's

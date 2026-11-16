@@ -33,9 +33,9 @@ Acceptance:
 
   1. Completed delitem → subsequent read of that key yields named KeyError;
      occurrence lineage is intact (KeyError occurrence is the delete locus).
-  2. Completed delattr → attribute is gone; a read never sees the deleted
-     value.  Whether it raises ``AttributeError`` is decided at prove by the
-     one walk of the order (#7757 L3), never by the lift.
+  2. A delattr never leaves the deleted value readable: it is the dispatched
+     ``__delattr__`` (#7757 H1c), whose halts prove's one walk of the order
+     decides (#7757 L3), never the lift.
   3. Delete-then-restore (set again) → read yields the new value.
   4. Readback after a HALTED delete still sees the original (state survival).
   5. Lying twins refuse: fabricated deleted value; KeyError with wrong
@@ -64,7 +64,6 @@ from sugar_lift_py_tests.floor import (
     StringValue,
     TermValue,
 )
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.store_effect_sugar import (
@@ -73,7 +72,6 @@ from sugar_lift_py_tests.sugar.store_effect_sugar import (
 )
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect import RaiseEffect
 
@@ -86,11 +84,6 @@ CODEX3 = (
     "authenticated reads see KeyError/AttributeError with delete occurrence "
     "lineage, or restore to the new value"
 )
-FLOOR_ATTR = (
-    "Floor ObjectValue.attribute: a missing instance field after delattr "
-    "must be the read prove decides, never a panic on the read path"
-)
-
 DELITEM = "def helper(obj, key):\n    del obj[key]\n"
 # Since #8857 ``DELITEM``'s ``obj`` takes ``class:obj`` as an input (deleted
 # from, used no other way): its delete is the dispatched ``__delitem__``
@@ -272,20 +265,6 @@ def _post_dict(completed: Completed) -> DictValue:
     )
 
 
-def _post_object(completed: Completed) -> ObjectValue:
-    value = completed.value
-    if isinstance(value, ObjectValue):
-        return value
-    record = getattr(value, "record", None)
-    if record is not None:
-        objs = [s for s in record.statements if isinstance(s, ObjectValue)]
-        assert objs, f"{CODEX3}: no ObjectValue post-state"
-        return objs[-1]
-    raise AssertionError(
-        f"{CODEX3}: unprojected delattr post-state {type(value).__name__}"
-    )
-
-
 def _keyerror_raise(outcome, *, site) -> Halted:
     """Authenticated read face: the KeyError halt at the given locus."""
     assert (
@@ -369,48 +348,18 @@ def test_discrimination_completed_delitem_does_not_fabricate_deleted_value() -> 
 
 
 # ===========================================================================
-# 2. Completed delattr → attribute gone; read decided at prove
+# 2. A delattr never leaves the old value readable (the dispatched delete)
 # ===========================================================================
 
 
-def test_completed_delattr_removes_field_and_read_never_sees_the_old_value() -> (
-    None
-):
-    """After ``del obj.field``, field is absent; the read never completes
-    with the deleted value.  Whether it raises ``AttributeError`` is not the
-    lift's to decide (a ``__getattr__`` may answer it): it is the read
-    prove's one walk of the order decides (#7757 L3), and on a receiver with
-    no class statement, whose order nothing reads, the undecided read, owed,
-    its halting face kept."""
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+def test_delattr_never_leaves_the_old_value_readable() -> None:
+    """``del obj.field`` is ``type(obj).__delattr__`` (#7757 H1c): the lift
+    never removes the field itself.  On a receiver with no class statement
+    nothing names its class, so it is the one undecided attribute mutation:
+    both faces, its halt kept, owed, and no completed face is an instance
+    whose current fields still hold the deleted value."""
+    from sugar_lift_py_tests.floor.object_identity import contents_current
 
-    receiver = ObjectValue(
-        class_name="Widget",
-        fields=(ObjectField("field", TermValue(7)),),
-        methods=(),
-        allocation=FRAME_FRESH,
-    )
-    delete_site, exits = _delattr(receiver)
-    assert isinstance(exits.exits[0], Completed)
-    post = _post_object(exits.exits[0])
-    assert not any(f.name == "field" for f in post.fields), post.fields
-
-    try:
-        read = post.attribute("field", delete_site, None)
-    except SugarNotWritten as err:
-        raise AssertionError(f"{FLOOR_ATTR}: {err}") from err
-    except ConstructionPanic as err:
-        raise AssertionError(
-            f"{FLOOR_ATTR}: ConstructionPanic on missing field read: {err}"
-        ) from err
-
-    assert read.completed_value() != TermValue(7), read
-    (halt,) = read.halts()
-    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
-    assert read.owed_items(), read
-
-
-def test_discrimination_delattr_does_not_leave_readable_old_value() -> None:
     receiver = ObjectValue(
         class_name="Widget",
         fields=(ObjectField("field", TermValue(7)),),
@@ -418,9 +367,17 @@ def test_discrimination_delattr_does_not_leave_readable_old_value() -> None:
         allocation=FRAME_FRESH,
     )
     _site, exits = _delattr(receiver)
-    post = _post_object(exits.exits[0])
-    with pytest.raises(AssertionError):
-        assert any(f.name == "field" and f.value == TermValue(7) for f in post.fields)
+    assert exits.halts(), exits
+    assert exits.owed_items(), exits
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    assert completed, exits
+    for face in completed:
+        value = face.value
+        assert not (
+            isinstance(value, ObjectValue)
+            and contents_current(value)
+            and any(f.name == "field" and f.value == TermValue(7) for f in value.fields)
+        ), value
 
 
 # ===========================================================================
@@ -441,25 +398,6 @@ def test_delete_then_restore_setitem_reads_new_value() -> None:
     assert read.completed_value() == TermValue(99)
     with pytest.raises(AssertionError):
         assert read.completed_value() == TermValue(1)
-
-
-def test_delete_then_restore_setattr_reads_new_value() -> None:
-    """``del obj.field; obj.field=99`` → field is TermValue(99)."""
-    receiver = ObjectValue(
-        class_name="Widget",
-        fields=(ObjectField("field", TermValue(7)),),
-        methods=(),
-        allocation=FRAME_FRESH,
-    )
-    site, deleted = _delattr(receiver)
-    post = _post_object(deleted.exits[0])
-    restored = post.setattr("field", TermValue(99), site, None)
-    assert restored.completed_value() is not None
-    assert isinstance(restored.completed_value(), ObjectValue)
-    fields = {f.name: f.value for f in restored.completed_value().fields}
-    assert fields.get("field") == TermValue(99)
-    with pytest.raises(AssertionError):
-        assert fields.get("field") == TermValue(7)
 
 
 # ===========================================================================

@@ -2,7 +2,7 @@
 decided at prove, never an ``AttributeError`` the lift decides (#7757 L3).
 
 ``ObjectValue.attribute`` on a name no recorded field and no class member
-answers -- a field a delete removed included -- states the one dispatched
+answers states the one dispatched
 read (``ObjectValue._dispatched_call(read=True)``,
 ``call:dispatch:.<name>(<instance>, py.class("0", python:instance(<class>,
 <field>...)))``), both faces kept.  Whether it raises ``AttributeError`` --
@@ -19,8 +19,6 @@ arrived, no class statement -- it is the one undecided read.
 """
 
 from __future__ import annotations
-
-from dataclasses import replace
 
 import pytest
 
@@ -148,28 +146,6 @@ def test_a_fresh_instance_lacking_the_name_is_the_dispatched_read(
     _dispatched_read(receiver.attribute("missing", site, None))
 
 
-def test_a_deleted_field_is_the_dispatched_read_naming_no_such_field(
-    tmp_path,
-) -> None:
-    # ``del o.missing`` leaves the ``__dict__`` without it; a ``__getattr__``
-    # may still answer the read.  The read states the instance's fields
-    # without it, and prove's walk decides.
-    value, site = _setup(
-        "class Widget:\n    def __getattr__(self, name):\n        return 1\n",
-        tmp_path,
-    )
-    receiver = _fresh(value, (ObjectField("missing", TermValue(4)),))
-    after = receiver.delattr("missing", site, None).completed_value()
-    assert "missing" in after.deleted_instance_fields
-
-    from sugar_lift_py_tests.receiver_dispatch import class_value, instance_term
-
-    _dispatched_read(after.attribute("missing", site, None))
-    symbol = value.class_definition.bridge_source_symbol()
-    assert symbol is not None
-    assert class_value(after) == instance_term(symbol)
-
-
 @pytest.mark.parametrize(
     "source",
     [
@@ -193,24 +169,36 @@ def test_deleting_a_name_no_field_holds_names_no_attribute_error(
     assert [arm for arm in outcome.exits if isinstance(arm, Completed)], outcome
 
 
-def test_a_source_delattr_answers_the_delete_of_a_held_field(tmp_path) -> None:
-    # ``del o.other`` is ``Widget.__delattr__(o, "other")``: the field is
-    # never removed here, and the object after the call is not read as it
-    # was.
-    value, site = _setup(
+@pytest.mark.parametrize(
+    "source",
+    [
+        # ``object``'s ``__delattr__``: the plain removal is prove's walk's to
+        # decide, never the lift's (#7757 H1c).
+        "class Widget:\n    pass\n",
+        # A ``__getattr__`` changes nothing about the delete.
+        "class Widget:\n    def __getattr__(self, name):\n        return 1\n",
+        # A source ``__delattr__`` answers it, and may swallow it.
         "class Widget:\n    def __delattr__(self, name):\n        pass\n",
-        tmp_path,
-    )
+    ],
+)
+def test_deleting_a_held_field_is_the_dispatched_delete(source, tmp_path) -> None:
+    # ``del o.other`` is ``type(o).__delattr__(o, "other")``: the field is
+    # never removed here, and the object after the call is not read as it
+    # was: it is what the dispatched call states, else unknown.
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+
+    value, site = _setup(source, tmp_path)
     receiver = _fresh(value, (ObjectField("other", TermValue(1)),))
 
     outcome = receiver.delattr("other", site, None)
 
     _no_lift_attribute_error(outcome)
     assert outcome.halts(), outcome
-    for arm in outcome.exits:
-        if isinstance(arm, Completed):
-            _binds, after = peel_walrus_binds(arm.value)
-            assert "other" not in getattr(after, "deleted_instance_fields", ())
+    completed = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert completed, outcome
+    for arm in completed:
+        _binds, after = peel_walrus_binds(arm.value)
+        assert not (isinstance(after, ObjectValue) and contents_current(after)), after
 
 
 def test_a_recorded_field_still_answers(tmp_path) -> None:
@@ -248,18 +236,3 @@ def test_no_class_statement_is_the_undecided_read(tmp_path) -> None:
     receiver = ObjectValue("Widget", (), identity="receiver", allocation=FRAME_FRESH)
 
     _undecided(receiver.attribute("missing", site, None))
-
-
-def test_a_deleted_field_with_no_class_statement_is_the_undecided_read(
-    tmp_path,
-) -> None:
-    _value, site = _setup("class Widget:\n    pass\n", tmp_path)
-    receiver = ObjectValue(
-        "Widget",
-        (ObjectField("missing", TermValue(4)),),
-        identity="receiver",
-        allocation=FRAME_FRESH,
-    )
-    after = replace(receiver, fields=(), deleted_instance_fields=("missing",))
-
-    _undecided(after.attribute("missing", site, None))

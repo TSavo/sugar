@@ -1077,11 +1077,6 @@ def test_a_stale_instances_field_read_is_the_undecided_read_never_its_value():
         assert _object_reads(value.term)
     # Whether the read completes is not decided: it may raise.
     assert outcome.halts()
-    # A field it was built with and since deleted is not decided either.
-    deleted = made.delattr("x", "del-site", None).completed_value()
-    assert deleted.attribute("x", "read-site", None).halts()
-    stale_deleted = replace(deleted, allocation=None, arrival="read-b")
-    assert _completed_values(stale_deleted.attribute("x", "read-site", None))
     # An instance that names no arrival cannot be told apart: refused.
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -1156,40 +1151,34 @@ def test_an_instance_this_frame_built_still_answers_its_field(tmp_path):
 
 
 def _undecided_delete(outcome):
-    """The undecided delete: the same object after it, still not current,
-    under the ``python:delattr.completes`` atom; only an undetermined raise,
-    never an exception read from the fields; both faces owed."""
+    """The one undecided attribute mutation (#7757 H1c: every delete is the
+    dispatched ``__delattr__``, and an instance that names no class is that
+    mutation): completed only under the ``python:delattr.completes`` atom;
+    only an undetermined raise, never an exception read from the fields;
+    both faces owed."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.floor.object_identity import contents_current
-    from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.outcome import Completed
 
     (completed,) = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
-    assert isinstance(completed.value, ObjectValue)
-    assert not contents_current(completed.value)
     assert "python:delattr.completes" in _term_names(completed.guard)
     assert outcome.halts()
     assert all(
         type(halt.effect) is UndeterminedRaiseEffect for halt in outcome.halts()
     )
     assert all(exit_.owed for exit_ in outcome.exits)
-    return completed.value
 
 
-def test_a_stale_instances_delete_is_the_undecided_delete():
+def test_an_instances_delete_is_the_undecided_delete_current_or_not():
     from dataclasses import replace
 
     from sugar_source_tree.panic import SugarNotWritten
 
     made, stale = _instance_made_and_arrived()
-    # Current: a field it holds is deleted, decided.
-    assert made.delattr("x", "del-site", None).completed_value() is not None
-    # Not current: a field it arrived with may be gone, one it did not may be
-    # there.  Either way the delete is undecided.
-    for name in ("x", "zz"):
-        after = _undecided_delete(stale.delattr(name, "del-site", None))
-        assert name not in {field.name for field in after.fields}
-        assert after.arrival == stale.arrival
+    # Current or not, a field it holds or one it does not: never decided
+    # from the fields it holds.
+    for receiver in (made, stale):
+        for name in ("x", "zz"):
+            _undecided_delete(receiver.delattr(name, "del-site", None))
     # An instance that names no arrival cannot be told apart: refused.
     with pytest.raises(SugarNotWritten):
         replace(stale, arrival=None).delattr("x", "del-site", None)
