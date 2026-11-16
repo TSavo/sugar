@@ -449,6 +449,43 @@ class ContainerMutationStatementSugar(Sugar):
         )
 
 
+def _pair_carrying_records(after, result):
+    """The one door's ``(receiver after, result)`` pair of an ordinary call
+    whose completed value is ``result`` (``after``: the receiver as that
+    value says the call left it), carrying the call's record of what it may
+    have changed (``call_site_value.bind_after_call``: an
+    ``AfterCallRecordValue`` bound under the call's key) on the pair itself,
+    as a walrus's write rides its value, so the statement binds it where it
+    applies its writes (``assigned_value._walrus_bound``).  Inside the pair
+    no statement reads it, and a later call that reads a module global the
+    call may have changed read the global as it was before the call
+    (``call_site_sugar._global_after_call``, #7757 H7).  Every other bind
+    the value carries stays on it, as before; a value that carries no
+    record is the pair it always was."""
+    from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        NamedExpressionValue,
+        carry_walrus_binds,
+        peel_walrus_binds,
+    )
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    binds, presented = peel_walrus_binds(result)
+    records = tuple(
+        bind
+        for bind in binds
+        if type(bind) is NamedExpressionValue
+        and isinstance(bind.assigned_value, AfterCallRecordValue)
+    )
+    if not records:
+        return TupleValue((after(result), result))
+    others = tuple(
+        bind for bind in binds if not any(bind is record for record in records)
+    )
+    kept = carry_walrus_binds(others, presented)
+    return carry_walrus_binds(records, TupleValue((after(kept), kept)))
+
+
 def _unknown_after(site, label):
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.ir import ctor, str_const
@@ -727,7 +764,7 @@ class PathContainerCallSugar(ConstructedTermSugar):
                 return post if stated is None else stated
 
             return self.fallback.desugar(call_ctx).and_then(
-                lambda result: ExitSet.completed(TupleValue((after(result), result)))
+                lambda result: ExitSet.completed(_pair_carrying_records(after, result))
             )
 
         outcome = self.receiver.desugar(ctx)

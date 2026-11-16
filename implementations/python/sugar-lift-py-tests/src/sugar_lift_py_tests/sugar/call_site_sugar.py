@@ -1629,59 +1629,111 @@ def global_may_change(unit, name: str, value) -> bool:
     return not _immutable(value)
 
 
-def _global_after_call(ctx, name: str, keys):
-    """The module global ``name`` as the last call that may have changed it
-    left it, where that call completed in the caller's frame after the
-    binding the call reads the global through (``keys``) was made, or None
-    where no such call ran after it.
+def _global_after_call(ctx, name: str, keys, unit=None):
+    """The module global ``name`` as the calls that may have changed it left
+    it, where such a call completed in the caller's frame after the binding
+    the call reads the global through (``keys``) was made, or None where no
+    such call ran after it.
 
     A function's own contract binds each global it reads to its free input
     at its entry (``bind_global_inputs``), and nothing rebinds that key when
     a call changes the global's object in place (a same-file callee that
-    stores into it, ``G[0] = 2``).  So a later call of a function that reads
-    the global carried the entry's input, and prove joined that reader on
-    the contents the caller was handed at its entry: ``bump(); return h()``
-    with ``h`` returning ``G[0]`` read ``1`` and refuted the true
-    ``f() == 2`` (#7757 H7).
+    stores into it, ``G[0] = 2``; a callee nothing here answers, handed a
+    function that does; a method of an object that holds it).  So a later
+    call of a function that reads the global carried the entry's input, and
+    prove joined that reader on the contents the caller was handed at its
+    entry: ``bump(); return h()`` with ``h`` returning ``G[0]`` read ``1``
+    and refuted the true ``f() == 2`` (#7757 H7).
 
-    Each same-file call that may change it names the global's formal in its
-    completed record (``CallSiteValue.after_labels``, bound by
-    ``bind_after_call`` on the call's completed face only).  The temporal
-    holds its bindings in the order they were made (``bind_value``: a
-    rebind is the newest), so the newest record that names it, made after
-    the newest binding of its keys, is the call that left the object as
-    this call finds it: ``python:after(<that call's result>,
-    "global:<name>")`` (``source_call_resolution.object_after_call``), the
-    one spelling of an object after a call, decided at prove where that
-    callee's contract states it and free anywhere else -- never contents
-    the object may no longer hold.  It is the object the binding holds, in
-    another state: it keeps that binding's input coordinate, so the alias
-    rule (``object_identity._objects``) still finds it one object with an
-    actual read of the same global."""
+    Each call that may change it names the global's formal in its completed
+    record (``bind_after_call`` on the call's completed face only): a
+    same-file call the globals its contract reads
+    (``CallSiteValue.after_labels``), and every module global
+    (``EVERY_GLOBAL_SLOT``) where it may reach any -- a call no contract
+    here states, or a same-file call handed an object that may be or hold
+    one (``lambda_callable._after_labels``).  A record that reaches every
+    global reaches this one only where its object may change at all
+    (``global_may_change`` of the binding's value): an ``int`` global is the
+    same object after any call.
+
+    The temporal holds its bindings in the order they were made
+    (``bind_value``: a rebind is the newest), so the newest record that
+    names it, made after the newest binding of its keys, is the call that
+    left the object as this call finds it: ``python:after(<that call's
+    result>, "global:<name>")`` (``source_call_resolution.
+    object_after_call``), the one spelling of an object after a call,
+    decided at prove where that callee's contract states it and free
+    anywhere else -- never contents the object may no longer hold.  A record
+    that stands only where its ``guard`` holds (the call ran in one arm of
+    an ``if``, ``if_sugar._arm_evaluations``) is that state under its guard
+    and, under the complement, the state the records before it (or the
+    binding itself) left: the join of the arms (``GuardedValue``), never
+    one arm's state on the other's path.  Each state is the object the
+    binding holds, in another state: it keeps that binding's input
+    coordinate, so the alias rule (``object_identity._objects``) still
+    finds it one object with an actual read of the same global."""
     temporal = getattr(ctx, "temporal", None)
     if temporal is None or not keys:
         return None
     from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.source_call_resolution import object_after_call
 
     slot = ("global", name)
     keys = frozenset(keys)
-    after = None
+    # Every record that may name the global, newest first, up to the
+    # newest binding of its keys.
+    reached = []
+    entry = None
     for binding in reversed(temporal.bindings):
         if binding.name in keys:
-            if after is None:
-                return None
-            held = bound_value_read(binding.value)
-            return SymbolicValue(
-                after, formal_coordinate=getattr(held, "formal_coordinate", None)
-            )
+            entry = binding
+            break
         value = binding.value
-        if after is None and isinstance(value, AfterCallRecordValue):
+        if isinstance(value, AfterCallRecordValue):
             formal = value.formal_of(slot)
             if formal is not None:
-                after = object_after_call(value.result, formal)
-    return None
+                reached.append((value, formal))
+    if entry is None or not reached:
+        return None
+    # Read only where a record follows it: a module-final binding asks for
+    # the module's run (``bound_value_read``), which no read here demands
+    # where nothing changed the global.
+    held = bound_value_read(entry.value)
+    may_change = None
+    states = []
+    for record, formal in reached:
+        if not record.names(slot):
+            # It reaches every global: this one only where a call may change
+            # the object it holds.
+            if may_change is None:
+                may_change = unit is None or global_may_change(unit, name, held)
+            if not may_change:
+                continue
+        states.append((record, formal))
+        if record.guard is None:
+            # The state on every path: nothing older is read.
+            break
+    if not states:
+        return None
+    coordinate = getattr(held, "formal_coordinate", None)
+    oldest, _formal = states[-1]
+    if oldest.guard is not None and held is None:
+        # Some path keeps the binding's own value, and it reads no one value:
+        # no join of the arms stands, and the call carries the undecided
+        # global (``global_value_at_call``).
+        return None
+    state = held
+    for record, formal in reversed(states):
+        after = SymbolicValue(
+            object_after_call(record.result, formal), formal_coordinate=coordinate
+        )
+        if record.guard is None:
+            state = after
+        else:
+            state = GuardedValue(record.guard, after, state)
+    return state
 
 
 def _keys_on_the_arm_the_run_took(unit, name: str) -> tuple:
@@ -1801,7 +1853,7 @@ def global_read_at_call(callee, name: str, ctx, *, module_site, call_site):
     # A call that ran after the binding and may have changed the global's
     # object left it in another state: the reader is handed that state,
     # never the binding's contents (``_global_after_call``, #7757 H7).
-    after = _global_after_call(ctx, name, keys)
+    after = _global_after_call(ctx, name, keys, unit)
     if after is not None:
         return after
     values = []
