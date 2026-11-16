@@ -1,123 +1,19 @@
-"""Receiver-owned shadow state for inherited ``dict.pop``."""
+"""Receiver-owned shadow state read by a ``dict`` subclass's inherited
+``get`` and ``items``.
 
-from dataclasses import dataclass, field
+The inherited ``dict.pop`` this file also pinned is deleted (#7757 H3):
+``self.pop(k, d)`` is the dispatched member, decided at prove
+(``test_dict_subclass_pop_dispatched_twins_7757``).
+"""
 
 from sugar_lift_py_tests.floor import (
     MappingObjectValue,
-    ObjectField,
     StringValue,
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.sugar.mapping_pop_state_sugar import MappingPopStateSugar
-from sugar_lift_py_tests.sugar.mapping_pop_result_sugar import MappingPopResultSugar
-from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 from frame_fresh import FRAME_FRESH
-
-
-@dataclass(frozen=True)
-class _FloorSugar(ConstructedTermSugar):
-    value: object
-    evaluations: list[str] = field(compare=False)
-    label: str
-    site: object = field(default="test", compare=False)
-
-    @classmethod
-    def witnesses(cls):
-        return ()
-
-    def desugar(self, ctx=None):
-        del ctx
-        self.evaluations.append(self.label)
-        return ExitSet.completed(self.value)
-
-    def to_term(self, *, owner):
-        return self.value.to_term(owner=owner)
-
-
-def _pop(receiver, key):
-    order = []
-    outcome = MappingPopStateSugar(
-        receiver=_FloorSugar(receiver, order, "receiver"),
-        key=_FloorSugar(key, order, "key"),
-        default=_FloorSugar(TermValue(None), order, "default"),
-        site="pop-site",
-    ).desugar(None)
-    assert outcome.completed_value() is not None
-    assert order == ["receiver", "key", "default"]
-    return outcome.completed_value()
-
-
-def _pop_result(receiver, key, default):
-    outcome = MappingPopResultSugar(
-        receiver=_FloorSugar(receiver, [], "receiver"),
-        key=_FloorSugar(key, [], "key"),
-        default=_FloorSugar(default, [], "default"),
-        site="pop-site",
-    ).desugar(None)
-    assert outcome.completed_value() is not None
-    return outcome.completed_value()
-
-
-def test_present_key_is_removed_without_replacing_receiver_identity() -> None:
-    receiver = MappingObjectValue(
-        "DerivedDict",
-        (ObjectField("source_field", TermValue(7)),),
-        identity="receiver-coordinate",
-        allocation=FRAME_FRESH,
-        entries=(
-            (StringValue("remove"), TermValue(1)),
-            (StringValue("keep"), TermValue(2)),
-        ),
-    )
-
-    updated = _pop(receiver, StringValue("remove"))
-
-    assert isinstance(updated, MappingObjectValue)
-    assert updated.identity == receiver.identity
-    assert updated.fields == receiver.fields
-    assert updated.entries == ((StringValue("keep"), TermValue(2)),)
-
-
-def test_absent_key_with_default_preserves_exact_receiver() -> None:
-    receiver = MappingObjectValue(
-        "DerivedDict",
-        (),
-        identity="receiver-coordinate",
-        allocation=FRAME_FRESH,
-        entries=((StringValue("keep"), TermValue(2)),),
-    )
-
-    assert _pop(receiver, StringValue("missing")) is receiver
-
-
-def test_pop_result_is_the_removed_value_not_the_receiver_state() -> None:
-    receiver = MappingObjectValue(
-        "DerivedDict",
-        (),
-        identity="receiver-coordinate",
-        allocation=FRAME_FRESH,
-        entries=((StringValue("present"), TermValue(2)),),
-    )
-
-    assert _pop_result(receiver, StringValue("present"), TermValue(9)) == TermValue(2)
-    assert _pop_result(receiver, StringValue("missing"), TermValue(9)) == TermValue(9)
-
-
-def test_same_spelling_wrong_key_does_not_remove_an_entry() -> None:
-    receiver = MappingObjectValue(
-        "DerivedDict",
-        (),
-        identity="receiver-coordinate",
-        allocation=FRAME_FRESH,
-        entries=((StringValue("remove"), TermValue(1)),),
-    )
-
-    updated = _pop(receiver, StringValue("other"))
-
-    assert updated.entries == receiver.entries
 
 
 def test_inherited_get_projects_present_and_default_values() -> None:

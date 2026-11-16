@@ -753,20 +753,11 @@ class PathContainerCallSugar(ConstructedTermSugar):
                         *operands,
                     )
                 )
-            if _inherited_mapping_pop(receiver, self.method, len(self.args)):
-                # ``d.pop(k, default)`` on an instance of a source ``dict``
-                # subclass that does not define ``pop``: the inherited
-                # ``dict.pop`` over its constructed entries.
-                return reduce_operands(
-                    self.args, ctx, earlier=(receiver,)
-                ).and_then(
-                    lambda operands: consume_operands(
-                        lambda pop_key, default: _mapping_pop_pair(
-                            receiver, pop_key, default, self.site
-                        ),
-                        *operands,
-                    )
-                )
+            # A source instance's method -- ``self.pop(k, d)`` on a ``dict``
+            # subclass among them -- is the ordinary call: the dispatched
+            # member prove's one walk decides (#7757), never a ``dict`` method
+            # the lift answers from the instance's base storage.
+            #
             # The value decides what the ordinary call did to it
             # (``_may_change``): a decided container under a method its law
             # does not cite as a mutation (``r.count(x)``), or an immutable
@@ -794,35 +785,6 @@ class PathContainerCallSugar(ConstructedTermSugar):
             return ordinary(held, post, receiver)
 
         return outcome.and_then(on_receiver)
-
-
-def _inherited_mapping_pop(receiver, method, arity) -> bool:
-    """``pop(key, default)`` on a constructed mapping object whose class
-    defines no ``pop`` of its own."""
-    from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
-
-    return (
-        method == "pop"
-        and arity == 2
-        and isinstance(receiver, MappingObjectValue)
-        and not any(
-            getattr(field, "name", None) == "pop"
-            for field in getattr(receiver, "class_fields", ())
-        )
-    )
-
-
-def _mapping_pop_pair(receiver, key, default, site):
-    """``(receiver after, value)`` of the inherited ``dict.pop(key, default)``."""
-    from sugar_lift_py_tests.floor.tuple_value import TupleValue
-    from sugar_lift_py_tests.sugar.mapping_pop_result_sugar import mapping_pop_result
-    from sugar_lift_py_tests.sugar.mapping_pop_state_sugar import mapping_pop_state
-
-    return mapping_pop_state(receiver, key, site).and_then(
-        lambda post: mapping_pop_result(receiver, key, default, site).and_then(
-            lambda result: ExitSet.completed(TupleValue((post, result)))
-        )
-    )
 
 
 def _may_present(value, kind, depth=0) -> bool:
