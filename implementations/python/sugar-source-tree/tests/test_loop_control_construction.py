@@ -1,23 +1,33 @@
+"""``break`` and ``continue`` are halts their owning loop consumes. A loop
+over members in hand runs item by item in the reduction (#7757 new 6,
+#8957): no rewrite unrolls it, so the bounded loops below are read through
+the function's reduced post, never through a rewritten tree.
+
+Each file is opened through the one construction door under a workspace
+root, as the lift opens it: the iteration's own ``StopIteration`` cites a
+workspace-relative locus."""
+
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 
-import pytest
-
-from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.effect import LoopControlEffect
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.outcome import Halted
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.binding_provenance import SubstitutionTraceV1
 
 
 def _function(source: str):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
-        handle.write(source)
-        path = handle.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+    root = Path(tempfile.mkdtemp(prefix="loop-control-"))
+    path = root / "subject.py"
+    path.write_text(source, encoding="utf-8")
+    return next(open_source_file_for_construction(path, root=root).functions())
+
+
+def _returned(source: str):
+    """The value the function's one completed arm returns."""
+    return _function(source).sugar().desugar().completed_value().post().args[1].value
 
 
 def test_break_and_continue_emit_owned_halted_exitset_faces():
@@ -80,75 +90,77 @@ def test_loop_control_coordinate_has_no_identifier_name_gate():
 
 
 def test_bounded_break_unrolls_only_the_visited_prefix_and_skips_else():
-    function = _function(
-        "def arbitrary():\n"
-        "    for renamed in (0, 1, 2, 3):\n"
-        "        if renamed == 2:\n"
-        "            break\n"
-        "        seen = renamed\n"
-        "    else:\n"
-        "        seen = 99\n"
-        "    return seen\n"
-    ).substitute({})
-    assert not any(node.kind in {"For", "Break"} for node in function.walk())
-    returned = next(node for node in function.walk() if node.kind == "Return")
-    assert returned.value.kind == "Constant"
-    assert returned.value.value == 1
+    # Items 0 and 1 run, item 2 breaks before its ``seen``; the else never
+    # runs. Python returns 1.
+    assert (
+        _returned(
+            "def arbitrary():\n"
+            "    for renamed in (0, 1, 2, 3):\n"
+            "        if renamed == 2:\n"
+            "            break\n"
+            "        seen = renamed\n"
+            "    else:\n"
+            "        seen = 99\n"
+            "    return seen\n"
+        )
+        == 1
+    )
 
 
 def test_bounded_continue_routes_to_next_iteration_and_omits_tail():
-    function = _function(
-        "def arbitrary():\n"
-        "    kept = -1\n"
-        "    for renamed in (0, 1, 2):\n"
-        "        if renamed == 1:\n"
-        "            continue\n"
-        "        kept = renamed\n"
-        "    return kept\n"
-    ).substitute({})
-    assert not any(node.kind in {"For", "Continue"} for node in function.walk())
-    returned = next(node for node in function.walk() if node.kind == "Return")
-    assert returned.value.kind == "Constant"
-    assert returned.value.value == 2
+    # Item 1 continues past ``kept = renamed``; item 2 runs it. Python
+    # returns 2.
+    assert (
+        _returned(
+            "def arbitrary():\n"
+            "    kept = -1\n"
+            "    for renamed in (0, 1, 2):\n"
+            "        if renamed == 1:\n"
+            "            continue\n"
+            "        kept = renamed\n"
+            "    return kept\n"
+        )
+        == 2
+    )
 
 
 def test_bounded_exhaustion_runs_else_and_exports_final_target_binding():
-    function = _function(
-        "def arbitrary():\n"
-        "    marker = -1\n"
-        "    for renamed in (4, 5):\n"
-        "        marker = renamed\n"
-        "    else:\n"
-        "        marker = renamed + 1\n"
-        "    return marker\n"
-    ).substitute({})
-    returned = next(node for node in function.walk() if node.kind == "Return")
-    assert returned.value.kind == "BinOp"
-    assert returned.value.left.value == 5
-    assert returned.value.right.value == 1
+    # The else runs after the last item and reads the target's last value:
+    # ``marker = 5 + 1``.
+    assert (
+        _returned(
+            "def arbitrary():\n"
+            "    marker = -1\n"
+            "    for renamed in (4, 5):\n"
+            "        marker = renamed\n"
+            "    else:\n"
+            "        marker = renamed + 1\n"
+            "    return marker\n"
+        )
+        == 6
+    )
 
 
 def test_bounded_while_break_skips_else_with_exact_post_state():
-    source = (
-        "def arbitrary():\n"
-        "    item = 0\n"
-        "    while item < 4:\n"
-        "        item = item + 1\n"
-        "        if item == 2:\n"
-        "            break\n"
-        "    else:\n"
-        "        item = 99\n"
-        "    return item\n"
+    assert (
+        _returned(
+            "def arbitrary():\n"
+            "    item = 0\n"
+            "    while item < 4:\n"
+            "        item = item + 1\n"
+            "        if item == 2:\n"
+            "            break\n"
+            "    else:\n"
+            "        item = 99\n"
+            "    return item\n"
+        )
+        == 2
     )
-    substituted = _function(source).substitute({})
-    assert not any(node.kind in {"While", "Break"} for node in substituted.walk())
-    post = _function(source).sugar().desugar().completed_value().post()
-    assert post.args[1].value == 2
 
 
 def test_bounded_while_continue_routes_to_test_backedge():
-    post = (
-        _function(
+    assert (
+        _returned(
             "def arbitrary():\n"
             "    item = 0\n"
             "    kept = 0\n"
@@ -159,11 +171,8 @@ def test_bounded_while_continue_routes_to_test_backedge():
             "        kept = kept + item\n"
             "    return kept\n"
         )
-        .sugar()
-        .desugar()
-        .value.post()
+        == 4
     )
-    assert post.args[1].value == 4
 
 
 def test_symbolic_break_never_fabricates_a_whole_iterable_universal():
@@ -180,8 +189,8 @@ def test_symbolic_break_never_fabricates_a_whole_iterable_universal():
 
 
 def test_nested_break_is_consumed_only_by_the_inner_bounded_loop():
-    post = (
-        _function(
+    assert (
+        _returned(
             "def arbitrary():\n"
             "    count = 0\n"
             "    for outer in (0, 1):\n"
@@ -190,16 +199,13 @@ def test_nested_break_is_consumed_only_by_the_inner_bounded_loop():
             "        count = count + 1\n"
             "    return count\n"
         )
-        .sugar()
-        .desugar()
-        .value.post()
+        == 2
     )
-    assert post.args[1].value == 2
 
 
 def test_nested_continue_is_consumed_only_by_the_inner_bounded_loop():
-    post = (
-        _function(
+    assert (
+        _returned(
             "def arbitrary():\n"
             "    count = 0\n"
             "    for outer in (0, 1):\n"
@@ -210,20 +216,16 @@ def test_nested_continue_is_consumed_only_by_the_inner_bounded_loop():
             "        count = count + 10\n"
             "    return count\n"
         )
-        .sugar()
-        .desugar()
-        .value.post()
+        == 22
     )
-    assert post.args[1].value == 22
 
 
 def test_loop_else_preserves_a_carried_name_it_never_rebinds():
     # A name carried through the loop (rebound in the body) that the else clause
-    # does NOT touch keeps its loop-exhaustion value. The else-net holds only
-    # names the else REBOUND, so it must fall back to the exhaustion state, not
-    # KeyError (regression: pandas io/html, io/excel/_xlsxwriter, _version).
-    post = (
-        _function(
+    # does NOT touch keeps its loop-exhaustion value (regression: pandas
+    # io/html, io/excel/_xlsxwriter, _version).
+    assert (
+        _returned(
             "def arbitrary():\n"
             "    total = 0\n"
             "    for i in (1, 2):\n"
@@ -232,8 +234,5 @@ def test_loop_else_preserves_a_carried_name_it_never_rebinds():
             "        seen = True\n"
             "    return total\n"
         )
-        .sugar()
-        .desugar()
-        .value.post()
+        == 3
     )
-    assert post.args[1].value == 3

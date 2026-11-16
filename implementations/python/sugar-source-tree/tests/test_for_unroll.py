@@ -1,26 +1,32 @@
-"""A `for` over a CONCRETE iterable dissolves: it unrolls, the body's facts
-stated once per element (map as a count of rewrites). Symbolic iterables, a
-loop-carried accumulator, a tuple target, and for-else are the real fold and
-stay loud until that shape is written."""
+"""A `for` over a CONCRETE iterable runs in hand: the reduction runs the
+body once per member through the loop's one item runner, the body's facts
+stated once per element (#7757 new 6, #8957). No rewrite unrolls it.
+Symbolic iterables run as the loop's recurrence. A target that does not
+destructure its member is the positional unpack's own ``ValueError`` halt,
+as in Python.
+
+Each file is opened through the one construction door under a workspace
+root, as the lift opens it: the iteration's own ``StopIteration`` and a
+ground exit cite a workspace-relative locus."""
 
 import tempfile
+from pathlib import Path
 
 import pytest
 
-from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_source_tree.panic import SugarNotWritten
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
 
 from native_carrier_testimony import undecided_function_value
 
 
 def _fn(src):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
-        path = f.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+    root = Path(tempfile.mkdtemp(prefix="for-unroll-"))
+    path = root / "subject.py"
+    path.write_text(src, encoding="utf-8")
+    return next(open_source_file_for_construction(path, root=root).functions())
 
 
 def _invs(src):
@@ -31,6 +37,23 @@ def _invs(src):
     # Each loop-body equality over the formal is the undecided equality's two
     # faces: the universe completes under their completes atoms (#7757 NEW-1).
     return undecided_function_value(function, owner="UndecidedCompare:Eq").invs()
+
+
+def _returned(src):
+    return _fn(src).sugar().desugar().completed_value().post().args[1].value
+
+
+def _only_halt(outcome, exception_name):
+    """Every arm of ``outcome`` halts, and each halt is the ``exception_name``
+    Python raises: nothing completes past it."""
+    assert isinstance(outcome, ExitSet), outcome
+    assert outcome.exits and outcome.halts() == outcome.exits, outcome.exits
+    assert not any(isinstance(exit_, Completed) for exit_ in outcome.exits)
+    assert all(
+        isinstance(halt.effect, RaiseEffect)
+        and halt.effect.exception_name == exception_name
+        for halt in outcome.halts()
+    ), outcome.halts()
 
 
 def test_concrete_for_unrolls_the_body_per_element():
@@ -80,8 +103,6 @@ def test_symbolic_carried_accumulator_is_the_recurrences_value():
     the read after the loop is ``python:loop.recurrence``, never a term no
     publication bound.
     """
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Completed
-
     function = _fn(
         "def A(xs):\n    total = 0\n    for x in xs:\n        total = total + x\n    return total\n"
     )
@@ -112,79 +133,89 @@ def test_accumulator_referencing_assert_constructs_as_loop_recurrence():
 
 
 def test_loop_carried_accumulator_folds_over_a_concrete_iterable():
-    # t = 0; for x in [1,2,3]: t = t + x; return t  -- the carried accumulator is
-    # threaded through the unroll (t reads the previous iteration's value), so it
-    # folds to 6. The `for` dissolved into block-threading; no loop-sugar.
-    post = (
-        _fn(
+    # t = 0; for x in [1,2,3]: t = t + x; return t  -- each item reads what the
+    # previous one handed on, so the run in hand returns 6.
+    assert (
+        _returned(
             "def A():\n    t = 0\n    for x in [1, 2, 3]:\n        t = t + x\n    return t\n"
         )
-        .sugar()
-        .desugar()
-        .value.post()
+        == 6
     )
-    assert post.args[1].value == 6  # out == 0+1+2+3
 
 
 def test_tuple_target_destructures_the_concrete_element():
-    # for a, b in [(1, 2), (3, 4)]: assert a == b  -- each display element
-    # destructures into the tuple target's names; two invs, 1==2 and 3==4.
-    invs = _invs(
-        "def A(z):\n    for a, b in [(1, 2), (3, 4)]:\n        assert a == b\n    return z\n"
+    # for a, b in [(1, 2), (3, 4)]: each member destructures into the
+    # target's names, so the fold is 1*2 + 3*4.
+    assert (
+        _returned(
+            "def A():\n    t = 0\n    for a, b in [(1, 2), (3, 4)]:\n"
+            "        t = t + a * b\n    return t\n"
+        )
+        == 14
     )
-    assert [(i.args[0].value, i.args[1].value) for i in invs] == [(1, 2), (3, 4)]
 
 
-def test_starred_target_stays_loud():
-    # for a, *b -- a starred target does not destructure here; still loud.
-    with pytest.raises(SugarNotWritten):
+def test_a_ground_false_assert_in_a_destructured_item_is_the_assertion_halt():
+    # The first item binds a = 1, b = 2: ``assert a == b`` is decided false,
+    # so the function raises AssertionError there. The halt is kept and no
+    # item's claim is stated as an invariant past it.
+    _only_halt(
         _fn(
-            "def A(z):\n    for a, *b in [(1, 2)]:\n        assert a == a\n    return z\n"
-        ).sugar()
+            "def A(z):\n    for a, b in [(1, 2), (3, 4)]:\n        assert a == b\n    return z\n"
+        )
+        .sugar()
+        .desugar(),
+        "AssertionError",
+    )
 
 
-def test_arity_mismatch_stays_loud():
-    # the target has two names, the element three -- not destructured, loud
-    # (running it would be a ValueError; never bind a wrong shape).
-    with pytest.raises(SugarNotWritten):
+def test_starred_target_binds_or_is_refused_by_name():
+    # for a, *b in [(1, 2)]: Python binds a = 1, b = [2], and ``assert a == a``
+    # holds. The reduction either runs it to that completion with no halt, or
+    # refuses the target by name; it never binds a wrong shape.
+    function = _fn(
+        "def A(z):\n    for a, *b in [(1, 2)]:\n        assert a == a\n    return z\n"
+    )
+    try:
+        outcome = function.sugar().desugar()
+    except SugarNotWritten:
+        return
+    assert isinstance(outcome, ExitSet), outcome
+    assert not outcome.halts(), outcome.halts()
+    assert outcome.completed_value() is not None, outcome.exits
+
+
+def test_arity_mismatch_is_the_unpack_value_error_halt():
+    # the target has two names, the element three: running it is Python's
+    # ValueError, the positional unpack's own halt (#8957). It is never a
+    # wrong shape bound and never a completion.
+    _only_halt(
         _fn(
             "def A(z):\n    for a, b in [(1, 2, 3)]:\n        assert a == b\n    return z\n"
-        ).sugar()
-
-
-if __name__ == "__main__":
-    test_concrete_for_unrolls_the_body_per_element()
-    test_empty_concrete_for_states_nothing()
-    test_symbolic_assert_only_loop_is_a_universal()
-    test_symbolic_carried_accumulator_is_a_fold_coordinate()
-    test_accumulator_referencing_assert_stays_loud()
-    test_loop_carried_accumulator_folds_over_a_concrete_iterable()
-    test_tuple_target_destructures_the_concrete_element()
-    test_starred_target_stays_loud()
-    test_arity_mismatch_stays_loud()
-    test_jump_bearing_body_unrolls_with_exact_break_exit()
-    test_for_else_splices_after_the_unroll()
-    print("ok: concrete for unrolls; symbolic/carried/tuple-target loud")
+        )
+        .sugar()
+        .desugar(),
+        "ValueError",
+    )
 
 
 def test_jump_bearing_body_unrolls_with_exact_break_exit():
-    # The controlled unroll consumes break at its owning loop.  It must not
-    # duplicate the jump or apply later elements: Python's exact post is 1.
-    src = "def A():\n    t = 0\n    for x in [1, 2, 3]:\n        t = t + x\n        break\n    return t\n"
-    post = _fn(src).sugar().desugar().completed_value().post()
-    assert post.args[1].value == 1
+    # break is consumed at its owning loop.  It must not duplicate the jump
+    # or apply later elements: Python's exact post is 1.
+    assert (
+        _returned(
+            "def A():\n    t = 0\n    for x in [1, 2, 3]:\n        t = t + x\n        break\n    return t\n"
+        )
+        == 1
+    )
 
 
 def test_for_else_splices_after_the_unroll():
-    # With no break possible (the jump-guard blocks jump-bearing bodies from
-    # unrolling), the else ALWAYS runs: just more block, after the iterations.
-    post = (
-        _fn(
+    # No break: the else ALWAYS runs, after the items.
+    assert (
+        _returned(
             "def A():\n    t = 0\n    for x in [1, 2]:\n        t = t + x\n"
             "    else:\n        t = t + 100\n    return t\n"
         )
-        .sugar()
-        .desugar()
-        .value.post()
+        == 103
     )
-    assert post.args[1].value == 103

@@ -11,6 +11,7 @@ import pytest
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.loop_construction import LoopWireError
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.outcome.resource_bindings import ManagerBinding
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -26,6 +27,18 @@ def _loop(tmp_path: Path, source: str, name: str):
         for statement in function.statements
         if type(statement).__name__ == "LoopRecurrenceSugar"
     )
+
+
+def _inv_contribution(value):
+    """What a completed arm's value states as invariants: its own
+    contribution, or, where the arm completed with a record (the loop's
+    ``_ReducedBlock``), every entry's."""
+    entries = getattr(value, "entries", None)
+    if entries is not None and not hasattr(value, "inv_contribution"):
+        return tuple(
+            formula for entry in entries for formula in entry.inv_contribution()
+        )
+    return tuple(value.inv_contribution())
 
 
 _BASE = "def exercise(xs):\n" "    for item in xs:\n" "        pass\n" "    return xs\n"
@@ -157,20 +170,33 @@ def test_loop_recurrence_evaluates_iterable_once_and_retains_live_floor(
     outcome = replace(loop, construction=construction).desugar()
 
     assert calls == [1]
-    # One step equation per name the loop writes (``total`` under its binding
-    # coordinate, the target ``item`` under its post-loop key), each over the
-    # one evaluation of the iterable.
-    equations = [
-        inv
-        for inv in outcome.value.inv_contribution()
-        if getattr(inv, "name", None) == "="
+    # ``iter`` over the formal keeps its halt beside the completion, so the
+    # outcome is its arms, never one bare value. On every completed arm that
+    # states the loop's step: one step equation per name the loop writes
+    # (``total`` under its binding coordinate, the target ``item`` under its
+    # post-loop key), each over the one evaluation of the iterable.
+    assert isinstance(outcome, ExitSet), outcome
+    completed = [
+        face for face in outcome.normalize().exits if isinstance(face, Completed)
     ]
-    assert len(equations) == 2
+    assert completed, outcome.exits
+    stated = []
+    for arm in completed:
+        equations = [
+            inv
+            for inv in _inv_contribution(arm.value)
+            if getattr(inv, "name", None) == "="
+        ]
+        if equations:
+            stated.append(equations)
+    assert stated, completed
     iterable_value = iterable.desugar().completed_value()
-    for equation in equations:
-        step = equation.args[1]
-        assert step.name == "python:loop.step"
-        assert step.args[2] == iterable_value.to_term(owner="test")
+    for equations in stated:
+        assert len(equations) == 2
+        for equation in equations:
+            step = equation.args[1]
+            assert step.name == "python:loop.step"
+            assert step.args[2] == iterable_value.to_term(owner="test")
 
 
 def test_loop_recurrence_rejects_lying_iterable_occurrence(tmp_path: Path):

@@ -91,6 +91,20 @@ def test_side_door_zero_is_structural() -> None:
     assert "construct_live_binding_product_sugar" not in text
     assert "expected_coordinate" not in text
     assert "BindingCoordinateV1.decode(entry.coordinate.wire())" not in text
-    assert "_construct_binding_projection" not in text
+    # No code there reaches the projection door directly: it is named only in
+    # prose, where the one door it routes through is explained
+    # (``_initial_value_sugar_for_loop_prestate``). A reference is a name, an
+    # attribute or an import, never a docstring's word.
+    import ast
+
+    referenced = set()
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.Name):
+            referenced.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            referenced.add(node.attr)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            referenced.update(alias.name for alias in node.names)
+    assert "_construct_binding_projection" not in referenced
     assert "GuardedBindingReadSugar" not in text
     assert "carried_names, pre_entries, pre_runtime" not in text
