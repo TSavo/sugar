@@ -1203,21 +1203,33 @@ class FunctionUniverseSugar(Sugar):
             item.coordinate for item in self.inputs
         )
 
+        from sugar_lift_py_tests.sugar.assert_sugar import (
+            halts_where_its_asserts_fail,
+        )
+
         def universe(state):
             # Each completed arm's record, and what it left in each cell the
             # body rebinds, read in the context it left (#7757 step 7).
-            return ExitSet.completed(
-                UniverseValue(
-                    name=self.name,
-                    formals=formals,
-                    record=block_record(state),
-                    bridge_source_symbol=self.bridge_source_symbol,
-                    formal_coordinates=formal_coordinates,
-                    after=self._after(state),
-                    fields=self._fields(state),
-                    plain_stores=self.plain_stores,
-                    fields_guard=self._fields_guard(state),
-                )
+            # Beneath each ``assert`` the arm stated: the function halts
+            # with ``AssertionError`` where its test fails, a halt of this
+            # function a caller reads at the call (its panic locus), and the
+            # arm completes where it holds (``halts_where_its_asserts_fail``).
+            record = block_record(state)
+            return halts_where_its_asserts_fail(
+                record,
+                ExitSet.completed(
+                    UniverseValue(
+                        name=self.name,
+                        formals=formals,
+                        record=record,
+                        bridge_source_symbol=self.bridge_source_symbol,
+                        formal_coordinates=formal_coordinates,
+                        after=self._after(state),
+                        fields=self._fields(state),
+                        plain_stores=self.plain_stores,
+                        fields_guard=self._fields_guard(state),
+                    )
+                ),
             )
 
         return reduce_block_to_exitset(self.statements, ctx).and_then(universe)

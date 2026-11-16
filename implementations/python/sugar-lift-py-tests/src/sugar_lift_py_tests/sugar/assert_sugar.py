@@ -8,6 +8,67 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
+def halts_where_its_asserts_fail(block, outcome) -> ExitSet:
+    """``outcome`` (what one completed face of a function body goes on to)
+    beneath each ``assert`` that face stated, as Python runs it: an
+    ``assert`` whose test is false raises ``AssertionError`` there, so the
+    body never reaches ``outcome`` (#7757: a halt is never dropped).
+
+    THE rule for "an ``assert`` is a halt", one for every body: a function's
+    own universe (``FunctionUniverseSugar.desugar``, each completed arm's
+    record) and the class call that runs ``__init__`` in place
+    (``ClassConstructorBodySugar.desugar``, each completed initializer
+    face's record).  A symbolic ``assert`` states its test as a fact
+    (``InvValue``, ``AssertSugar``) and has no failing arm where it stands;
+    the fact stays the claim of the function whose body it is.  Left there
+    alone, the fact was the callee's ``inv``, which no caller reads: prove
+    joins a call to the callee's ``post`` and its ``panicLoci`` only, so
+    ``f(-1)`` over ``assert n > 0`` completed at prove.  Each fact, in the
+    order the face stated them, is the split ``if not <test>: raise
+    AssertionError`` is: the body halts with ``AssertionError`` at the
+    ``assert`` (``ground_assertion_error``, the exit a test stated False
+    takes) under the fact's complement, and goes on under the fact to the
+    next one, then to ``outcome``.  Each halt is a halted arm of the body's
+    one reduction, so its contract states it as a panic locus
+    (``tree_enumerate.halt_locus``) whose raised type is ``AssertionError``
+    (a caller's ``except AssertionError`` takes it), and the completed arm
+    holds the fact as before: the assertion row is still the function's
+    claim (``exit_arms_payload_rows``).
+
+    Only an ``assert`` statement's fact is one: the fact is sited at the
+    ``assert`` (``AssertSugar.site``), as ``tree_enumerate.
+    halted_assertion_sites`` reads it.  Any other fact a record holds (a
+    loop's recurrence, a resource binding) states what a value is, never a
+    test that can fail.  A test the reduction decided true states the fact
+    ``true``: it cannot fail, so it is no split."""
+    from sugar_lift_py_tests.floor.ground_assertion_error import (
+        ground_assertion_error,
+    )
+    from sugar_lift_py_tests.floor.inv_value import InvValue
+    from sugar_lift_py_tests.outcome.exit_set import (
+        _is_true,
+        complement_guard,
+        partition,
+    )
+    from sugar_source_tree.nodes import Assert
+
+    facts = tuple(
+        statement
+        for statement in block.statements
+        if isinstance(statement, InvValue)
+        and isinstance(getattr(statement.site, "node", None), Assert)
+        and not _is_true(statement.formula)
+    )
+    for fact in reversed(facts):
+        fails, holds = partition(("AssertSugar.fails", fact.site, fact.formula))
+        outcome = (
+            ground_assertion_error(site=fact.site)
+            .guarded(complement_guard(fact.formula), fails)
+            .union(outcome.guarded(fact.formula, holds))
+        )
+    return outcome
+
+
 @dataclass(frozen=True)
 class AssertSugar(Sugar):
     """`assert <test>[, <message>]`. It desugars the test, and the
@@ -29,7 +90,9 @@ class AssertSugar(Sugar):
     halt's record (``_stated``), a halt of its own in place of the
     ``AssertionError``. The lift never invents a conditional py.* effect
     gated on ¬test: a symbolic test states its inv and has no failing arm
-    here, and the success path never evaluates the message.
+    here, and the success path never evaluates the message. The body whose
+    record holds the fact halts where it fails
+    (``halts_where_its_asserts_fail``).
     Spelling rides `assertMessage` provenance on the source memento.
     """
 

@@ -31,7 +31,7 @@ def halted_assertion_sites(halted_arms, definition) -> tuple:
     contract (``own_assertion_sites``); ``None`` owns none.  A class's
     contract is the construction (``class_contract_rows``): an ``assert`` in
     its ``__init__`` that fails is a halt of the call, stated as a panic
-    locus (``class_constructor_body_sugar.halts_where_its_asserts_fail``),
+    locus (``assert_sugar.halts_where_its_asserts_fail``),
     and its claim is ``__init__``'s own row's.  Stated as the class's, the
     claim held on no completed arm of the construction (the object, never
     ``__init__``'s record) and read ``false``: the class row was refuted

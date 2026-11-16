@@ -2,13 +2,14 @@
 is never dropped).
 
 A symbolic ``assert`` states its test as a fact: the claim of the function
-whose body it is, with no failing arm in that function's reduction
-(``AssertSugar``).  A class call returns the object, never ``__init__``'s
+whose body it is, with no failing arm where it stands (``AssertSugar``).
+A class call returns the object, never ``__init__``'s
 claims, so the fact left in the initializer's record was dropped from the
 class's contract: no panic locus stated the ``AssertionError``, and prove's
 completion fact read ``C(-1)`` as completing over ``assert n > 0``.  Each
 ``assert`` fact of a completed initializer face is now the split it is
-(``class_constructor_body_sugar.halts_where_its_asserts_fail``): the
+(``assert_sugar.halts_where_its_asserts_fail``, the one rule every
+function's own universe applies too): the
 construction halts with ``AssertionError`` at the ``assert`` under the
 fact's complement, a halted arm the class row states as a panic locus like
 every other ``__init__`` raise.
