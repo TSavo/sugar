@@ -166,6 +166,28 @@ def test_a_global_a_called_function_reads_is_the_caller_s_input(tmp_path):
     assert row.formals == ["global:X"]
 
 
+def test_recursive_same_file_calls_share_one_set_of_global_inputs(tmp_path):
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+    from sugar_source_tree.nodes import _global_input_names
+
+    producer = tmp_path / "producer.py"
+    producer.write_text(
+        "X = 1\nY = 2\nZ = 3\n\n\n"
+        "def f(n):\n    a = X\n    return g(n)\n\n\n"
+        "def g(n):\n    b = Y\n    return f(n)\n\n\n"
+        "def h():\n    c = Z\n    return f(0)\n"
+    )
+    tree = open_source_file_for_construction(producer, root=tmp_path)
+    by_name = {fn.name: fn for fn in tree.functions()}
+
+    # ``f`` and ``g`` call each other: each contract takes what the other's
+    # contract takes, the least answer that holds for both.  ``h`` takes its
+    # own read and what ``f``'s contract takes, read off that contract.
+    assert _global_input_names(by_name["f"]) == frozenset({"X", "Y"})
+    assert _global_input_names(by_name["g"]) == frozenset({"X", "Y"})
+    assert _global_input_names(by_name["h"]) == frozenset({"X", "Y", "Z"})
+
+
 def test_global_inputs_follow_the_defaults_in_name_order(tmp_path):
     row = _rows(
         tmp_path,

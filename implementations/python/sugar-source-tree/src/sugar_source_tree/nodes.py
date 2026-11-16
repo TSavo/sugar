@@ -25348,8 +25348,8 @@ def _contract_inputs(definition) -> tuple:
       binder binds a parameter the call omits to this input;
     - ``global:<name>`` for each module global a call of the function reads
       (``_global_input_names``: one an assignment, a loop or a branch merge
-      binds through a key, read by the body or by a function the call runs
-      in this file), in name order.  The contract's post and claims are
+      binds through a key, read by the body, or a ``global:`` input of the
+      contract of a function of this file the body calls), in name order.  The contract's post and claims are
       stated over the free input (``call_site_sugar.bind_global_inputs``);
       its row states the value the module's one run left for it
       (``call_site_sugar.stated_global_values``), and prove's one binder
@@ -25854,7 +25854,8 @@ def _names_a_call_may_change(definition):
     delete, an augmented assignment, a loop, a ``with``, a comprehension, an
     ``await`` or a formatted value -- code that may run a function this
     file defines, which may change any module global or captured cell the
-    callee's contract reads (``_global_input_names`` follows them).  A
+    callee's contract reads (``_global_input_names`` reads them off that
+    contract).  A
     parameter's object is changed by such code only where an object it
     reaches is, or is held by, one of those inputs, which the alias rule
     asks of them.
@@ -26002,12 +26003,19 @@ def _read_names_a_call_may_change(definition):
 
 def _global_input_names(definition) -> frozenset:
     """The module globals a call of ``definition`` (a ``def``, ``async
-    def`` or lambda) reads that are its contract's ``global:`` inputs: each
-    one its body reads (``_module_globals_read``), and each one read by a
-    function the call may run in this file -- a ``def`` or lambda nested in
-    it, and a source ``def`` it calls by name
-    (``SourceUnit.source_function_definition_for_call``) -- transitively.  A
-    function the call runs reads the global where the call runs, so the
+    def`` or lambda) reads that are its contract's ``global:`` inputs:
+
+    - each one its own body reads (``_own_global_reads``: its own
+      ``_module_globals_read`` and those of each ``def`` or lambda nested in
+      it, which the call may run), and
+    - for each same-file call it makes by name
+      (``SourceUnit.source_function_definition_for_call``), the callee
+      contract's own ``global:`` inputs: this same answer for the callee,
+      read off the callee's contract, never by walking the callee's body
+      (the owner's ruling of 2026-11-15, "Edge, join at prove": what the
+      caller needs from the callee is stated by the callee's contract).
+
+    A function the call runs reads the global where the call runs, so the
     caller supplies it at that call (``py.global``) from its own input; the
     caller's contract takes it so that a caller of the caller can supply it
     in turn, never the module-final value where the module's run had not
@@ -26015,29 +26023,131 @@ def _global_input_names(definition) -> frozenset:
     (``_star_import_globals_read``) is one too: the module's run states no
     value for it, so it is the input with no stated value, as a global the
     run leaves undecided is (#8802).  A definition's name
-    (``SourceUnit.module_definition_names``) is never one."""
+    (``SourceUnit.module_definition_names``) is never one.
+
+    Same-file calls that recurse (``f`` calls ``g``, ``g`` calls ``f``) make
+    the answer its own input.  It is the least answer that holds for every
+    contract of the cycle: each one's own reads together with every
+    contract the cycle calls outside itself (``_close_global_input_names``),
+    the same for each member.  A call of the definition itself adds
+    nothing (its own inputs are already its own).
+
+    Read once per definition (its construction-cache row)."""
+    held = _held_global_input_names(definition)
+    if held is not None:
+        return held
     unit = definition.unit
-    definitions = unit.module_definition_names()
+    if not unit.module_threaded_names() and "*" not in unit._module_name_rows()[0]:
+        # No global any body could read through a key or a star import.
+        _hold_global_input_names(definition, frozenset())
+        return frozenset()
+    _close_global_input_names(definition)
+    return _held_global_input_names(definition)
+
+
+def _held_global_input_names(definition):
+    """``_global_input_names`` of ``definition`` where its construction-cache
+    row holds it; None otherwise."""
+    held = definition._coordinate()[2].get("__global_input_names__")
+    return None if held is None else held[0]
+
+
+def _hold_global_input_names(definition, names: frozenset) -> None:
+    definition._coordinate()[2]["__global_input_names__"] = (names,)
+
+
+def _own_global_reads(definition) -> frozenset:
+    """The module globals ``definition``'s own body reads that may be its
+    contract's ``global:`` inputs: its own (``_module_globals_read``,
+    ``_star_import_globals_read``) and those of each ``def`` or lambda
+    nested in it.  A definition's name is never one."""
     names: set[str] = set()
-    seen: set[int] = set()
-    pending = [definition]
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        names.update(current._module_globals_read())
-        names.update(current._star_import_globals_read())
-        for node in current.walk():
-            if node is current:
+    names.update(definition._module_globals_read())
+    names.update(definition._star_import_globals_read())
+    for node in definition.walk():
+        if node is not definition and isinstance(
+            node, (FunctionDef, AsyncFunctionDef, Lambda)
+        ):
+            names.update(node._module_globals_read())
+            names.update(node._star_import_globals_read())
+    return frozenset(names - definition.unit.module_definition_names())
+
+
+def _same_file_callees(definition) -> tuple:
+    """Each source ``def`` of this file ``definition``'s body calls by name
+    (``SourceUnit.source_function_definition_for_call``), in source order,
+    once each; the definition itself is not one."""
+    unit = definition.unit
+    callees: dict[int, object] = {}
+    for node in definition.walk():
+        if isinstance(node, Call) and isinstance(node.func, Name):
+            callee = unit.source_function_definition_for_call(node)
+            if callee is not None and callee is not definition:
+                callees.setdefault(id(callee), callee)
+    return tuple(callees.values())
+
+
+def _close_global_input_names(root) -> None:
+    """Hold ``_global_input_names`` for ``root`` and for every definition it
+    reaches by same-file calls whose answer is not held yet.
+
+    Each strongly connected group of same-file calls (Tarjan's order, a
+    callee's group closed before its caller's) holds one answer for each of
+    its members: their own reads (``_own_global_reads``) and the held
+    contract inputs of every callee outside the group.  Iterative: a long
+    call chain never deepens the interpreter's stack."""
+    index: dict[int, int] = {}
+    low: dict[int, int] = {}
+    on_stack: set[int] = set()
+    stack: list = []
+    callees_of: dict[int, tuple] = {}
+
+    def enter(node) -> None:
+        index[id(node)] = low[id(node)] = len(index)
+        stack.append(node)
+        on_stack.add(id(node))
+        callees_of[id(node)] = _same_file_callees(node)
+        work.append((node, iter(callees_of[id(node)])))
+
+    work: list = []
+    enter(root)
+    while work:
+        node, pending = work[-1]
+        entered = False
+        for callee in pending:
+            if id(callee) in on_stack:
+                low[id(node)] = min(low[id(node)], index[id(callee)])
+            elif id(callee) in index or _held_global_input_names(callee) is not None:
                 continue
-            if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
-                pending.append(node)
-            elif isinstance(node, Call) and isinstance(node.func, Name):
-                callee = unit.source_function_definition_for_call(node)
-                if callee is not None:
-                    pending.append(callee)
-    return frozenset(names - definitions)
+            else:
+                enter(callee)
+                entered = True
+                break
+        if entered:
+            continue
+        work.pop()
+        if work:
+            parent = work[-1][0]
+            low[id(parent)] = min(low[id(parent)], low[id(node)])
+        if low[id(node)] != index[id(node)]:
+            continue
+        members = []
+        while True:
+            member = stack.pop()
+            on_stack.discard(id(member))
+            members.append(member)
+            if member is node:
+                break
+        inside = {id(member) for member in members}
+        names: set[str] = set()
+        for member in members:
+            names.update(_own_global_reads(member))
+            for callee in callees_of[id(member)]:
+                if id(callee) not in inside:
+                    names.update(_held_global_input_names(callee))
+        answer = frozenset(names)
+        for member in members:
+            _hold_global_input_names(member, answer)
 
 
 def _default_value_sugar(definition, index: int):
