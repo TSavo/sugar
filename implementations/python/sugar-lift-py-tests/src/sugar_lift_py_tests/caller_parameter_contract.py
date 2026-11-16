@@ -850,6 +850,15 @@ class NativeOperationExitCarrierV1:
     # (``python:plain_store``, decided at prove on the class the caller
     # binds), it completes (#7757 step 7, ``_unanswered_exits``).
     plain_store_input: str | None = None
+    # The occurrence path the operation was evaluated under where it was
+    # minted (``occurrence.current_path``): an item of a live loop, an
+    # unrolled iteration, a callee frame.  The operation's own exits are
+    # keyed under it when the carrier discharges (``discharge``), as the work
+    # enrolled on it runs under it (``_at_its_occurrence``): each evaluation
+    # of the site is its own operation, never one term for all of them.
+    # None for a carrier built without ``mint``: its exits are keyed where
+    # it discharges.
+    occurrence: tuple | None = None
 
     def __post_init__(self):
         operand_count = len(self.operands)
@@ -886,9 +895,12 @@ class NativeOperationExitCarrierV1:
 
     @classmethod
     def mint(cls, *, site, operator, operands, coordinates):
+        from sugar_lift_py_tests.occurrence import current_path
+
         operands = tuple(operands)
         coordinates = tuple(coordinates)
         return cls(
+            occurrence=current_path(),
             demand=NativeOperationDemandV1.mint(
                 site=site,
                 operator=operator,
@@ -1369,11 +1381,27 @@ class NativeOperationExitCarrierV1:
                 absent = coordinate_cid
                 break
             actual_operands.append(actuals_by_formal_coordinate[coordinate_cid])
-        exits = (
-            self._projected_exits(actual_operands, ctx)
-            if absent is None
-            else self._unanswered_exits(absent)
-        )
+        # The operation is the evaluation minted where it ran: its result,
+        # its completes atom and its halt are keyed under that occurrence
+        # (``occurrence``), never under the path this discharge runs under.
+        # A function's own proof discharges every carrier at its end, outside
+        # every live item, so three items' ``d * n`` would otherwise be one
+        # occurrence, and two items whose operands read the same terms one
+        # value and one raise.
+        from contextlib import nullcontext
+
+        from sugar_lift_py_tests.occurrence import occurrence_path
+
+        with (
+            nullcontext()
+            if self.occurrence is None
+            else occurrence_path(self.occurrence)
+        ):
+            exits = (
+                self._projected_exits(actual_operands, ctx)
+                if absent is None
+                else self._unanswered_exits(absent)
+            )
 
         # A short circuit recorded before later work (``return a if c else
         # -x``: the return, the block's statement tail, an enclosing ``if``'s join)
