@@ -128,6 +128,9 @@ def _else_left_from(runtime, else_ctx, witnesses, halt, *, site):
 RECURRENCE_HEAD = "python:loop.recurrence"
 # The recurrence's one symbolic item of the iterable (``loop_item``).
 LOOP_ITEM = "python:loop.item"
+# The suffix of a loop's own evaluation key of the module globals as its
+# recurrence leaves them (``LoopRecurrenceSugar._global_recurrence``).
+_GLOBAL_RECURRENCE = "#global-recurrence"
 # The values a live loop's recurrence states and nothing decides.
 _RECURRENCE_VALUES = frozenset({RECURRENCE_HEAD, LOOP_ITEM})
 
@@ -451,6 +454,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     # (``desugar``, ``_iterable_writes``): bound by the reduction that
     # evaluated the iterable, never by the construction.
     iterable_writes: tuple = field(default=(), compare=False)
+    # The temporal the loop's first item begins from, after its iterable
+    # (``_desugar_with_iterable``, ``_desugar_while``): a call's record
+    # (``AfterCallRecordValue``) bound anywhere else was made by the loop
+    # (``_records_made_here``).  Bound by the reduction, never by the
+    # construction.
+    entered: object = field(default=None, compare=False, repr=False)
 
     @classmethod
     def witnesses(cls):
@@ -658,6 +667,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         return start_from(0, runtime_ctx, ())
 
     def _desugar_with_iterable(self, iterable, ctx):
+        entering = self._entered_at(ctx)
+        if entering is not None:
+            return entering._desugar_with_iterable(iterable, ctx)
         runtime = self.construction.loop_runtime
         if iterable is None:
             # A ``while`` iterates nothing: no ``iter`` runs.
@@ -869,8 +881,14 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
 
             def after_suite(record):
+                # The calls' records the suite made follow the items' (in
+                # ``entries``): they leave with the loop (#7757 H7).
                 return self._left_with(
-                    (*entries, *record.entries),
+                    (
+                        *entries,
+                        *record.entries,
+                        *self._records_made_here(record.context),
+                    ),
                     published_after_else(record.context, decided),
                     fall_through=record.fall_through,
                     can_fall_through=record.can_fall_through,
@@ -989,8 +1007,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         def run_item(projections):
             item_ctx, target_bindings = enter(projections)
             if test_sugar is None:
+                # The item may follow items whose calls changed a module
+                # global: it begins from the loop's record of the globals
+                # (``_entering_the_recurrence``, #7757 H7).
                 return run_body(
-                    item_ctx, target_bindings, item_guard, recurrence, exhausted
+                    self._entering_the_recurrence(item_ctx),
+                    target_bindings,
+                    item_guard,
+                    recurrence,
+                    exhausted,
                 )
             # A ``while`` (``LiveSymbolicItemV1.test_sugar``): the test runs
             # first, in the item, through the one rule a live item's test
@@ -1002,6 +1027,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 from sugar_lift_py_tests.context import ReduceContext
 
                 item_ctx = ReduceContext.root(owner="LoopRecurrenceSugar.symbolic-test")
+            # The test, and the body after it, begin from the loop's record
+            # of the globals, as a ``for``'s item does.
+            item_ctx = self._entering_the_recurrence(item_ctx)
             with item():
                 tested = self._tested(test_sugar, item_ctx)
             return tested.and_then(
@@ -1129,6 +1157,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             ctx = self._enter_header(
                 runtime, ctx, self._recurrence_starts(runtime, heads), decide=False
             )
+            # The suite may run after items whose calls changed a module
+            # global: it begins from the loop's record of the globals, as
+            # the symbolic item does (``_entering_the_recurrence``, #7757 H7).
+            ctx = self._entering_the_recurrence(ctx)
         return ctx, reduce_block_to_exitset(tuple(else_sugars), ctx)
 
     def _after_symbolic_else(self, runtime, context, posted):
@@ -1210,8 +1242,18 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         if exhausted is None:
             exhausted = recurrence
 
+        def left(record):
+            # What the item left, and the calls' records it made after the
+            # record it began with, which leave with the loop on every exit
+            # it completes by (``_records_made_here``, #7757 H7).  A halt
+            # holds them already, in the context it halted in.
+            return (
+                *record.entries,
+                *self._records_made_here(getattr(record, "context", None)),
+            )
+
         def returned(block):
-            return recurrence(block.entries, can_fall_through=False)
+            return recurrence(left(block), can_fall_through=False)
 
         def leave(state):
             if not state.can_fall_through:
@@ -1223,7 +1265,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             return past_prior_returns(
                 state,
                 state.context,
-                lambda record: exhausted(record.entries),
+                lambda record: exhausted(left(record)),
                 returned,
             )
 
@@ -1237,8 +1279,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     halt.state, target_bindings=target_bindings
                 )
                 if effect.action == "break":
-                    return recurrence(record.entries)
-                return exhausted(record.entries)
+                    return recurrence(left(record))
+                return exhausted(left(record))
             return recurrence(halt=halt)
 
         def compose(body):
@@ -1506,8 +1548,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         )
 
         def returned(record):
+            # The calls' records the items made leave with the ``return``,
+            # for a ``finally`` that runs after it (``_records_made_here``).
             return self._left_with(
-                (*entries, *record.entries), (), can_fall_through=False
+                (*entries, *record.entries),
+                self._records_made_here(getattr(record, "context", None)),
+                can_fall_through=False,
             )
 
         if not state.can_fall_through:
@@ -1528,6 +1574,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         (``_start``).  A test that does not decide where the first item
         begins leaves the loop its recurrence, as a ``while`` whose items do
         not run (``_desugar_with_iterable``)."""
+        entering = self._entered_at(ctx)
+        if entering is not None:
+            return entering._desugar_while(runtime, ctx)
         return self._start(
             runtime,
             ctx,
@@ -2177,9 +2226,14 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         posted = self._post_loop_writes(
             runtime, temporal, items=items, else_suite=else_ran
         )
+        # The calls' records the items (and the ``else`` suite) made leave
+        # with the loop, before the names it publishes (``_records_made_here``,
+        # #7757 H7).  A halt holds them already, in the context it halted in.
+        records = () if halt is not None else self._records_made_here(ctx)
         return self._left_with(
             entries,
             (
+                *records,
                 *self._publication(tuple(values), posted),
                 self._exit_decision(exhausted),
             ),
@@ -2305,6 +2359,97 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         through ``key`` (a binding coordinate or a post-loop key): the loop's
         symbolic fixed point of it (``recurrence_head``)."""
         return recurrence_head(self.target_cid, key)
+
+    def _entered_at(self, ctx):
+        """This loop holding the temporal of ``ctx`` -- the context its first
+        item begins from, after its iterable -- as ``entered``, where it
+        holds none yet; None where it holds one already or ``ctx`` holds no
+        temporal."""
+        temporal = getattr(ctx, "temporal", None)
+        if self.entered is not None or temporal is None:
+            return None
+        from dataclasses import replace
+
+        return replace(self, entered=temporal)
+
+    def _global_recurrence(self):
+        """``(key, record)``: the module globals as the items before the
+        recurrence's symbolic item left them, one call's record
+        (``AfterCallRecordValue``) whose result is the loop's fixed point of
+        that state (``recurrence_head``) and which reaches every module
+        global (``EVERY_GLOBAL_SLOT``), under the loop's own evaluation key
+        of it.  A later call that reads a mutable global reads
+        ``python:after(python:loop.recurrence(<target>, <key>),
+        "global:<name>")`` (``call_site_sugar._global_after_call``): the
+        global as an unknown number of earlier items left it, which nothing
+        decides -- never the pre-loop value an item after the first may no
+        longer see (#7757 H7)."""
+        from sugar_lift_py_tests.floor.call_site_value import (
+            EVERY_GLOBAL_SLOT,
+            AfterCallRecordValue,
+        )
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+        from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+        key = f"{EVALUATION_PREFIX}{self.target_cid}{_GLOBAL_RECURRENCE}"
+        return evaluation_here(key), AfterCallRecordValue(
+            recurrence_head(self.target_cid, key), ((EVERY_GLOBAL_SLOT, None),)
+        )
+
+    def _entering_the_recurrence(self, ctx):
+        """``ctx`` (where the symbolic item, or the recurrence's ``else``
+        suite, begins) with the loop's record of the module globals bound
+        (``_global_recurrence``): an item may follow earlier items whose
+        calls changed a global, so a call in it reads the global as the
+        recurrence leaves it, never as it stood before the loop.  ``ctx``
+        itself where it holds no temporal."""
+        if getattr(ctx, "temporal", None) is None:
+            return ctx
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+
+        key, record = self._global_recurrence()
+        return ScopeRebind(key, record).extend_scope(ctx)
+
+    def _records_made_here(self, context):
+        """The calls' records (``AfterCallRecordValue``) the loop made on the
+        path that leaves it in ``context`` -- each bound there and not, to
+        the same value, where its first item began (``entered``) -- in the
+        order they were made, each as the rebind of its key
+        (``ScopeRebind``), for the loop to publish as it leaves.
+
+        A loop leaves through one record (``_left_with``): what its items
+        did, and the bindings it publishes, bound after it where the block
+        composition binds a completed loop's (``extend_scope``).  The
+        context its items ran in is not carried out, and the records a call
+        made in it went with it: after ``for _ in xs: bump()`` a call that
+        read a module global was handed the global as it stood before the
+        loop (#7757 H7).  Published, the newest record a later call reads
+        is the last one a path through the loop made: on an item that ran
+        in hand, that item's call; on the recurrence, its symbolic item's,
+        over the record it began with (``_global_recurrence``); a record
+        made under a guard (one arm of an ``if`` in an item) keeps it.
+
+        Nothing where the path made none, or made only the record the
+        recurrence began its item with: the globals then stand as they did
+        before the loop.  Nothing where the loop never held where it began
+        (``entered`` None) or ``context`` holds no temporal."""
+        temporal = getattr(context, "temporal", None)
+        if temporal is None or self.entered is None:
+            return ()
+        from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+
+        before = {binding.name: binding.value for binding in self.entered.bindings}
+        made = tuple(
+            binding
+            for binding in temporal.bindings
+            if isinstance(binding.value, AfterCallRecordValue)
+            and before.get(binding.name) is not binding.value
+        )
+        _key, began = self._global_recurrence()
+        if all(binding.value == began for binding in made):
+            return ()
+        return tuple(ScopeRebind(binding.name, binding.value) for binding in made)
 
     def _publication(self, coordinate_values, posted):
         """What the loop leaves bound for a read after it, on every exit it

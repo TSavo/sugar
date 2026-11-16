@@ -216,7 +216,8 @@ class ComputedCallSugar(ConstructedTermSugar):
         # it declares), under this call's key, exactly as a call by name does
         # (``CallSiteSugar._collect_kwargs``): the exposure rule reads each
         # object it may have changed there, ``python:after(<call result>,
-        # <formal>)`` (#7757 step 7).
+        # <formal>)`` (#7757 step 7).  Its halted face carries the same
+        # record where it halts, in ``ctx`` (#7757 H7).
         from sugar_lift_py_tests.floor.call_site_value import bind_after_call
 
         def unanswered():
@@ -238,6 +239,7 @@ class ComputedCallSugar(ConstructedTermSugar):
                 call_occurrence=self.call_occurrence,
             ),
             self.site,
+            ctx,
         )
 
 

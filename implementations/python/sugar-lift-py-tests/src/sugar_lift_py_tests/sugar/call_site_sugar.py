@@ -572,8 +572,11 @@ class CallSiteSugar(ConstructedTermSugar):
         # A same-file definition's edge carries, on its completed face, what
         # it names of what it was handed, under this call's key: the
         # exposure rule reads each object it may have changed there (#7757
-        # step 7).
-        return bind_after_call(self._applied(positional, kw_values, ctx), self.site)
+        # step 7).  Its halted face carries the same record, in the record
+        # it halts with in ``ctx``, every actual's write applied (#7757 H7).
+        return bind_after_call(
+            self._applied(positional, kw_values, ctx), self.site, ctx
+        )
 
     def _applied(self, positional: tuple, kw_values: tuple, ctx: object) -> ExitSet:
         """The call over its actuals as evaluated (``_collect``), each

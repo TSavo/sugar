@@ -1128,8 +1128,10 @@ class AfterCallRecordValue(FloorValue):
     operand slot, the formal of the callee's contract the one binder binds
     it to (``CallSiteValue.after_labels``).
 
-    Bound under the call's key on the call's completed face only
-    (``bind_after_call``), so a halted face never reads it.  No source name
+    Bound under the call's key on the call's completed face, and in the
+    record its halted face halts with (``bind_after_call``): a handler, a
+    ``finally`` and the frame's exit read what the call left before it
+    raised (#7757 H7).  No source name
     holds it: the exposure rule reads it for each object the call may have
     changed (``stated_after_call``), and a later call that reads a module
     global reads the global after it (``call_site_sugar._global_after_call``).
@@ -1196,15 +1198,122 @@ class AfterCallRecordValue(FloorValue):
 EVERY_GLOBAL_SLOT = ("global", "*")
 
 
-def bind_after_call(outcome, site):
-    """``outcome`` (the exits of the call whose fragment is ``site``) with
-    each completed face that is a same-file definition's edge naming what it
-    was handed (``CallSiteValue.after_labels``) carrying its record
-    (``AfterCallRecordValue``) as a walrus carries its write: bound under the
-    call's key (``Call.after_call_key``) where the statement applies its
-    writes (``bind_walrus_binds``).  A halted face carries nothing: what the
-    call left in what it was handed is stated only where it completed
-    (#7757 step 7).
+def _call_record(presented):
+    """The record (``AfterCallRecordValue``) the call whose completed value
+    is ``presented`` (a ``CallSiteValue``) leaves of what it may have
+    reached, or None where it may have reached nothing: a same-file
+    definition's edge names what its contract names of what it was handed
+    (``after_labels``), and any other call every module global
+    (``EVERY_GLOBAL_SLOT``).  A call result the floor answers by its own law
+    (a subclass: ``TupleLengthValue``, ``tuple.__len__``) ran no code."""
+    labels = tuple(presented.after_labels)
+    if (
+        type(presented) is CallSiteValue
+        and not presented.definition_edge
+        and EVERY_GLOBAL_SLOT not in (tuple(known) for known, _formal in labels)
+    ):
+        labels = (*labels, (EVERY_GLOBAL_SLOT, None))
+    if not labels:
+        return None
+    return AfterCallRecordValue(presented.term, labels)
+
+
+def _its_other_face(halt_guard, completed_guard) -> bool:
+    """Whether ``halt_guard`` is the halted face of the one two-faced
+    outcome whose completed face stands under ``completed_guard``
+    (``ExitSet.two_faced``: the halt under the complement of the completion
+    atom), each under the same prefix of guards the call was reached under:
+    the halt where the call ran and raised, never a halt of something that
+    ran before the call."""
+    from sugar_lift_py_tests.outcome.exit_set import _conjuncts, complement_guard
+
+    if halt_guard == complement_guard(completed_guard):
+        return True
+    halted = frozenset(_conjuncts(halt_guard))
+    done = frozenset(_conjuncts(completed_guard))
+    only_done = done - halted
+    return bool(only_done) and halted - done == frozenset(
+        complement_guard(literal) for literal in only_done
+    )
+
+
+def _halts_carrying_the_record(outcome, after_call_key, ctx, record_of):
+    """``outcome`` with each halted face of the call that offers no record
+    of its own (``Halted.state`` None) recorded where the call halted:
+    ``ctx`` -- the context the call ran in, every operand's write applied --
+    with the call's record bound under its key, as its completed face binds
+    it (#7757 H7).
+
+    A call that changed what it can reach and then raised left it changed:
+    ``def g(): G[0] = 2; raise E``.  A halted face that carried nothing
+    reached the handler, the ``finally`` and the frame's exit in the context
+    before the call, so a later call that read the global was handed the
+    entry's contents (``call_site_sugar._global_after_call``) and a lie
+    could read ``sat``.  The halt now reads the object as the call left it,
+    ``python:after(<call result>, <formal>)``, the one record a completed
+    face carries: decided at prove only under the completed arms of the
+    callee's contract (each post under its arm's guard), so free on the
+    halted one.
+
+    The record is the completed face's (``record_of``: ``_call_record``, the
+    one object that face binds), carried only to the halt that is that
+    face's other side (``_its_other_face``); a halt
+    with no such completed face (a call that only halts) is left as it is,
+    and so is every outcome when ``ctx`` holds no temporal."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
+
+    from .named_expression_value import (
+        NamedExpressionValue,
+        bind_walrus_binds,
+        peel_walrus_binds,
+    )
+
+    if getattr(ctx, "temporal", None) is None or not any(
+        isinstance(exit_, Halted) and exit_.state is None for exit_ in outcome.exits
+    ):
+        return outcome
+    faces = []
+    for exit_ in outcome.exits:
+        if not isinstance(exit_, Completed):
+            continue
+        _binds, presented = peel_walrus_binds(exit_.value)
+        if isinstance(presented, CallSiteValue):
+            record = record_of(presented)
+            if record is not None:
+                faces.append((exit_.guard, record))
+    if not faces:
+        return outcome
+    key = after_call_key()
+    exits = []
+    for exit_ in outcome.exits:
+        if isinstance(exit_, Halted) and exit_.state is None:
+            record = next(
+                (
+                    record
+                    for guard, record in faces
+                    if _its_other_face(exit_.guard, guard)
+                ),
+                None,
+            )
+            if record is not None:
+                bound = bind_walrus_binds(
+                    (NamedExpressionValue(key, record, evaluation=key),), ctx
+                )
+                exit_ = replace(exit_, state=halt_record(bound))
+        exits.append(exit_)
+    return ExitSet(tuple(exits))
+
+
+def bind_after_call(outcome, site, ctx=None):
+    """``outcome`` (the exits of the call whose fragment is ``site``, run
+    in ``ctx``) with each completed face that is a same-file definition's
+    edge naming what it was handed (``CallSiteValue.after_labels``) carrying
+    its record (``AfterCallRecordValue``) as a walrus carries its write:
+    bound under the call's key (``Call.after_call_key``) where the statement
+    applies its writes (``bind_walrus_binds``) (#7757 step 7).
 
     Every other completed call -- one that is no same-file definition's
     edge (``CallSiteValue.definition_edge``): a callee nothing here answers
@@ -1215,7 +1324,13 @@ def bind_after_call(outcome, site):
     that reads a mutable global reads it as this call left it
     (``call_site_sugar._global_after_call``: ``python:after(<call result>,
     "global:<name>")``, which no contract states), never as it was before
-    (#7757 H7).  Every other outcome comes back as it is."""
+    (#7757 H7).
+
+    The halted face of the same call carries the same record, in the
+    record it halts with (``_halts_carrying_the_record``): what the call
+    left before it raised is read where the halt is caught, never what was
+    there before the call (#7757 H7).  Every other outcome comes back as it
+    is."""
     from sugar_lift_py_tests.outcome import ExitSet
 
     from .named_expression_value import (
@@ -1228,40 +1343,42 @@ def bind_after_call(outcome, site):
     if not isinstance(outcome, ExitSet) or after_call_key is None:
         return outcome
 
+    # One record per completed value, the same object on its completed face
+    # and on the halted face that is its other side: a join over both faces
+    # (an ``if`` arm holding a ``try`` around the call) finds the record it
+    # carries one value (``if_sugar._joined_evaluation``), never two.
+    made: dict = {}
+
+    def record_of(presented):
+        held = made.get(id(presented))
+        if held is None:
+            held = made[id(presented)] = (presented, _call_record(presented))
+        return held[1]
+
     def carrying(value):
         binds, presented = peel_walrus_binds(value)
         if not isinstance(presented, CallSiteValue):
             return ExitSet.completed(value)
-        labels = tuple(presented.after_labels)
-        # A call result the floor answers by its own law (a subclass:
-        # ``TupleLengthValue``, ``tuple.__len__``) ran no code.
-        if (
-            type(presented) is CallSiteValue
-            and not presented.definition_edge
-            and EVERY_GLOBAL_SLOT not in (tuple(known) for known, _formal in labels)
-        ):
-            labels = (*labels, (EVERY_GLOBAL_SLOT, None))
-        if not labels:
+        after = record_of(presented)
+        if after is None:
             return ExitSet.completed(value)
         key = after_call_key()
-        record = NamedExpressionValue(
-            key,
-            AfterCallRecordValue(presented.term, labels),
-            evaluation=key,
-        )
+        record = NamedExpressionValue(key, after, evaluation=key)
         return ExitSet.completed(carry_walrus_binds((*binds, record), presented))
 
-    return outcome.and_then(carrying)
+    return _halts_carrying_the_record(
+        outcome, after_call_key, ctx, record_of
+    ).and_then(carrying)
 
 
 def stated_after_call(ctx, key, slot):
     """The object a call reached through ``slot`` as the call left it, read
     where the reduction runs: ``python:after(<call result>, <formal>)``
     (``source_call_resolution.object_after_call``), where the call's
-    completed face bound its record under ``key`` (``bind_after_call``) and
-    the binder bound ``slot`` to a formal; None elsewhere -- the call's
-    halted face, a call no contract names -- and the value stays undecided
-    (#7757 step 7)."""
+    completed face, or the halted face that is its other side, bound its
+    record under ``key`` (``bind_after_call``) and the binder bound ``slot``
+    to a formal; None elsewhere -- a call no contract names, a halt that is
+    no face of the call -- and the value stays undecided (#7757 step 7)."""
     temporal = getattr(ctx, "temporal", None)
     if temporal is None:
         return None
