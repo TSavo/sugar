@@ -447,13 +447,24 @@ def test_child():
 
 
 def test_super_method_call_carries_the_method_raise(tmp_path: Path) -> None:
-    """``super().m()``: the base method completes vs always raises."""
+    """``super().m()``: the base method completes vs always raises.
+
+    ``super().check()`` over ``run``'s receiver formal is the one dispatched
+    call after ``Child`` (``class:self``), joined at prove where
+    ``child.run()`` binds ``Child`` (#7757 step 8): the lie carries
+    ``Base.check``'s raise and is refuted (``unsat``).  The truthful half
+    stays ``open``: ``return self.n`` reads ``self`` after a base's method ran
+    on it, so ``self.n`` is no ``field:self.n`` input
+    (``nodes._receiver_field_inputs`` excludes a body with a zero-argument
+    ``super()``) and the read is the one unanswered read, never ``sat`` for
+    the lie."""
 
     _pair(
         tmp_path,
         "super-call",
         _SUPER_CALL.format(body="        return None"),
         _SUPER_CALL.format(body="        raise ValueError('bad base')"),
+        expected=("open", "unsat"),
     )
 
 
