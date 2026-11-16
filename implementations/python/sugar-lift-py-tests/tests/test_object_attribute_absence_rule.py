@@ -1,18 +1,26 @@
-"""A read of a name nothing answers on an instance is decided by Python's
-absence rule, never a panic (#7757).
+"""A read of a name nothing answers on an instance is the dispatched read,
+decided at prove, never an ``AttributeError`` the lift decides (#7757 L3).
 
-``ObjectValue.attribute`` on a name no recorded field, delete, helper
-deferral or class member answers raises ``AttributeError`` -- a halt at the
-read's fragment, the builtin by binding -- when the instance is current (the
-one currency rule), every class of its MRO is a source class or ``object``,
-the one class-namespace lookup decides no class binds the name, none binds
-``__getattr__`` and ``__getattribute__`` is ``object``'s.  Every other
-receiver -- a builtin base other than ``object``, either hook, an instance
-that arrived, no class statement, a name ``object`` holds -- is the one
-undecided member.
+``ObjectValue.attribute`` on a name no recorded field and no class member
+answers -- a field a delete removed included -- states the one dispatched
+read (``ObjectValue._dispatched_call(read=True)``,
+``call:dispatch:.<name>(<instance>, py.class("0", python:instance(<class>,
+<field>...)))``), both faces kept.  Whether it raises ``AttributeError`` --
+the order ends in ``object``, no class of it binds the name, the instance's
+``__dict__`` may not hold it, no ``__getattr__`` or ``__getattribute__``
+answers -- is decided once, by prove's one walk of the order
+(``consistency::dispatch_walk``).  The lift's own walk of it
+(``ObjectValue._absence_raises``) is deleted, and so is the ground
+``AttributeError`` a read of a deleted field took without asking whether a
+``__getattr__`` answers it.
+
+Where the read names no class -- no workspace root, an instance that
+arrived, no class statement -- it is the one undecided read.
 """
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 import pytest
 
@@ -21,9 +29,11 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-from sugar_lift_py_tests.floor import ObjectField, TermValue
+from sugar_lift_py_tests.floor import CallSiteValue, ObjectField, TermValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
+from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 from sugar_lift_py_tests.floor.object_value import ObjectValue
+from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, ClassDef
 from sugar_source_tree.tree import SourceFile
@@ -33,14 +43,23 @@ from frame_fresh import FRAME_FRESH
 _READ = "\ndef read(o):\n    return o.missing\n"
 
 
-def _setup(source: str):
+def _setup(source: str, tmp_path=None):
     """``source``'s ``Widget`` class value and the fragment of its one
-    attribute read (``o.missing``)."""
+    attribute read (``o.missing``); under a workspace root (``tmp_path``)
+    the class names its join symbol, so a read on its instance names its
+    class."""
     source = source + _READ
-    tree = SourceFile(
-        (source, "absence_rule.py", blake3_512_of(source.encode())),
-        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-    )
+    if tmp_path is None:
+        tree = SourceFile(
+            (source, "absence_rule.py", blake3_512_of(source.encode())),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        )
+    else:
+        from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+        path = tmp_path / "absence_rule.py"
+        path.write_text(source)
+        tree = open_source_file_for_construction(path, root=tmp_path)
     classes = {
         node.name: node for node in tree.root.body if isinstance(node, ClassDef)
     }
@@ -74,75 +93,101 @@ def _fresh(class_value, fields=()) -> ObjectValue:
     )
 
 
-def _attribute_error(outcome) -> None:
-    assert outcome.completed_value() is None, outcome
-    assert len(outcome.exits) == 1, outcome
-    (halt,) = outcome.halts()
-    assert not isinstance(halt.effect, UndeterminedRaiseEffect)
-    assert halt.effect.exception_name == "AttributeError"
-    assert halt.effect.producer_node_owner == "ObjectValue.attribute"
+def _no_lift_attribute_error(outcome) -> None:
+    """No arm of ``outcome`` is an ``AttributeError`` the lift named."""
+    assert not [
+        halt
+        for halt in outcome.halts()
+        if getattr(halt.effect, "exception_name", None) == "AttributeError"
+    ], outcome
+
+
+def _dispatched_read(outcome, name: str = "missing") -> CallSiteValue:
+    """The dispatched read of ``name``: it completes with the read's
+    coordinate (``dispatch:.<name>``) and keeps its halting face; nothing
+    here decides that it raises."""
+    _no_lift_attribute_error(outcome)
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert outcome.halts(), outcome
+    _binds, call = peel_walrus_binds(done.value)
+    assert isinstance(call, CallSiteValue), type(call)
+    assert call.target_name == f"dispatch:.{name}", call.target_name
+    return call
 
 
 def _undecided(outcome) -> None:
+    _no_lift_attribute_error(outcome)
     (halt,) = outcome.halts()
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
     assert halt.effect.producer_node_owner == "ObjectValue.attribute"
     assert outcome.owed_items()
 
 
-# --- Python decides: AttributeError ---------------------------------------------
+# --- a class this read names: the dispatched read, decided at prove -------------
 
 
 @pytest.mark.parametrize(
     "source",
     [
+        # Python raises ``AttributeError`` for these: prove's walk decides it.
         "class Widget:\n    pass\n",
         "class Widget(object):\n    def m(self):\n        return 1\n",
         "class Base:\n    pass\n\nclass Widget(Base):\n    pass\n",
+        # A hook answers instead: prove's walk leaves it owed.
+        "class Widget:\n    def __getattr__(self, name):\n        return 1\n",
+        "class Base:\n    def __getattribute__(self, name):\n        return 1\n"
+        "\nclass Widget(Base):\n    pass\n",
     ],
 )
-def test_a_fresh_source_instance_lacking_the_name_raises_attribute_error(
-    source,
+def test_a_fresh_instance_lacking_the_name_is_the_dispatched_read(
+    source, tmp_path
 ) -> None:
-    value, site = _setup(source)
+    value, site = _setup(source, tmp_path)
     receiver = _fresh(value, (ObjectField("other", TermValue(1)),))
 
-    _attribute_error(receiver.attribute("missing", site, None))
+    _dispatched_read(receiver.attribute("missing", site, None))
 
 
-def test_a_recorded_field_still_answers() -> None:
-    value, site = _setup("class Widget:\n    pass\n")
+def test_a_deleted_field_is_the_dispatched_read_naming_no_such_field(
+    tmp_path,
+) -> None:
+    # ``del o.missing`` leaves the ``__dict__`` without it; a ``__getattr__``
+    # may still answer the read.  The read states the instance's fields
+    # without it, and prove's walk decides.
+    value, site = _setup(
+        "class Widget:\n    def __getattr__(self, name):\n        return 1\n",
+        tmp_path,
+    )
+    receiver = _fresh(value, (ObjectField("missing", TermValue(4)),))
+    after = receiver.delattr("missing", site, None).completed_value()
+    assert "missing" in after.deleted_instance_fields
+
+    from sugar_lift_py_tests.receiver_dispatch import class_value, instance_term
+
+    _dispatched_read(after.attribute("missing", site, None))
+    symbol = value.class_definition.bridge_source_symbol()
+    assert symbol is not None
+    assert class_value(after) == instance_term(symbol)
+
+
+def test_a_recorded_field_still_answers(tmp_path) -> None:
+    value, site = _setup("class Widget:\n    pass\n", tmp_path)
     receiver = _fresh(value, (ObjectField("missing", TermValue(4)),))
 
     assert receiver.attribute("missing", site, None).completed_value() == TermValue(4)
 
 
-# --- Python does not decide here: the undecided member --------------------------
+# --- no class named: the undecided read ------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        # A builtin base other than ``object``.
-        "class Widget(dict):\n    pass\n",
-        "class Base(ValueError):\n    pass\n\nclass Widget(Base):\n    pass\n",
-        # ``__getattr__`` answers a name the instance and its class lack.
-        "class Widget:\n    def __getattr__(self, name):\n        return 1\n",
-        "class Base:\n    def __getattr__(self, name):\n        return 1\n"
-        "\nclass Widget(Base):\n    pass\n",
-        # A source ``__getattribute__`` answers every read.
-        "class Base:\n    def __getattribute__(self, name):\n        return 1\n"
-        "\nclass Widget(Base):\n    pass\n",
-    ],
-)
-def test_a_builtin_base_or_a_hook_is_the_undecided_member(source) -> None:
-    value, site = _setup(source)
+def test_no_workspace_root_is_the_undecided_read() -> None:
+    value, site = _setup("class Widget:\n    pass\n")
 
     _undecided(_fresh(value).attribute("missing", site, None))
 
 
-def test_an_instance_that_arrived_is_the_undecided_member() -> None:
-    value, site = _setup("class Widget:\n    pass\n")
+def test_an_instance_that_arrived_is_the_undecided_read(tmp_path) -> None:
+    value, site = _setup("class Widget:\n    pass\n", tmp_path)
     receiver = ObjectValue(
         "Widget",
         (),
@@ -155,15 +200,23 @@ def test_an_instance_that_arrived_is_the_undecided_member() -> None:
     _undecided(receiver.attribute("missing", site, None))
 
 
-def test_no_class_statement_is_the_undecided_member() -> None:
-    _value, site = _setup("class Widget:\n    pass\n")
+def test_no_class_statement_is_the_undecided_read(tmp_path) -> None:
+    _value, site = _setup("class Widget:\n    pass\n", tmp_path)
     receiver = ObjectValue("Widget", (), identity="receiver", allocation=FRAME_FRESH)
 
     _undecided(receiver.attribute("missing", site, None))
 
 
-def test_a_name_object_holds_is_never_attribute_error() -> None:
-    value, site = _setup("class Widget:\n    pass\n")
+def test_a_deleted_field_with_no_class_statement_is_the_undecided_read(
+    tmp_path,
+) -> None:
+    _value, site = _setup("class Widget:\n    pass\n", tmp_path)
+    receiver = ObjectValue(
+        "Widget",
+        (ObjectField("missing", TermValue(4)),),
+        identity="receiver",
+        allocation=FRAME_FRESH,
+    )
+    after = replace(receiver, fields=(), deleted_instance_fields=("missing",))
 
-    # ``object`` binds ``__init__``: the read is a member, never absent.
-    _undecided(_fresh(value).attribute("__init__", site, None))
+    _undecided(after.attribute("missing", site, None))

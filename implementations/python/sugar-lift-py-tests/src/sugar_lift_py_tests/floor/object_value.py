@@ -46,10 +46,11 @@ class ObjectValue(FloorValue):
     methods: tuple[ObjectMethodValue, ...] = ()
     class_fields: tuple[ObjectField, ...] = ()
     identity: str = ""
-    # Instance field names removed by an authenticated delattr.  Reading one
-    # of these is AttributeError (delete readback).  Any other name no field
-    # holds is AttributeError only by Python's absence rule
-    # (``_absence_raises``), else the undecided member.
+    # Instance field names removed by an authenticated delattr: names the
+    # instance's ``__dict__`` does not hold now.  A read of one, like any
+    # name no field holds, is the dispatched read whose absence prove's one
+    # walk of the order decides (``attribute``; ``receiver_dispatch.
+    # class_value`` leaves these out of the fields it states).
     deleted_instance_fields: tuple[str, ...] = dataclass_field(
         default=(), compare=False
     )
@@ -276,9 +277,12 @@ class ObjectValue(FloorValue):
         method a ``BoundMethodValue`` binds, are that member, never looked up
         again by name.
 
-        A name nothing answers -- no field, no class member, no delete, no
-        helper deferral -- raises ``AttributeError`` only by Python's absence
-        rule (``_absence_raises``); otherwise it is the undecided read."""
+        A name nothing answers -- no field (a deleted one included), no class
+        member -- is the dispatched read (``_dispatched_call(read=True)``):
+        whether it raises ``AttributeError`` is decided once, at prove, by
+        the one walk of the order (``consistency::dispatch_walk``, #7757 L3),
+        never here.  Where the read names no class it is the undecided
+        read."""
         from .object_identity import contents_current
 
         current = contents_current(self)
@@ -365,74 +369,23 @@ class ObjectValue(FloorValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(BoundMethodValue(self, name, selected))
-        if current and name in self.deleted_instance_fields:
-            # Authenticated delattr removed this instance field — read is
-            # AttributeError with delete→read lineage, not an undecided gap.
-            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-
-            return ground_exceptional_exit(
-                exception_name="AttributeError",
-                site=site,
-                owner="ObjectValue.attribute",
-            )
-        # No recorded field or delete answers the name, and
-        # the one class-namespace lookup selected no member for it.  Python
-        # decides the read only by its absence rule (``_absence_raises``):
-        # ``AttributeError``, a halt at the read's fragment.  Every other
-        # receiver is the one undecided member.
-        if self._absence_raises(name):
-            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-
-            return ground_exceptional_exit(
-                exception_name="AttributeError",
-                site=site,
-                owner="ObjectValue.attribute",
-            )
+        # No recorded field answers the name (a field a delete removed
+        # included), and the one class-namespace lookup selected no member
+        # for it.  Whether the read raises ``AttributeError`` -- no class of
+        # the order binds it, the ``__dict__`` may not hold it, no
+        # ``__getattr__`` or ``__getattribute__`` answers -- is the one walk
+        # of the order's to decide, at prove (``consistency::dispatch_walk``,
+        # #7757 NEW-7/L3): the read is the dispatched read on this instance,
+        # its class and the fields its ``__dict__`` may hold now
+        # (``receiver_dispatch.class_value``: a deleted field is not one of
+        # them), both faces kept.  Where it names no class, the one
+        # undecided read.
+        dispatched = self._dispatched_call(name, (), (), site, read=True)
+        if dispatched is not None:
+            return dispatched
         return undecided_attribute_result(
             self, name, site, owner="ObjectValue.attribute"
         )
-
-    def _absence_raises(self, name: str) -> bool:
-        """Whether reading ``name`` off this instance raises ``AttributeError``
-        by Python's own rule (``object.__getattribute__``,
-        ``_PyObject_GenericGetAttrWithDict``; no ``__getattr__`` to fall to).
-
-        All of: the instance's fields are its fields now (the one currency
-        rule, ``contents_current``) and lack ``name`` -- the caller already
-        read them; the instance's MRO is read (``method_resolution_order``)
-        and every class of it is a source class or ``object``; the one
-        class-namespace lookup decides no class of it binds ``name``
-        (``namespace_owner``: not even ``object``); none binds
-        ``__getattr__``; and the ``__getattribute__`` the lookup selects is
-        ``object``'s.  The ``AttributeError`` is the builtin by binding: the
-        interpreter raises it, no name is read.
-
-        Anything else -- an instance that arrived, no class statement, an MRO
-        not read, a builtin base other than ``object`` (its ``__dict__`` and
-        slots are not read here), either hook bound or not decided -- is
-        False: the read is the one undecided member."""
-        from sugar_source_tree.nodes import ClassDef
-
-        from .object_identity import contents_current
-
-        if not contents_current(self):
-            return False
-        definition = getattr(self.defining_class, "class_definition", None)
-        if definition is None:
-            return False
-        order = definition.method_resolution_order()
-        if order is None or any(
-            not isinstance(entry, ClassDef) and entry != "object" for entry in order
-        ):
-            return False
-        decided, owner = definition.namespace_owner(name)
-        if not decided or owner is not None:
-            return False
-        decided, owner = definition.namespace_owner("__getattr__")
-        if not decided or owner is not None:
-            return False
-        decided, owner = definition.namespace_owner("__getattribute__")
-        return decided and isinstance(owner, str) and owner == "object"
 
     def reads_plain_field(self, name: str) -> bool:
         """Whether a read of ``name`` off this instance, while its

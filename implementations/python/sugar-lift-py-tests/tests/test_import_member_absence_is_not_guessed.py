@@ -1,10 +1,11 @@
 """A member read off an imported module may raise, and no absence is guessed (#7757).
 
-The absence rule (#8283, ``ObjectValue._absence_raises``) names
-``AttributeError`` only where Python's own lookup decides it: a current
-instance whose MRO is source classes and ``object``, no class binding the
-name, none binding ``__getattr__``, and ``object``'s ``__getattribute__``.
-Every other receiver is not decided.
+The absence rule names ``AttributeError`` only where Python's own lookup
+decides it: an instance whose MRO is source classes and ``object``, no class
+binding the name, none binding ``__getattr__``, and ``object``'s
+``__getattribute__``.  Since #7757 L3 the lift states no such raise: prove's
+one walk of the order decides it on the dispatched read
+(``consistency::dispatch_walk``).  Every other receiver is not decided.
 
 An imported module is never such a receiver.  An imported name is answered
 only by its target symbol and the imported proofs (step 3): no dependency

@@ -55,7 +55,14 @@ def test_missing_field_panics_but_written_twin_projects(tmp_path, class_name, me
     assert "source-authenticated" in info.requested
 
 
-def test_deleted_field_keeps_authenticated_attribute_error(tmp_path):
+def test_deleted_field_is_never_read_back_and_never_a_lift_attribute_error(tmp_path):
+    """A read of a field a delete removed is not the lift's ``AttributeError``
+    (a ``__getattr__`` may answer it): with no class statement, whose order
+    nothing reads, it is the undecided read, owed, its halting face kept
+    (#7757 L3; with a class it is the dispatched read prove's walk
+    decides)."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
     site = _site(tmp_path, "payload")
     receiver = ObjectValue(
         "Renamed", (ObjectField("payload", TermValue(7)),), allocation=FRAME_FRESH
@@ -64,11 +71,11 @@ def test_deleted_field_keeps_authenticated_attribute_error(tmp_path):
     deleted_value = deleted.completed_value()
     assert deleted_value is not None
     outcome = deleted_value.attribute("payload", site, None)
-    assert outcome.halts() == outcome.exits
+    assert outcome.completed_value() != TermValue(7)
     (halt,) = outcome.halts()
-    assert isinstance(halt.effect, RaiseEffect)
-    assert isinstance(halt.effect, RaiseEffect)
-    assert halt.effect.exception_name == "AttributeError"
+    assert not isinstance(halt.effect, RaiseEffect)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert outcome.owed_items()
 
 
 def test_unknown_receiver_type_is_the_two_faced_unanswered_read(tmp_path):

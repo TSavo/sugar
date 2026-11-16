@@ -33,8 +33,9 @@ Acceptance:
 
   1. Completed delitem → subsequent read of that key yields named KeyError;
      occurrence lineage is intact (KeyError occurrence is the delete locus).
-  2. Completed delattr → attribute is gone; authenticated read yields named
-     AttributeError (or reds name the Floor owner that still undecides).
+  2. Completed delattr → attribute is gone; a read never sees the deleted
+     value.  Whether it raises ``AttributeError`` is decided at prove by the
+     one walk of the order (#7757 L3), never by the lift.
   3. Delete-then-restore (set again) → read yields the new value.
   4. Readback after a HALTED delete still sees the original (state survival).
   5. Lying twins refuse: fabricated deleted value; KeyError with wrong
@@ -44,7 +45,7 @@ Reds name owners by nature:
 
   codex-1 — pre-effect / state-survival composition on halted delete
   codex-3 — readback transport / occurrence lineage across delete→read
-  Floor   — ObjectValue.attribute missing-member AttributeError arm
+  Floor   — ObjectValue.attribute missing-member read
 
 MUST NOT TOUCH: production, carrier/ExitSet.
 """
@@ -86,9 +87,8 @@ CODEX3 = (
     "lineage, or restore to the new value"
 )
 FLOOR_ATTR = (
-    "Floor ObjectValue.attribute: decided empty/missing instance field after "
-    "delattr must yield named AttributeError on the read path "
-    "(not SugarNotWritten undecided)"
+    "Floor ObjectValue.attribute: a missing instance field after delattr "
+    "must be the read prove decides, never a panic on the read path"
 )
 
 DELITEM = "def helper(obj, key):\n    del obj[key]\n"
@@ -369,14 +369,21 @@ def test_discrimination_completed_delitem_does_not_fabricate_deleted_value() -> 
 
 
 # ===========================================================================
-# 2. Completed delattr → attribute gone; read AttributeError
+# 2. Completed delattr → attribute gone; read decided at prove
 # ===========================================================================
 
 
-def test_completed_delattr_removes_field_and_read_is_attributeerror_or_named_gap() -> (
+def test_completed_delattr_removes_field_and_read_never_sees_the_old_value() -> (
     None
 ):
-    """After ``del obj.field``, field is absent; read is AttributeError."""
+    """After ``del obj.field``, field is absent; the read never completes
+    with the deleted value.  Whether it raises ``AttributeError`` is not the
+    lift's to decide (a ``__getattr__`` may answer it): it is the read
+    prove's one walk of the order decides (#7757 L3), and on a receiver with
+    no class statement, whose order nothing reads, the undecided read, owed,
+    its halting face kept."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
     receiver = ObjectValue(
         class_name="Widget",
         fields=(ObjectField("field", TermValue(7)),),
@@ -397,19 +404,10 @@ def test_completed_delattr_removes_field_and_read_is_attributeerror_or_named_gap
             f"{FLOOR_ATTR}: ConstructionPanic on missing field read: {err}"
         ) from err
 
-    if (
-        len(read.exits) == 1
-        and read.halts() == read.exits
-        and isinstance(read.halts()[0].effect, RaiseEffect)
-    ):
-        (halt,) = read.halts()
-        assert halt.effect.exception_name == "AttributeError"
-        assert halt.effect.exception_type_coordinate == _identity("AttributeError")
-        return
-    raise AssertionError(
-        f"{FLOOR_ATTR}: expected the AttributeError halt, "
-        f"got {type(read).__name__} {read!r:.200}"
-    )
+    assert read.completed_value() != TermValue(7), read
+    (halt,) = read.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
+    assert read.owed_items(), read
 
 
 def test_discrimination_delattr_does_not_leave_readable_old_value() -> None:

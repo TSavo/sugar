@@ -361,9 +361,12 @@ def _widget_class_value():
 
 
 def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
-    """A fresh ``Widget`` with no ``field``: the read raises AttributeError
-    (Python's absence rule), and that halt blocks the RHS, the arithmetic
-    and the store."""
+    """A read of ``field`` that certainly raises: that halt blocks the RHS,
+    the arithmetic and the store.
+
+    The lift no longer decides an absent member's ``AttributeError`` on an
+    instance (#7757 L3: prove's one walk of the order does), so the certain
+    halt here is the read's own stand-in: any read that only halts."""
     box = {"rhs": 0, "set": 0}
 
     @dataclass(frozen=True)
@@ -378,11 +381,22 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
             return ()
 
     class _StoreCounting(ObjectValue):
+        def attribute(self, name, site_, ctx):
+            from sugar_lift_py_tests.floor.ground_exit import (
+                ground_exceptional_exit,
+            )
+
+            return ground_exceptional_exit(
+                exception_name="AttributeError",
+                site=site_,
+                owner="ObjectValue.attribute",
+            )
+
         def setattr(self, name, value, site_, ctx):
             box["set"] += 1
             return super().setattr(name, value, site_, ctx)
 
-    # Empty fields, a source class over ``object``: the read is AttributeError.
+    # Empty fields; the read only halts.
     receiver = _StoreCounting(
         "Widget",
         (),
