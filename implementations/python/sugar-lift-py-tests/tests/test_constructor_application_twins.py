@@ -409,7 +409,7 @@ def test_a_field_a_base_method_stores_through_super_is_read_by_the_receivers_key
     site alone).  Neither half is decided: the truth is never ``unsat`` and
     the lie never ``sat``.  The class row states the ``assert`` as the
     construction's ``AssertionError`` panic locus
-    (``class_constructor_body_sugar.halts_where_its_asserts_fail``), so on
+    (``assert_sugar.halts_where_its_asserts_fail``), so on
     the lie ``Child()`` halts at prove; ``test_child`` states no claim of
     its own after the call, so nothing there is refuted and the lie reads
     no stronger than ``open``."""
