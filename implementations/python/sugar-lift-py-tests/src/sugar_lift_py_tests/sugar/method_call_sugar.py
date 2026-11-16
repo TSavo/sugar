@@ -232,7 +232,8 @@ class MethodCallSugar(ConstructedTermSugar):
         # call's key, as a call by name's does (``CallSiteSugar.
         # _collect_kwargs``): what a same-file method's contract names of
         # what it was handed, and, for a call no contract here states, every
-        # module global it may reach (#7757 H7).
+        # module global it may reach (#7757 H7); its halted face carries the
+        # same record where it halts, in ``ctx``.
         return bind_after_call(
             dispatch_method_call(
                 self.name,
@@ -247,6 +248,7 @@ class MethodCallSugar(ConstructedTermSugar):
                 unit=self.unit,
             ),
             self.site,
+            ctx,
         )
 
 
