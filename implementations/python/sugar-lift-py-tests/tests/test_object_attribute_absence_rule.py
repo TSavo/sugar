@@ -170,6 +170,49 @@ def test_a_deleted_field_is_the_dispatched_read_naming_no_such_field(
     assert class_value(after) == instance_term(symbol)
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        # ``object``'s ``__delattr__``: whether the delete raises is not the
+        # lift's to decide (a class field's ``__delete__`` may answer it).
+        "class Widget:\n    pass\n",
+        # A source ``__delattr__`` answers it, and may swallow it.
+        "class Widget:\n    def __delattr__(self, name):\n        pass\n",
+    ],
+)
+def test_deleting_a_name_no_field_holds_names_no_attribute_error(
+    source, tmp_path
+) -> None:
+    value, site = _setup(source, tmp_path)
+    receiver = _fresh(value, (ObjectField("other", TermValue(1)),))
+
+    outcome = receiver.delattr("missing", site, None)
+
+    _no_lift_attribute_error(outcome)
+    assert outcome.halts(), outcome
+    assert [arm for arm in outcome.exits if isinstance(arm, Completed)], outcome
+
+
+def test_a_source_delattr_answers_the_delete_of_a_held_field(tmp_path) -> None:
+    # ``del o.other`` is ``Widget.__delattr__(o, "other")``: the field is
+    # never removed here, and the object after the call is not read as it
+    # was.
+    value, site = _setup(
+        "class Widget:\n    def __delattr__(self, name):\n        pass\n",
+        tmp_path,
+    )
+    receiver = _fresh(value, (ObjectField("other", TermValue(1)),))
+
+    outcome = receiver.delattr("other", site, None)
+
+    _no_lift_attribute_error(outcome)
+    assert outcome.halts(), outcome
+    for arm in outcome.exits:
+        if isinstance(arm, Completed):
+            _binds, after = peel_walrus_binds(arm.value)
+            assert "other" not in getattr(after, "deleted_instance_fields", ())
+
+
 def test_a_recorded_field_still_answers(tmp_path) -> None:
     value, site = _setup("class Widget:\n    pass\n", tmp_path)
     receiver = _fresh(value, (ObjectField("missing", TermValue(4)),))

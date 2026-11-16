@@ -750,19 +750,32 @@ class ObjectValue(FloorValue):
         )
 
     def delattr(self, name, site, ctx):
-        """``del self.name`` via instance-field delete or property refusal.
+        """``del self.name``: ``type(self).__delattr__(self, name)``
+        (``PyObject_SetAttr`` with no value), an implicit lookup on the type
+        that no instance field shadows.
 
-        Properties are data descriptors: a getter without an authenticated
-        deleter raises ``AttributeError`` on the **delete** path — never by
-        consulting :meth:`attribute` / the read path.  Missing ordinary
-        fields also raise ``AttributeError``.
+        Where the one class-namespace lookup does not decide that
+        ``__delattr__`` is ``object``'s (``_delattr_is_generic``) -- a source
+        class of the order binds it, a builtin base other than ``object``
+        does, the lookup is not decided -- the delete is that call: the one
+        dispatched ``__delattr__`` (``_dispatched_delattr``), whose member
+        prove's one walk of the order decides (``consistency::dispatch_walk``),
+        never an instance-field delete or an ``AttributeError`` decided here.
 
-        Whether a field is missing is read off the recorded fields only when
+        Under ``object``'s ``__delattr__`` (``PyObject_GenericSetAttr``):
+        properties are data descriptors: a getter without an authenticated
+        deleter raises ``AttributeError`` on the **delete** path -- never by
+        consulting :meth:`attribute` / the read path.  A field the recorded
+        fields hold is removed.  A name they do not hold is not decided here
+        to be absent (#7757 L3: the lift never decides a member's absence):
+        it is the dispatched ``__delattr__`` too, both faces kept.
+
+        Whether a field is held is read off the recorded fields only when
         they are the object's fields now (``object_identity.contents_current``).
         On an instance that arrived by binding, another alias may have
         stored or deleted the name since: the delete is undecided
-        (``_undecided_delattr``), never ``AttributeError`` decided from the
-        fields it arrived with.
+        (``_undecided_delattr``), never decided from the fields it arrived
+        with.
 
         A name a builtin owner binds to a data descriptor
         (``_class_data_descriptor``: ``object.__class__``) is that
@@ -775,6 +788,8 @@ class ObjectValue(FloorValue):
 
         from .object_identity import contents_current
 
+        if not self._delattr_is_generic():
+            return self._dispatched_delattr(name, site)
         descriptor = self._store_descriptor(name)
         if descriptor is None:
             self._refuse_undecided_store(name, site, "ObjectValue.delattr")
@@ -791,13 +806,10 @@ class ObjectValue(FloorValue):
         current = contents_current(self)
         remaining = tuple(field for field in self.fields if field.name != name)
         if current and len(remaining) == len(self.fields):
-            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-
-            return ground_exceptional_exit(
-                exception_name="AttributeError",
-                site=site,
-                owner="ObjectValue.delattr",
-            )
+            # No recorded field holds ``name``: whether the delete raises
+            # ``AttributeError`` -- or a class field's own ``__delete__``
+            # answers it -- is not decided here (#7757 L3).
+            return self._dispatched_delattr(name, site)
         deleted = (
             self.deleted_instance_fields
             if name in self.deleted_instance_fields
@@ -812,6 +824,51 @@ class ObjectValue(FloorValue):
         if not current:
             return self._undecided_delattr(name, after, site)
         return ExitSet.completed(after)
+
+    def _delattr_is_generic(self) -> bool:
+        """Whether the one class-namespace lookup decides that
+        ``type(self).__delattr__`` is ``object``'s
+        (``PyObject_GenericSetAttr``), as ``field_store_route`` decides
+        ``__setattr__``.  A receiver built with no class statement has only
+        its own roster (``class_member``): a ``__delattr__`` there, or a
+        lookup of it that does not decide, is not ``object``'s.  False
+        whenever the lookup does not decide, or names any other owner."""
+        definition = getattr(self.defining_class, "class_definition", None)
+        if definition is None:
+            decided, method, value = self.class_member("__delattr__")
+            return decided and method is None and value is None
+        decided, owner = definition.namespace_owner("__delattr__")
+        return decided and isinstance(owner, str) and owner == "object"
+
+    def _dispatched_delattr(self, name, site):
+        """``del self.name`` as the one dispatched call
+        ``type(self).__delattr__(self, name)`` (``_dispatched_call``, #7757
+        step 8): which ``__delattr__`` runs, how it binds, and whether it
+        raises are decided once, at prove, by the one walk of the order
+        (``consistency::dispatch_walk``); the object after it is the one
+        ``after_field_store_call`` states.  Where the instance names no
+        class, nothing decides it: the one undecided attribute mutation
+        (``store_effect_sugar.undecided_attribute_mutation_faces``), both
+        faces kept.  No ``AttributeError`` is named here."""
+        from .string_value import StringValue
+
+        dispatched = self._dispatched_call(
+            "__delattr__", (StringValue(name),), (), site
+        )
+        if dispatched is None:
+            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                undecided_attribute_mutation_faces,
+            )
+
+            return undecided_attribute_mutation_faces(
+                self,
+                name,
+                site,
+                noun="delattr",
+                method="__delattr__",
+                owner="ObjectValue.delattr",
+            )
+        return self._after_attribute_call(dispatched, site)
 
     def _builtin_descriptor_delete(self, name, site):
         """``del self.name`` where a builtin owner binds ``name`` to a data
