@@ -35,6 +35,18 @@
 # before pytest, or pytest died or was interrupted -- makes the measure
 # unmeasured with an `incomplete:` note, never a smaller total. A shard whose
 # pytest did not run its tests fails its job, so "re-run failed jobs" redoes it.
+#
+# A CRASHED PYTEST NAMES ITSELF (runs 43832361876, 43841836171: exit 139)
+#
+# pytest runs with PYTHONFAULTHANDLER=1, so a fatal signal from interpreter
+# start onward (not only after pytest's own faulthandler plugin is configured)
+# dumps every thread's Python stack into the shard log, and with -v, so the
+# log names each test as it starts (pytest writes and flushes the node ID
+# before the test body runs): the line the crash interrupts is the test that
+# was running, and the lines above it are every test the process ran first.
+# A pytest killed by a signal prints that test and the crashing thread's
+# stack into the job log as well; the full log is the uploaded artifact
+# (`if: always()`).
 set -uo pipefail
 
 repo="$GITHUB_WORKSPACE"
@@ -97,7 +109,8 @@ run_pytest() {
   [ -f "$list" ] && mapfile -t paths < "$list"
   echo "$label files to run: ${#paths[@]}"
   [ "${#paths[@]}" -gt 0 ] || return 0
-  PYTHONPATH="$repo/tools:$PYTHONPATH" python -m pytest "${paths[@]}" -q \
+  PYTHONFAULTHANDLER=1 PYTHONPATH="$repo/tools:$PYTHONPATH" \
+    python -m pytest "${paths[@]}" -v \
     -p no:cacheprovider -p no:randomly \
     -p scorecard_carry_pytest \
     --carry-store "$SCORECARD_STORE" --carry-label "$label" \
@@ -110,6 +123,12 @@ run_pytest() {
   case "$rc" in
     0 | 1 | 5) return 0 ;;
   esac
+  if [ "$rc" -gt 128 ]; then
+    # Killed by a signal: the test it was running is the -v line the
+    # faulthandler dump interrupts; the crashing thread's stack follows.
+    echo "::error::$label pytest killed by signal $((rc - 128)) in: $(grep -a -m1 'Fatal Python error' "$log" || echo '(no faulthandler dump in the log)')"
+    awk '/^Current thread/ { on = 1 } on && /^$/ { exit } on' "$log"
+  fi
   echo "::error::$label pytest exit $rc: this shard's tests did not run (full log in the uploaded $(basename "$log")); the row marks $label incomplete"
   return 1
 }
