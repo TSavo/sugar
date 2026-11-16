@@ -58,8 +58,8 @@ def test_named_int_constant_name_uses_object_field_owner() -> None:
 
 
 def test_named_int_constant_foreign_member_is_the_undecided_read() -> None:
-    # No class statement: the receiver's MRO is not read, so Python's absence
-    # rule does not decide the read -- never AttributeError, never a panic.
+    # No class statement: no class is named, so not even prove's walk of the
+    # order decides the read -- never AttributeError, never a panic.
     receiver = ObjectValue(
         "re._constants._NamedIntConstant",
         (ObjectField("name", StringValue("SRE_FLAG_ASCII")),),
