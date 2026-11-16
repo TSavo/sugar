@@ -1250,11 +1250,19 @@ def bound_value_read(value):
     object, and that binding was read to reach the receiver, so the read's
     debts are already owed on this path; only the value is compared here.
     Anything but a ``ModuleFinalValue`` is itself, so the scan builds no
-    read per binding."""
+    read per binding.  The read's one completed arm holds the value under
+    the guard of the module run's arms that bound the key
+    (``_module_end_value``); the scan compares the value whatever that
+    guard is."""
     if not isinstance(value, ModuleFinalValue):
         return value
     read = value.read()
-    return None if read is None else read.completed_value()
+    if read is None:
+        return None
+    from sugar_lift_py_tests.outcome import Completed
+
+    completed = [face for face in read.exits if isinstance(face, Completed)]
+    return completed[0].value if len(completed) == 1 else None
 
 
 class ModuleFinalDecision:
@@ -1316,8 +1324,23 @@ def _module_end_value(ends, key):
     An arm that never reached the write (a route the write's ``if``/``try``
     arm did not take) binds nothing under the key, and a read of the key
     stands only on the route that wrote it (the phi over that route,
-    ``IfExp`` on a ``BranchResultRef``)."""
+    ``IfExp`` on a ``BranchResultRef``).
+
+    The read completes under the guard of the arms that bound the key (their
+    disjunction), never under truth: a function is called after an import
+    that completed, and only on such an arm did the import bind the value
+    (#7757: a halt is never dropped).  A module run whose every arm
+    completes leaves the read unguarded, as before.  One that completes
+    only where a call completes -- a class body's decorator applied where
+    it runs (#8962), a module-level call, a decorated ``def`` -- leaves it
+    under that call's ``completes`` atom, over the call term the read owes,
+    so where prove decides the call never completes (the decorator always
+    raises) no reader of the value completes, and a claim after the read is
+    never ``sat`` on an import that cannot complete."""
+    from functools import reduce
+
     from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import _or_guards
     from sugar_lift_py_tests.sugar.if_sugar import _joined_evaluation
 
     bound = []
@@ -1330,7 +1353,11 @@ def _module_end_value(ends, key):
     joined = _joined_evaluation(bound)
     if joined is None:
         return None
-    return ExitSet.completed(joined, owed=ExitSet(tuple(bound)).owed_items())
+    return ExitSet.completed(
+        joined,
+        guard=reduce(_or_guards, (arm.guard for arm in bound)),
+        owed=ExitSet(tuple(bound)).owed_items(),
+    )
 
 
 def _module_end_decision(ends, slot_id):
