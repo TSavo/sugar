@@ -1,16 +1,16 @@
-"""A dissolved comprehension evaluates its iterable display before any element
+"""A comprehension evaluates its iterable display before any element
 (#7757, surfaced by #8670).
 
 Python evaluates a comprehension's iterable -- every member of a display --
-once, before the first element.  A comprehension the unroll dissolves into a
-display substituted each member into the element, so ``[h(x) for x in [g1(),
-g2()]]`` was evaluated g1, h, g2, h.  Where ``h(g1())`` raises and ``g2()``
-raises something else, the dissolved display halted with ``h``'s exception
-where Python halts with ``g2``'s.  Each member that runs code is now evaluated
-before the first element, in order, its value held under its item key, and
-the element reads it there (``ListComp._members_evaluated_first``); an
-unrolled ``for`` over the dissolved display evaluates them the same way
-(``For._iterable_evaluated``).
+once, before the first element.  The unroll that once dissolved a
+comprehension into a display substituted each member into the element, so
+``[h(x) for x in [g1(), g2()]]`` was evaluated g1, h, g2, h: where
+``h(g1())`` raises and ``g2()`` raises something else, it halted with
+``h``'s exception where Python halts with ``g2``'s.  That dissolution is
+deleted (#8957): the comprehension is the one recurrence
+(``ComprehensionSugar``), which builds its iterable once, every member in
+order, before the first element; a ``for`` over it and an unpack of it read
+that one value.  These twins keep the order Python evaluates in.
 
 Each program has a truthful claim (what Python computes), which must
 complete, and a lying claim (what the interleaved order computed), which must
@@ -48,7 +48,7 @@ _PROGRAMS = {
         "1",
         "2",
     ),
-    "loop-over-a-dissolved-comprehension": (
+    "loop-over-a-comprehension": (
         "    ok = 0\n"
         "    try:\n"
         '        for y in [1 // x for x in [0, int("x")]]:\n'
@@ -61,10 +61,10 @@ _PROGRAMS = {
         "1",
         "2",
     ),
-    # An unpack consumes the dissolved display member by member
-    # (``Assign._unpacked_in_order``): what the display carries is evaluated
-    # before its first member.
-    "unpack-of-a-dissolved-comprehension": (
+    # An unpack evaluates the comprehension once, then unpacks its value
+    # (``DynamicUnpackAssignSugar``): the iterable is built before any
+    # element runs.
+    "unpack-of-a-comprehension": (
         "    ok = 0\n"
         "    try:\n"
         '        a, b = [1 // x for x in [0, int("x")]]\n'
@@ -78,8 +78,8 @@ _PROGRAMS = {
     ),
     # A dict comprehension's repeated key: Python evaluates the earlier
     # pair (its value raises here) before the later one overwrites it.  The
-    # dissolve dropped the earlier pair, so the dict was built and ``ok``
-    # stayed 0.
+    # deleted dissolve dropped the earlier pair, so the dict was built and
+    # ``ok`` stayed 0.
     "dict-comprehension-repeated-key": (
         "    ok = 0\n"
         "    try:\n"

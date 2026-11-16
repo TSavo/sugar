@@ -9261,10 +9261,6 @@ class Statement(Node):
         read with it (``_evaluation_slot``).  A re-substitution on the exit
         path its key was minted under keeps that key; a copy of it onto
         another exit path is another evaluation and gets its own.
-
-        Any node's occurrence is keyed this way: a member of an iterable
-        display a dissolved comprehension evaluates before its first element
-        (``ListComp._members_evaluated_first``) is keyed by its own.
         """
         from sugar_lift_python_source.canonical import cid_of_json
         from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
@@ -9622,9 +9618,8 @@ def _discharge_consumed_handler_tuple(handler) -> None:
     them.  The ``try`` builds each member as one matcher of the arm, in that
     order (``Try._authenticated_handler_specs``, ``TryStar._construct_
     sugar``), every face of it the arm's, and never builds the display as a
-    whole.  That consumption is its discharge, as a loop's iterable display
-    (``For._iterable_evaluated``) and an unpack's display
-    (``Assign._unpacked_displays``) are; its members answer for themselves,
+    whole.  That consumption is its discharge, as an unpack's display
+    (``Assign._unpacked_displays``) is; its members answer for themselves,
     built or refused by name."""
     if handler.type_ is not None and handler.type_.kind == "Tuple":
         handler.type_.discharge_by_substitution()
@@ -14106,23 +14101,15 @@ class Assign(Statement):
     def _unpacked_in_order(self, values) -> tuple:
         """``(name, value sugar)`` for each Name a display unpack binds
         (``values``, the bindings ``_destructured_binding`` read), in the
-        order Python evaluates them, each display level's carried
-        evaluations (``ListComp._evaluated_first_sugars``: a comprehension
-        the unroll dissolved into it evaluates its iterable before any
-        member) in its place as ``(None, sugar)`` -- evaluated there, bound
-        to no name (``MultiAssignSugar``).  A name repeated keeps its first
-        place and the value ``values`` gives it, as the bindings do."""
+        order Python evaluates them.  A name repeated keeps its first place
+        and the value ``values`` gives it, as the bindings do."""
         walk = self._unpack_walk()
         if walk is None:
             return tuple((name, value.sugar()) for name, value in values.items())
         entries: list = []
         seen: set = set()
         for kind, item in walk:
-            if kind == "display":
-                entries.extend(
-                    (None, sugar) for sugar in ListComp._evaluated_first_sugars(item)
-                )
-            elif kind == "name" and item in values and item not in seen:
+            if kind == "name" and item in values and item not in seen:
                 seen.add(item)
                 entries.append((item, values[item].sugar()))
         entries.extend(
@@ -15303,13 +15290,7 @@ class Assign(Statement):
                 )
 
                 evaluation = self._store_value_evaluation()
-                # A flat unpack consumes one display: what a comprehension the
-                # unroll dissolved into it carries is evaluated before every
-                # member, bound to no name (``UnpackStoreAssignSugar``).
-                name_bindings = [
-                    (None, sugar)
-                    for sugar in ListComp._evaluated_first_sugars(self.value)
-                ]
+                name_bindings = []
                 members = []
                 for leaf, val in store_pairs:
                     if isinstance(leaf, Name):
@@ -21142,14 +21123,10 @@ class Dict(Expression):
                 ),
                 site=self.fragment,
             )
-        # A dissolved comprehension evaluates its iterable before its first
-        # entry (``ListComp._dissolved_iterable``).
-        evaluated_first = ListComp._evaluated_first_sugars(self)
         return DictSugar(
             keys=tuple(item.key.sugar() for item in self.items),
             values=tuple(item.value.sugar() for item in self.items),
             site=self.fragment,
-            evaluated_first=evaluated_first,
         )
 
 
@@ -21180,13 +21157,9 @@ class Set(Expression):
                 ),
                 site=self.fragment,
             )
-        # A dissolved comprehension evaluates its iterable before its first
-        # member (``ListComp._dissolved_iterable``).
-        evaluated_first = ListComp._evaluated_first_sugars(self)
         return SetSugar(
             elements=tuple(e.sugar() for e in self.elts),
             site=self.fragment,
-            evaluated_first=evaluated_first,
         )
 
 
@@ -21497,42 +21470,6 @@ class ListComp(Expression):
                 roster, self.walrus_priors, strict=True
             )
         )
-
-    @staticmethod
-    def _carried_evaluations(display) -> tuple:
-        """``(evaluation, key)`` for each evaluation a dissolved display
-        carries before its first member (``_evaluations_slot``); empty for
-        any other display."""
-        evaluations = tuple(getattr(display, "iterable_evaluations", None) or ())
-        keys = getattr(display, "iterable_evaluation_keys", None)
-        if not isinstance(keys, tuple):
-            keys = (None,) * len(evaluations)
-        return tuple(zip(evaluations, keys, strict=True))
-
-    def _evaluated_first_sugars(self) -> tuple:
-        """The sugar of each evaluation a dissolved display makes before its
-        first member (``_dissolved_iterable``); empty for any other display.
-
-        One a member reads through its key (``_members_evaluated_first``)
-        holds its value there as it completes: the one bind an expression
-        makes under a key (``NamedExprSugar``, ``NamedExpressionValue.
-        bind``), never under a name -- ``<item>`` is no source name -- so
-        every element after it reads it (``reduce_operands``,
-        ``written_by``) and the display consumes it with the rest."""
-        from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
-
-        sugars = []
-        for evaluation, key in ListComp._carried_evaluations(self):
-            sugar = evaluation.sugar()
-            if key is not None:
-                sugar = NamedExprSugar(
-                    name="<item>",
-                    value=sugar,
-                    site=evaluation.fragment,
-                    evaluation=key,
-                )
-            sugars.append(sugar)
-        return tuple(sugars)
 
     def _construct_sugar(self):
         # A walrus in the element or a condition constructs: it writes its
@@ -26426,13 +26363,9 @@ class List(Expression):
                 ),
                 site=self.fragment,
             )
-        # A dissolved comprehension evaluates its iterable before its first
-        # member (``ListComp._dissolved_iterable``).
-        evaluated_first = ListComp._evaluated_first_sugars(self)
         return ListSugar(
             elements=tuple(e.sugar() for e in self.elts),
             site=self.fragment,
-            evaluated_first=evaluated_first,
         )
 
 
