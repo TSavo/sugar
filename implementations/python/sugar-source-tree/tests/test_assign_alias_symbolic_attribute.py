@@ -8,6 +8,7 @@ from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_source_tree.nodes import _ground_value
 from sugar_source_tree.tree import SourceFile
 
 
@@ -32,11 +33,13 @@ def test_alias_copies_the_authenticated_live_value_without_parallel_identity():
     )
     first, second, *_ = _runtime_entries(function)
 
-    assert second["renamed"].state.ref is first["original"].state.ref
-    assert (
-        second["renamed"].state.fragment.seal().cid
-        == first["original"].state.fragment.seal().cid
-    )
+    # The alias reads the binding the original holds (a reference re-spanned
+    # to the read's own site, #7661): both resolve to the ONE literal
+    # occurrence assigned, never a parallel copy of it.
+    alias = _ground_value(second["renamed"].state)
+    held = _ground_value(first["original"].state)
+    assert alias is not None and held is not None
+    assert alias.fragment.seal().cid == held.fragment.seal().cid
     assert second["renamed"].coordinate.cid != first["original"].coordinate.cid
 
 
@@ -49,11 +52,13 @@ def test_renamed_alias_has_the_same_single_binding_path():
     )
     first, second, *_ = _runtime_entries(function)
 
-    assert second["projected_value"].state.ref is first["source_value"].state.ref
-    assert (
-        second["projected_value"].state.fragment.seal().cid
-        == first["source_value"].state.fragment.seal().cid
-    )
+    # The alias reads the binding the original holds (a reference re-spanned
+    # to the read's own site, #7661): both resolve to the ONE literal
+    # occurrence assigned, never a parallel copy of it.
+    alias = _ground_value(second["projected_value"].state)
+    held = _ground_value(first["source_value"].state)
+    assert alias is not None and held is not None
+    assert alias.fragment.seal().cid == held.fragment.seal().cid
     assert (
         second["projected_value"].coordinate.cid != first["source_value"].coordinate.cid
     )

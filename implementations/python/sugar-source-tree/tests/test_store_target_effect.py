@@ -110,7 +110,11 @@ def test_attribute_store_lifts_a_red_effect_and_the_block_continues():
 
 
 def test_attribute_store_post_out_equals_the_returned_value():
-    v = _completed(_fn("def A(v):\n    o.a = v\n    return v\n").sugar().desugar())
+    # ``o`` must be bound for the store to run at all: a name nothing binds is
+    # a NameError halt and the body never completes (``_FREE``).
+    v = _completed(
+        _fn(_FREE + "def A(v):\n    o.a = v\n    return v\n").sugar().desugar()
+    )
     post = v.post()
     assert post.name == "="
     assert post.args[0].name == "out"
@@ -159,10 +163,21 @@ def test_attribute_store_witness_site_is_the_tree_fragment():
 
 
 def test_subscript_store_demand_names_all_three_formal_coordinates():
-    pending = _pending_subscript_store()
-
-    assert len(pending.demand.operand_coordinate_cids) == 3
-    assert len(set(pending.demand.operand_coordinate_cids)) == 3
+    """The store's own halt -- the dispatched ``__setitem__`` or the
+    undecided item mutation, never a pending carrier waiting on a caller
+    (#7757) -- names the receiver, the index and the value: all three
+    formals."""
+    outcome = _subscript_store_outcome()
+    stores = [
+        halt
+        for halt in outcome.halts()
+        if getattr(halt.effect, "producer_node_owner", None)
+        in ("UnknownCallee:dispatch:__setitem__", "UndecidedSetitem")
+    ]
+    assert stores, outcome.exits
+    operation = " ".join(repr(halt.guard) for halt in stores)
+    for formal in ("xs", "i", "v"):
+        assert f"name='{formal}'" in operation, operation
 
 
 def test_two_stores_in_one_block_both_lift_and_discriminate_by_target():
@@ -210,19 +225,19 @@ def test_symbolic_attribute_store_witnesses_real_receiver_and_value_terms():
 
 def test_chained_attribute_store_reuses_one_constructed_rhs():
     function = _fn(
-        "def arbitrary(constructed_value):\n"
+        _FREE + "def arbitrary(constructed_value):\n"
         "    renamed = symbolic_receiver.payload = constructed_value\n"
         "    return renamed\n"
     )
     assignment = next(node for node in function.walk() if node.kind == "Assign")
     sugar = assignment.sugar()
+    # Each store target's statement reads the value through the statement's
+    # key (``ChainedAssignSugar.evaluation``), never the RHS sugar again.
+    assert sugar.stores
+    assert all(store.value is not sugar.value for store in sugar.stores)
     calls = []
     counted = _CountingSugar(sugar.value, calls)
-    rewritten = replace(
-        sugar,
-        value=counted,
-        stores=tuple(replace(store, value=counted) for store in sugar.stores),
-    )
+    rewritten = replace(sugar, value=counted)
 
     rewritten.desugar()
     assert calls == [1]
@@ -249,7 +264,12 @@ def test_rhs_constructs_before_halted_receiver_and_store_does_not_continue():
         value=_CountingSugar(sugar.value, value_calls),
     )
 
-    assert rewritten.desugar() is halt
+    result = rewritten.desugar()
+    # The receiver's halt is the statement's: nothing is stored after it.
+    assert result.halts() == result.exits
+    assert [face.effect for face in result.halts()] == [
+        face.effect for face in halt.halts()
+    ]
     assert value_calls == [1]
     assert receiver_calls == [1]
 

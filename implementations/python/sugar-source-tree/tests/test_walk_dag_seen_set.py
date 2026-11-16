@@ -21,12 +21,15 @@ FIXTURE = (
 )
 
 
-def _open(text: str, name: str = "walk_dag.py") -> SourceFile:
+def _open(
+    text: str, name: str = "walk_dag.py", construction_context=None
+) -> SourceFile:
     if not text.endswith("\n"):
         text += "\n"
     return SourceFile(
         (text, name, blake3_512_of(text.encode())),
         reporter=CollectingReporter(),
+        construction_context=construction_context,
     )
 
 
@@ -119,9 +122,20 @@ def test_fibonacci_self_field_store_walk_grows_linearly() -> None:
 
 
 def test_fibonacci_self_field_store_constructs() -> None:
-    """Full FunctionDef.sugar of the minimal file must complete (not hang)."""
+    """Full FunctionDef.sugar of the minimal file must complete (not hang).
+
+    Construction consults the context, so the file is opened with one: a
+    fixture read alone, with no workspace (never the bare door)."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+
     text = FIXTURE.read_text()
-    sf = _open(text, name=FIXTURE.name)
+    sf = _open(
+        text,
+        name=FIXTURE.name,
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
     fn = next(f for f in sf.functions() if f.name == "setup_method")
     # Bound construct: if walk regresses, this is where the seal hung.
     result = fn.sugar()

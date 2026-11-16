@@ -207,14 +207,25 @@ _CONSTRUCTED_RECEIVER_SOURCE = (
 )
 
 
-def _constructed_object(annotation):
+def _init_shape(annotation):
+    """The arms of ``C.__init__``'s own reduction, as (arm kind, effect
+    owner) pairs.  A class call reaches ``__init__`` through its dispatched
+    edge (#7757 B3): no caller runs the body in place, so the parity is read
+    where the store runs, in the method's own contract."""
     source = _CONSTRUCTED_RECEIVER_SOURCE.format(annotation=annotation)
     function = next(
         item
         for item in SourceFile(path_source(_write(source)), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()
-        if item.name == "make"
+        if item.name.endswith("__init__")
     )
-    return function.sugar().desugar().completed_value().record.statements[-1].value
+    outcome = function.sugar().desugar()
+    return [
+        (
+            type(exit_).__name__,
+            getattr(getattr(exit_, "effect", None), "producer_node_owner", None),
+        )
+        for exit_ in outcome.exits
+    ]
 
 
 def test_annotated_store_on_constructed_receiver_matches_plain_store():
@@ -226,16 +237,14 @@ def test_annotated_store_on_constructed_receiver_matches_plain_store():
     halted store arm, and ClassConstructorBodySugar could not project one
     completed floor value out of the resulting ExitSet.
     """
-    plain = _constructed_object("")
-    annotated = _constructed_object(": list")
+    plain = _init_shape("")
+    annotated = _init_shape(": list")
 
     # Field coordinates carry each fixture's own source cid, so the parity
-    # claim is the constructed SHAPE: same fields, same constructed value kinds.
-    assert [field.name for field in plain.fields] == ["a", "rows"]
-    assert [field.name for field in annotated.fields] == ["a", "rows"]
-    assert [type(field.value).__name__ for field in annotated.fields] == [
-        type(field.value).__name__ for field in plain.fields
-    ]
+    # claim is the SHAPE: the same arms, halting by the same producers, and
+    # the body completes.
+    assert ("Completed", None) in plain
+    assert annotated == plain
 
 
 def test_bare_attribute_annotation_evaluates_only_renamed_receiver():

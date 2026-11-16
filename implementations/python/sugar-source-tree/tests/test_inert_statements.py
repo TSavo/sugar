@@ -10,20 +10,21 @@ nothing left for them to say.
 """
 
 import tempfile
+from pathlib import Path
 
-from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
 
 from native_carrier_testimony import undecided_function_value
 
 
 def _val(src):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
-        path = f.name
-    function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+    # The one construction door, under a workspace: an ``assert`` halts at a
+    # ground ``AssertionError`` exit whose locus is workspace-relative.
+    root = Path(tempfile.mkdtemp())
+    path = root / "m.py"
+    path.write_text(src, encoding="utf-8")
+    function = next(open_source_file_for_construction(path, root=root).functions())
     outcome = function.sugar().desugar()
     if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
         return outcome.completed_value()

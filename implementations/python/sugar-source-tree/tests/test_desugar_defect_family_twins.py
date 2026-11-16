@@ -298,6 +298,22 @@ def test_a_condition_with_no_formula_at_all_is_still_loud() -> None:
 # --------------------------------------------------------------------------
 
 
+def _delete_site():
+    """The fragment of ``del y`` after a loop that may not bind ``y``."""
+    import tempfile
+    from pathlib import Path
+
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+    root = Path(tempfile.mkdtemp())
+    path = root / "twin.py"
+    path.write_text(
+        "def f(xs):\n    for y in xs:\n        pass\n    del y\n", encoding="utf-8"
+    )
+    source_file = open_source_file_for_construction(path, root=root)
+    return next(node for node in source_file.nodes() if node.kind == "Delete").fragment
+
+
 def test_delete_over_a_loop_guarded_projection_unions_its_faces() -> None:
     """POSITIVE. `del` over a loop-guarded projection had no arm at all, so it
     raised `TypeError: LoopGuardedProjection` -- while `read` over the SAME
@@ -312,6 +328,10 @@ def test_delete_over_a_loop_guarded_projection_unions_its_faces() -> None:
     )
     from sugar_lift_py_tests.sugar.delete_name_sugar import delete_binding
 
+    # The halting face raises at a real site: an unbound read's error is
+    # decided by the scope its occurrence sits in (``UnboundLocalError`` for
+    # a function local), which only a fragment of a parsed unit can answer.
+    site = _delete_site()
     entered = atomic("entered", [])
     empty = atomic("empty", [])
     projection = LoopGuardedProjection(
@@ -319,10 +339,10 @@ def test_delete_over_a_loop_guarded_projection_unions_its_faces() -> None:
             # The loop ran: `y` is bound, so deleting it completes.
             LoopGuardedCompletedFace("normal", entered, _BoundState()),
             # The loop never ran: `y` was never bound, so deleting it halts.
-            LoopGuardedCompletedFace("normal", empty, UnboundProjection("y", _Site())),
+            LoopGuardedCompletedFace("normal", empty, UnboundProjection("y", site)),
         )
     )
-    exits = delete_binding(projection, name="y", site=_Site(), ctx=None)
+    exits = delete_binding(projection, name="y", site=site, ctx=None)
     completed = [e for e in exits.exits if isinstance(e, Completed)]
     halted = [e for e in exits.exits if isinstance(e, Halted)]
     assert len(completed) == 1

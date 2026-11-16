@@ -21,8 +21,10 @@ def _fn(src):
 
 def _post_term(src):
     outcome = _fn(src).sugar().desugar()
-    if not hasattr(outcome, "exits"):
-        return outcome.value.post().args[1]
+    if outcome.completed_value() is not None:
+        # Nothing in the string runs code (a literal-only f-string): the
+        # one unconditional completion.
+        return outcome.completed_value().post().args[1]
     # ``f"{x}"`` on a formal runs ``type(x).__format__`` (``!r``/``!s``/``!a``
     # its ``__repr__``/``__str__`` first), which may be user code: the return
     # is the one unanswered call, completing only under its atom and halting

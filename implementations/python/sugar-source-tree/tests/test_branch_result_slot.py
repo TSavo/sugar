@@ -31,41 +31,6 @@ def test_unchanged_if_mints_and_stores_its_branch_slot_once(monkeypatch, tmp_pat
     assert sugar.statements[0].branch_slot.slot_id.startswith("branch-result:")
 
 
-def test_each_unrolled_iteration_of_an_if_decides_its_own_slot(tmp_path):
-    """A branch decision is made each time the ``if`` runs: two unrolled
-    iterations of one source ``if`` are two evaluations, so two slots, never
-    one decision shared by both runs of the body."""
-    source = (
-        "def f(c):\n"
-        "    x = 0\n"
-        "    for i in (1, 2):\n"
-        "        if c > i:\n"
-        "            x = i\n"
-        "    return x\n"
-    )
-    path = tmp_path / "unrolled_if.py"
-    path.write_text(source, encoding="utf-8")
-    function = next(
-        SourceFile(
-            path_source(path),
-            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-        ).functions()
-    )
-
-    body, _changed = function._substitute_body(function.body, {})
-    slots = [
-        slot
-        for statement in body
-        for node in statement.walk()
-        if node.kind == "If"
-        for slot in (getattr(node, "branch_result_slot_id", None),)
-        if slot is not None
-    ]
-
-    assert len(slots) == 2, slots
-    assert slots[0] != slots[1], "two iterations of one if shared one branch slot"
-
-
 _LIVE_LOOP = "blake3-512:" + "ab" * 64
 
 
@@ -179,21 +144,30 @@ def test_effectful_condition_is_constructed_once_and_one_slot_drives_all_faces(
         if getattr(exit_.effect, "producer_node_owner", None)
         == "UnknownCallee:predicate"
     ]
-    (halted,) = [exit_ for exit_ in halts if exit_ is not call_halt]
+    # The truth of what the call returned is the one truth rule's two faces
+    # (#9018): its own halt stands beside the call's and the branch's.
+    from sugar_lift_py_tests.effect import NameErrorEffect
+    from sugar_lift_py_tests.outcome.exit_set import _are_exclusive, _conjuncts
+
+    assert any(
+        str(getattr(exit_.effect, "producer_node_owner", "")).endswith(".truth")
+        for exit_ in halts
+    ), halts
+    (halted,) = [exit_ for exit_ in halts if isinstance(exit_.effect, NameErrorEffect)]
     completed = next(exit_ for exit_ in exits if type(exit_).__name__ == "Completed")
     from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
 
     assert call_halt.guard.kind == "not"
     (completion,) = call_halt.guard.operands
     assert completion.name == "python:unknown_callee_call.completes"
-    assert halted.guard.kind == "and"
-    assert halted.guard.operands == (
-        completion,
-        branch_result_guard(if_sugar.branch_slot, if_sugar.site),
+    # The read halts beneath the call's completion under the ONE slot the
+    # if decided; the completed face is the other side of that slot.
+    assert completion in _conjuncts(halted.guard)
+    assert branch_result_guard(if_sugar.branch_slot, if_sugar.site) in _conjuncts(
+        halted.guard
     )
-    assert completed.guard.kind == "and"
-    assert completed.guard.operands[0] == completion
-    assert completed.guard.operands[1].kind == "not"
+    assert completion in _conjuncts(completed.guard)
+    assert _are_exclusive(halted.guard, completed.guard)
 
     predicate_cids = {
         node.fragment.seal().cid

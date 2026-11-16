@@ -6,23 +6,35 @@ Real-sorted TermValue (int -> Int, float -> Real, no Number sort).
 """
 
 import tempfile
+from pathlib import Path
 
-from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+from sugar_lift_py_tests.outcome import Completed
 
-from native_carrier_testimony import completed_function_value, undecided_function_value
+from native_carrier_testimony import undecided_function_value
 
 
 def _fn(src):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
-        path = f.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+    # The one construction door, under a workspace: an ``assert`` halts at a
+    # ground ``AssertionError`` exit whose locus is workspace-relative.
+    root = Path(tempfile.mkdtemp())
+    path = root / "m.py"
+    path.write_text(src, encoding="utf-8")
+    return next(open_source_file_for_construction(path, root=root).functions())
 
 
 def _inv(src):
-    return completed_function_value(_fn(src)).invs()[0]
+    """The fact of the one completed arm.  ``is`` decides without a dunder,
+    so nothing but the ``assert`` itself can halt: it raises
+    ``AssertionError`` under the fact's complement (#7757: a halt is never
+    dropped), and the body completes under the fact."""
+    outcome = _fn(src).sugar().desugar().normalize()
+    completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    assert len(completed) == 1, outcome.exits
+    assert [halt.effect.exception_name for halt in outcome.halts()] == [
+        "AssertionError"
+    ], outcome.exits
+    return completed[0].value.invs()[0]
 
 
 def test_is_is_identity():

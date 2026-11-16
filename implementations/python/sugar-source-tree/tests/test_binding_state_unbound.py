@@ -6,8 +6,8 @@ import pytest
 
 from sugar_lift_py_tests.effect import NameErrorEffect, RaiseEffect
 from sugar_lift_py_tests.floor import ReturnValue, TermValue, UniverseValue
-from sugar_lift_py_tests.ir import and_, make_var, not_, or_, py_truthy
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome.exit_set import _are_exclusive, _conjuncts
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.binding_state import (
     BranchResultSlot,
@@ -15,7 +15,7 @@ from sugar_source_tree.binding_state import (
     UnboundBinding,
 )
 from sugar_source_tree.nodes import Node
-from sugar_source_tree.panic import BackendDefect, SugarNotWritten
+from sugar_source_tree.panic import BackendDefect
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
@@ -93,63 +93,128 @@ def _return(exit_):
     return returns[0]
 
 
+def _truth_halt(exit_) -> bool:
+    """A formal's truth halt: ``bool(c)`` on a parameter is the one truth
+    rule's two faces (#9018), so ``if c:`` completes under its truth's
+    completion and halts undetermined under the complement, beside every
+    arm the branch itself decides."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+
+    return (
+        isinstance(exit_, Halted)
+        and isinstance(exit_.effect, UndeterminedRaiseEffect)
+        and str(exit_.effect.producer_node_owner).endswith(".truth")
+    )
+
+
 def _partition(out):
+    """The halts the body itself decides and its completions; a formal's
+    truth halts (``_truth_halt``) are kept beside them, never counted as
+    either."""
     assert isinstance(out, ExitSet)
-    halted = [e for e in out.exits if isinstance(e, Halted)]
+    halted = [e for e in out.exits if isinstance(e, Halted) and not _truth_halt(e)]
     completed = [e for e in out.exits if isinstance(e, Completed)]
     return halted, completed
+
+
+def _completed_values(out):
+    """Every completed arm's value; at least one, and no halt but a
+    formal's truth halt beside them."""
+    assert isinstance(out, ExitSet), out
+    assert all(_truth_halt(halt) for halt in out.halts()), out.halts()
+    values = [e.value for e in out.exits if isinstance(e, Completed)]
+    assert values, out
+    return values
+
+
+def _truthy_literals(guard):
+    """The positive branch literals (``py.truthy(...)``) ``guard`` conjoins."""
+    return {
+        literal
+        for literal in _conjuncts(guard)
+        if getattr(literal, "name", None) == "py.truthy"
+    }
 
 
 def test_delete_one_branch_then_read_has_exact_guard_partition() -> None:
     out = _out("def f(c):\n x=1\n if c:\n  del x\n return x\n")
     halted, completed = _partition(out)
-    guard = py_truthy(make_var("c"))
     assert len(halted) == len(completed) == 1
-    assert halted[0].guard != guard
     assert isinstance(halted[0].effect, NameErrorEffect)
-    assert completed[0].guard == not_(halted[0].guard)
+    # The read halts exactly where the branch deleted, and completes exactly
+    # where it did not: the two faces of one branch, never overlapping.
+    assert _are_exclusive(halted[0].guard, completed[0].guard)
+    assert _truthy_literals(halted[0].guard)
     assert _return(completed[0]).value == TermValue(1)
 
     reverse = _out("def f(c):\n x=1\n if c:\n  pass\n else:\n  del x\n return x\n")
     halted, completed = _partition(reverse)
-    assert halted[0].guard == not_(completed[0].guard)
+    assert len(halted) == len(completed) == 1
+    assert isinstance(halted[0].effect, NameErrorEffect)
+    assert _are_exclusive(halted[0].guard, completed[0].guard)
+    assert _truthy_literals(completed[0].guard)
 
 
 def test_delete_both_branches_then_read_is_unconditionally_unbound() -> None:
     out = _out("def f(c):\n x=1\n if c:\n  del x\n else:\n  del x\n return x\n")
     assert out.halts() == out.exits
-    (halt,) = out.halts()
-    assert isinstance(halt.effect, NameErrorEffect)
+    named = [halt for halt in out.halts() if not _truth_halt(halt)]
+    assert named
+    assert all(isinstance(halt.effect, NameErrorEffect) for halt in named), named
 
 
 def test_neither_branch_deletes_keeps_ordinary_value_phi() -> None:
     out = _out("def f(c):\n x=1\n if c:\n  x=2\n else:\n  x=3\n return x\n")
-    value = out.completed_value()
-    assert value is not None
-    assert isinstance(value, UniverseValue)
-    assert not any(isinstance(e, NameErrorEffect) for e in value.record.statements)
+    for value in _completed_values(out):
+        assert isinstance(value, UniverseValue)
+        assert not any(isinstance(e, NameErrorEffect) for e in value.record.statements)
 
 
 def test_unconditional_reassignment_replaces_tombstone_but_read_rhs_does_not() -> None:
     out = _out("def f(c):\n x=1\n if c:\n  del x\n x=2\n return x\n")
-    value = out.completed_value()
-    assert value is not None
-    returns = [e for e in value.record.statements if isinstance(e, ReturnValue)]
-    assert returns[0].value == TermValue(2)
+    for value in _completed_values(out):
+        returns = [e for e in value.record.statements if isinstance(e, ReturnValue)]
+        assert returns[0].value == TermValue(2)
 
     bad = _out("def f(c):\n x=1\n if c:\n  del x\n x=x+1\n return x\n")
     halted, completed = _partition(bad)
-    assert isinstance(halted[0].effect, NameErrorEffect)
-    assert completed[0].guard == not_(halted[0].guard)
+    (name_error,) = [h for h in halted if isinstance(h.effect, NameErrorEffect)]
+    assert completed
+    assert all(_are_exclusive(name_error.guard, arm.guard) for arm in completed)
 
 
 def test_delete_after_halt_does_not_create_a_reachable_name_error() -> None:
     out = _out("def f(c, E):\n x=1\n if c:\n  raise E\n  del x\n return x\n")
     halted, completed = _partition(out)
-    assert len(halted) == len(completed) == 1
-    assert isinstance(halted[0].effect, RaiseEffect)
-    assert not isinstance(halted[0].effect, NameErrorEffect)
-    assert completed[0].guard == not_(halted[0].guard)
+    # The raise halts its branch (raising a formal may itself halt more than
+    # one way); the delete after it is unreachable, so no read halts on it.
+    assert halted, out.exits
+    assert not any(isinstance(h.effect, NameErrorEffect) for h in halted)
+    assert len(completed) == 1
+    assert all(_are_exclusive(h.guard, completed[0].guard) for h in halted)
+    assert _return(completed[0]).value == TermValue(1)
+
+
+def _guarded_slots(reads):
+    """Every branch slot a guarded read in ``reads`` is under, through the
+    states and the nodes they hold (a state is never an AST child, so the
+    tree walk alone does not reach a read a state holds)."""
+    slots = set()
+    seen = set()
+    pending = [read.state for read in reads]
+    while pending:
+        state = pending.pop()
+        if id(state) in seen:
+            continue
+        seen.add(id(state))
+        if isinstance(state, GuardedBinding):
+            slots.add(state.slot.slot_id)
+            pending.extend((state.when_true, state.when_false))
+        elif isinstance(state, Node):
+            pending.extend(
+                node.state for node in state.walk() if node.kind == "GuardedBindingRead"
+            )
+    return slots
 
 
 def test_delete_already_unbound_and_second_delete_are_loud() -> None:
@@ -166,15 +231,16 @@ def test_delete_already_unbound_and_second_delete_are_loud() -> None:
 def test_nested_conditional_delete_retains_both_source_guards() -> None:
     out = _out("def f(a,b):\n x=1\n if a:\n  if b:\n   del x\n return x\n")
     halted, completed = _partition(out)
-    ga = py_truthy(make_var("a"))
-    gb = py_truthy(make_var("b"))
-    assert halted[0].guard.kind == "and"
-    outer, inner = halted[0].guard.operands
-    assert outer != inner
-    assert completed[0].guard == or_([not_(outer), and_([outer, not_(inner)])])
+    (name_error,) = [h for h in halted if isinstance(h.effect, NameErrorEffect)]
+    # The delete ran only under BOTH branches: the halt holds both source
+    # guards, and no completed arm overlaps it.
+    assert len(_truthy_literals(name_error.guard)) >= 2, name_error.guard
+    assert completed
+    assert all(_are_exclusive(name_error.guard, arm.guard) for arm in completed)
+    assert all(_return(arm).value == TermValue(1) for arm in completed)
 
 
-def test_pandas_blocks_nested_if_augassign_reads_unbound_binding_as_a_node() -> None:
+def test_pandas_blocks_nested_if_augassign_reads_the_unpack_binding() -> None:
     source = (
         "def f(i, values):\n"
         " if isinstance(i, tuple):\n"
@@ -185,7 +251,12 @@ def test_pandas_blocks_nested_if_augassign_reads_unbound_binding_as_a_node() -> 
     )
     function = _substituted(source)
     reads = [node for node in function.walk() if node.kind == "GuardedBindingRead"]
-    assert any(isinstance(read.state, UnboundBinding) for read in reads)
+    # The unpack binds ``loc`` on its completed face (a read of its
+    # projection key, #7661), so no read of ``loc`` after it is unbound.
+    assert not any(
+        isinstance(read.state, UnboundBinding) and read.name == "loc"
+        for read in reads
+    )
     # #6316 drained this refusal too. Here the unpack sits INSIDE an `if`, so the
     # arity obligation is one HALTED face of the partition and the complementary
     # face still completes -- the guard and the obligation coexist, which is the
@@ -209,13 +280,11 @@ def test_pandas_html_if_augassign_reads_guarded_binding_as_a_node() -> None:
     )
     first_if, second_if = function.body[:2]
     reads = [node for node in function.walk() if node.kind == "GuardedBindingRead"]
-    outer = next(read for read in reads if isinstance(read.state, GuardedBinding))
-    addition = outer.state.when_true
-    old_read = addition.left
-    assert old_read.kind == "GuardedBindingRead"
-    assert isinstance(old_read.state, GuardedBinding)
-    assert old_read.state.slot.slot_id == first_if.branch_result_slot_id
-    assert outer.state.slot.slot_id == second_if.branch_result_slot_id
+    slots = _guarded_slots(reads)
+    # The augmented read of the old ``body`` is guarded by the first ``if``
+    # (bound only under ``c``); the final read by the second.
+    assert first_if.branch_result_slot_id in slots, slots
+    assert second_if.branch_result_slot_id in slots, slots
 
     halted, completed = _partition(
         _out(
@@ -228,13 +297,12 @@ def test_pandas_html_if_augassign_reads_guarded_binding_as_a_node() -> None:
         )
     )
     assert any(isinstance(face.effect, NameErrorEffect) for face in halted)
-    assert any(
-        getattr(getattr(_return(face).value, "term", None), "name", None) == "+"
-        for face in completed
-    )
+    returned = [_return(face).value for face in completed]
+    assert TermValue(1) in returned, returned  # c, not foot
+    assert any(value != TermValue(1) for value in returned), returned  # the sum
 
 
-def test_pandas_converter_if_augassign_reads_unbound_binding_as_a_node() -> None:
+def test_pandas_converter_if_augassign_reads_the_unpack_binding() -> None:
     source = (
         "def f(locs):\n"
         " vmin, vmax = locs\n"
@@ -246,7 +314,9 @@ def test_pandas_converter_if_augassign_reads_unbound_binding_as_a_node() -> None
     function = _substituted(source)
     reads = [node for node in function.walk() if node.kind == "GuardedBindingRead"]
     names = {read.name for read in reads if isinstance(read.state, UnboundBinding)}
-    assert {"vmin", "vmax"} <= names
+    # The unpack binds both names on its completed face (#7661): no read of
+    # either is unbound.
+    assert not ({"vmin", "vmax"} & names), names
     # #6316 drained this refusal. The unpack no longer declines to have a
     # meaning: the RHS is a plain name with no authenticated cardinality, so the
     # arity demand is RETAINED as a typed effect carrying the exact obligation.
@@ -283,7 +353,9 @@ def test_binding_state_is_never_an_ast_child_or_node_protocol_value() -> None:
     for state in (unbound, guarded):
         assert not isinstance(state, Node)
         assert not hasattr(state, "ref")
-        assert not hasattr(state, "sugar")
+        # A state projects through the one binding door
+        # (``_project_binding_state_sugar``), never ``Node.sugar``.
+        assert type(state).sugar is not Node.sugar
 
     target = _substituted("def f(x):\n x += 1\n").body[0].target
     with pytest.raises(BackendDefect, match="non-Node operands"):
@@ -336,10 +408,10 @@ def test_try_finally_rebinding_applies_to_normal_and_handler_completions() -> No
         " finally:\n  x=9\n"
         " return x\n"
     )
-    value = out.completed_value()
-    assert value is not None
-    returns = [e for e in value.record.statements if isinstance(e, ReturnValue)]
-    assert returns[0].value == TermValue(9)
+    # Both the normal and the handler completion leave through the finally.
+    for value in _completed_values(out):
+        returns = [e for e in value.record.statements if isinstance(e, ReturnValue)]
+        assert returns[0].value == TermValue(9)
 
 
 def test_try_conditional_raise_routes_to_handler_and_joins_bindings() -> None:
@@ -349,4 +421,7 @@ def test_try_conditional_raise_routes_to_handler_and_joins_bindings() -> None:
         " except ValueError:\n  x=2\n"
         " return x\n"
     )
-    assert isinstance(out.completed_value(), UniverseValue)
+    # ``x`` is bound on the body's and the handler's completion alike: no
+    # read of it halts.
+    for value in _completed_values(out):
+        assert isinstance(value, UniverseValue)

@@ -89,17 +89,19 @@ def test_function_masks_its_parameter():
 
 
 def test_a_block_threads_its_assignments():
-    # x = 5; return x -- the assignment binds x for the REST of the block, so
-    # substitute inlines it: `return x` becomes `return 5`. This is the temporal
-    # that used to live in ctx.temporal, now pure tree rewriting: the block
-    # threads each binding forward as it walks its statements.
+    # x = 5; return x -- the assignment binds x for the REST of the block:
+    # `return x` reads the reference to the assignment's key, whose ground
+    # value is 5 (temporal choice 1, #7661; the read is never a copy of the
+    # literal). Pure tree rewriting: the block threads each binding forward
+    # as it walks its statements.
     f = next(_tree("def f():\n    x = 5\n    return x\n").functions())
     ret = next(n for n in f.substitute({}).walk() if n.kind == "Return")
-    assert ret.value.kind == "Constant" and ret.value.value == 5
+    assert ret.value.kind == "EvaluationRef" and ret.value.name == "x"
+    assert ret.value.ground_value().value == 5
     # a rebind shadows for the tail (single-assignment): y = 1; y = 2; return y -> 2
     g = next(_tree("def g():\n    y = 1\n    y = 2\n    return y\n").functions())
     retg = next(n for n in g.substitute({}).walk() if n.kind == "Return")
-    assert retg.value.value == 2
+    assert retg.value.ground_value().value == 2
 
 
 def test_binders_mask_their_bound_names():
@@ -122,7 +124,12 @@ def test_binders_mask_their_bound_names():
     c1 = next(
         n for n in _tree("a = [i for i in xs]\n").root.walk() if n.kind == "ListComp"
     )
-    assert c1.substitute({"i": _bind_target()}) is c1
+    # The element reads the member coordinate the comprehension binds each
+    # item under (``ListComp._target_references``): never the outer 3.
+    masked = c1.substitute({"i": _bind_target()}).elt
+    assert masked.kind == "EvaluationRef" and masked.name == "i"
+    assert masked.member
+    assert masked.ground_value() is None
     c2 = next(
         n for n in _tree("a = [y for i in xs]\n").root.walk() if n.kind == "ListComp"
     )
@@ -143,13 +150,14 @@ def test_the_base_is_loud_for_an_unwritten_node():
 
 
 def test_aug_assign_rebinds_to_the_operation():
-    # x = 1; x += 2; return x -- the augmented assignment rebinds x to `x + 2`,
-    # reading the OLD x (1) from the threaded scope, so `return x` inlines to
-    # `return 1 + 2`. Temporal, pure tree rewriting.
+    # x = 1; x += 2; return x -- the augmented assignment rebinds x: `return
+    # x` reads the reference to the AugAssign's own evaluation, which the
+    # statement binds at reduce (temporal choice 1, #7661). That key carries
+    # no ground value: a read of the OLD binding would be ground 1.
     f = next(_tree("def f():\n    x = 1\n    x += 2\n    return x\n").functions())
     ret = next(n for n in f.substitute({}).walk() if n.kind == "Return")
-    assert ret.value.kind == "BinOp"
-    assert ret.value.left.value == 1 and ret.value.right.value == 2
+    assert ret.value.kind == "EvaluationRef" and ret.value.name == "x"
+    assert ret.value.ground_value() is None
 
 
 def test_walrus_binding_leaks_to_the_block():

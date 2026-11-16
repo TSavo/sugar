@@ -9,10 +9,9 @@ undecided comparison's two faces where it runs (#7757, audit row NEW-1).
 """
 
 import tempfile
+from pathlib import Path
 
-from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 
 from native_carrier_testimony import (
     atoms_named,
@@ -23,10 +22,13 @@ from native_carrier_testimony import (
 
 
 def _fn(src: str):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
-        path = f.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+    # The one construction door, under a workspace: an ``assert`` halts at a
+    # ground ``AssertionError`` exit whose locus is workspace-relative, as
+    # every lifted file's is (``ground_exit``).
+    root = Path(tempfile.mkdtemp())
+    path = root / "m.py"
+    path.write_text(src, encoding="utf-8")
+    return next(open_source_file_for_construction(path, root=root).functions())
 
 
 def _inv(src: str, owner: str):

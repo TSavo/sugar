@@ -30,10 +30,11 @@ def test_list_tuple_set_dict_construct_their_terms():
 
 
 def test_collection_composes_with_a_call():
-    # len([z, z, z]) -- the list is a real term inside the call
+    # len([z, z, z]) -- the builtin over a display of three members: the
+    # reduction decides it, whatever z holds (a display's length never
+    # reads its members).
     term = _post_term("def A(z):\n    return len([z, z, z])\n")
-    assert term.name == "call:len"
-    assert term.args[0].name == "array" and len(term.args[0].args) == 3
+    assert type(term).__name__ == "_ConstInt" and term.value == 3
 
 
 def test_star_spread_builds_reference_list_shape():
