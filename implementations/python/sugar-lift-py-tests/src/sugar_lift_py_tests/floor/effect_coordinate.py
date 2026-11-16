@@ -26,6 +26,9 @@ class EffectCoordinate(FloorValue):
 
         return ctor("python:effect_slot", [str_const(self.slot_id)])
 
+    def is_identical(self, other, site):
+        return slot_identity(self, other, site, super().is_identical(other, site))
+
     def attribute(self, name, site, ctx):
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import effect_slot_source
 
@@ -72,6 +75,9 @@ class ExceptionInfoCoordinate(FloorValue):
 
         return ctor("python:exception_info", [str_const(self.slot_id)])
 
+    def is_identical(self, other, site):
+        return slot_identity(self, other, site, super().is_identical(other, site))
+
     def attribute(self, name, site, ctx):
         if name == "value":
             from sugar_lift_py_tests.outcome import ExitSet
@@ -97,6 +103,48 @@ class ObservedEffectValue(EffectCoordinate):
         if isinstance(context, RaiseEffect) and isinstance(value, FloorValue):
             return ExitSet.completed(value)
         return super().attribute(name, site, ctx)
+
+
+_SLOT_FAMILIES = (EffectCoordinate, ExceptionInfoCoordinate)
+
+
+def reads_an_effect_slot(value) -> bool:
+    """Whether ``value`` is the coordinate of an effect slot: what an
+    ``except ... as e``, a ``with ... as x`` or a ``pytest.raises ... as ei``
+    binds where nothing deposited a decided value (``EffectRefSugar``,
+    ``ObservationRefSugar``)."""
+    return isinstance(value, _SLOT_FAMILIES)
+
+
+def slot_identity(slot, other, site, outcome):
+    """``slot is other`` where ``slot`` is an effect slot's coordinate
+    (``reads_an_effect_slot``), ``outcome`` the identity the floor emitted.
+
+    A slot's coordinate (``python:effect_slot(<slot>)``,
+    ``python:exception_info(<slot>)``) is a value prove does not interpret:
+    the facts on it (``EffectBinding``, ``EnterResultBinding``) state its
+    kind, type, origin and enter value, never which object it is.  The one
+    term is one object: the same slot read twice -- one evaluation of the
+    binding (``effect_slot_here``) -- is ``outcome``, decided by the term
+    itself.  Any other operand -- the slot of another live loop item, another
+    handler, an object made elsewhere -- names an object nothing relates to
+    this one.  ``=`` over two such terms is a choice the solver makes, and a
+    claim is ``sat`` where some choice satisfies it, so ``errs[0] is
+    errs[1]`` over two items' ``e`` could read ``sat`` though Python raised
+    two objects.  So that identity is the undecided read: ``outcome`` still
+    stands, and every claim that reads it owes the undecided member, by the
+    one rule a value nothing decides owes by (``owing_undecided_slot``,
+    #7757 step 6)."""
+    for family in _SLOT_FAMILIES:
+        if isinstance(slot, family) and isinstance(other, family):
+            if slot.slot_id == other.slot_id:
+                return outcome
+            break
+    from sugar_lift_py_tests.floor.branch_result_coordinate import (
+        owing_undecided_slot,
+    )
+
+    return owing_undecided_slot(outcome, site)
 
 
 def _language_exception_class_for_coordinate(coordinate):

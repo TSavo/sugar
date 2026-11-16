@@ -54,6 +54,14 @@ through the loop's post-loop key; such a loop runs as its recurrence, which
 binds that key to its value of the name under the guard that some item wrote
 it, so the read owes.
 
+An ``import`` in a function frame bound nothing in the threading at all
+(``nodes._module_import_binding`` bound only a module name a reader outside
+the module reads), so the body's threading never saw ``m`` change: the loop
+ran in hand and the read after it read ``m = None``, refuting the truth
+``m is not None`` and satisfying the lie.  An import now replaces the binding
+the threading holds of the name in every frame (the import table's row,
+``ImportBindingRef``), so the item's change is seen and published.
+
 A lying claim is never ``sat``; a truthful one is never ``unsat``.  Each
 half goes through ``run_source_through_real_solver``: real ``sugar mint``
 then real ``sugar prove``.
@@ -200,3 +208,73 @@ def test_what_an_item_changed_is_never_read_stale(
     else:
         assert verdict != "unsat", result.prove_doc
         assert whole != "unsat", result.prove_doc
+
+
+# -- the term each read of an imported name gets -------------------------------
+
+
+def _rewritten(source: str):
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.nodes import FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    tree = SourceFile(
+        (source, "import_in_item.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    return function.substitute({})
+
+
+def _stale_reads(node, assign) -> list:
+    """Every read under ``node`` of the binding ``m = None`` (``assign``)
+    made."""
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+    from sugar_source_tree.nodes import EvaluationRef
+
+    stale = projection_key(assign.evaluation, "m")
+    return [
+        read
+        for read in node.walk()
+        if isinstance(read, EvaluationRef) and read.evaluation == stale
+    ]
+
+
+def test_an_import_replaces_the_binding_before_it() -> None:
+    # ``m = None`` then ``import os as m``: a read after the import is the
+    # import's (resolved through the one import table, or its row), never
+    # ``m = None``'s evaluation.
+    from sugar_source_tree.nodes import Assign, ImportBindingRef, Name, Return
+
+    rewritten = _rewritten(
+        "def f():\n    m = None\n    import os as m\n    return m\n"
+    )
+    assign = next(node for node in rewritten.body if isinstance(node, Assign))
+    returned = next(node for node in rewritten.body if isinstance(node, Return))
+    assert isinstance(returned.value, (Name, ImportBindingRef)), returned.value
+    assert not _stale_reads(returned, assign)
+
+
+def test_an_import_in_an_item_is_published_after_the_loop() -> None:
+    # The twin's shape: the item binds ``m`` with no write key, so the loop
+    # runs as its recurrence (``uncarried_item_changes``) and publishes ``m``
+    # through its post-loop key (``unkeyed_item_bindings``); the read after
+    # the loop is that publication, never ``m = None``'s evaluation alone.
+    from sugar_source_tree.nodes import Assign, For, Return
+
+    rewritten = _rewritten(
+        "def f():\n"
+        "    m = None\n"
+        "    for i in [1, 2]:\n"
+        "        import os as m\n"
+        "    return m\n"
+    )
+    loop = next(node for node in rewritten.walk() if isinstance(node, For))
+    assert "m" in (getattr(loop, "uncarried_item_changes", None) or ())
+    assert "m" in (getattr(loop, "unkeyed_item_bindings", None) or ())
+    assign = next(node for node in rewritten.body if isinstance(node, Assign))
+    returned = next(node for node in rewritten.body if isinstance(node, Return))
+    assert returned.value not in _stale_reads(returned, assign), returned.value
