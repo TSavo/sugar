@@ -5,10 +5,14 @@ tb)``, and a true result suppresses it (Python reference 8.5). An operation that
 raises a decided exception (``1/0``, ``{}[k]``) is a ``RaiseEffect`` carrying
 its class, so each With path feeds it to exit exactly like ``raise``.
 
-A ``RuntimeEffect`` is a different thing: the lift's boundary at an operation
-whose dispatch exists only at runtime, which may complete or raise. It is not
-an exception occurrence, so no With path hands it to exit as one; it stays the
-With's residue instead of becoming an invented raise or an invented suppression.
+An operation over an operand nothing typed (``a, b = x``) may complete or
+raise something no one names: the one undetermined raise
+(``UndeterminedRaiseEffect``).  It is never given a class.
+
+The manager's ``__exit__`` is its call, never its body read at lift (#7757
+step 6, #8744): a same-file class's exit is its dispatched edge, an imported
+manager's the undecided manager's.  Whether it suppresses is decided where the
+exit is, so the body's raise is kept beside the face where it was suppressed.
 """
 
 from __future__ import annotations
@@ -17,7 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.effect import RaiseEffect, RuntimeEffect
+from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithReducedManagerSugar
 from sugar_source_tree.nodes import FunctionDef, With
@@ -59,13 +64,6 @@ def _raised(exits):
 
 def _halts(exits):
     return [face for face in exits.exits if isinstance(face, Halted)]
-
-
-@pytest.mark.parametrize("body", ["1/0", "{}['k']", "[][3]", "1 % 0"])
-def test_true_exit_suppresses_a_runtime_raise(tmp_path, body):
-    exits = _with(tmp_path, "Swallows", body)
-    assert _halts(exits) == []
-    assert any(isinstance(face, Completed) for face in exits.exits)
 
 
 @pytest.mark.parametrize(
@@ -125,20 +123,16 @@ def test_a_suppressed_raise_continues_after_the_with(tmp_path, manager, body):
     assert TermValue(7) in _returns(_function(tmp_path, manager, body))
 
 
-def test_a_reraised_runtime_raise_skips_the_tail(tmp_path):
-    exits = _function(tmp_path, "NeverSuppresses()", "1/0")
-    assert _returns(exits) == []
-    assert _raised(exits) == ["ZeroDivisionError"]
-
-
-def test_a_cited_manager_keeps_a_runtime_boundary_as_residue(tmp_path):
-    """An unpack of an opaque operand is undecided, not a raise: no split."""
+def test_an_undecided_manager_keeps_an_opaque_unpack_undetermined(tmp_path):
+    """An unpack of an operand nothing typed may raise something no one
+    names: its halt leaves the undecided manager's ``with`` as the one
+    undetermined raise, never dropped and never given a class."""
     exits = _function(tmp_path, "decimal.localcontext()", "a, b = x", params="x")
-    residues = [
-        face for face in _halts(exits) if isinstance(face.effect, RuntimeEffect)
+    unpacks = [
+        face
+        for face in _halts(exits)
+        if isinstance(face.effect, UndeterminedRaiseEffect)
+        and str(face.effect.producer_node_owner).endswith(".unpack")
     ]
-    assert residues
-    assert not [face for face in residues if isinstance(face.effect, RaiseEffect)]
-    # The boundary is neither suppressed into the tail nor re-raised as a class.
-    assert _returns(exits) == []
+    assert unpacks
     assert _raised(exits) == []

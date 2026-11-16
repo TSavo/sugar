@@ -25,20 +25,16 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 import sugar_source_tree.process_resident_file as residency
 
 
-def _locus_root_for_corpus(corpus: Path) -> Path:
-    import importlib.util
+def _address_root(path: Path, corpus: Path) -> Path:
+    """The root ``path``'s address is stated against: the install root its
+    distribution recorded seats against (``install_root_for``), else the
+    corpus.  The seat law refuses an installed file stated against any other
+    root (``SourceUnavailable``: ``pandas/...`` recorded, ``tests/...``
+    stated), so the open names this root as ``source_workspace_root``."""
+    from sugar_lift_python_source.source_oracle import install_root_for
 
-    cer_path = (
-        Path(__file__).resolve().parents[2]
-        / "sugar-lift-py-tests"
-        / "scripts"
-        / "control_effect_recensus.py"
-    )
-    spec = importlib.util.spec_from_file_location("cer_offpin", cer_path)
-    assert spec is not None and spec.loader is not None
-    cer = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cer)
-    return cer.locus_root_for_corpus(corpus)
+    installed = install_root_for(str(path))
+    return corpus if installed is None else Path(installed)
 
 
 def test_pandas_test_open_never_materializes_pytest() -> None:
@@ -48,12 +44,12 @@ def test_pandas_test_open_never_materializes_pytest() -> None:
     Green: zero SourceFile constructions whose seat is under pytest/_pytest.
     """
     corpus = authenticated_pandas_corpus().root
-    address_root = _locus_root_for_corpus(corpus)
     path = corpus / "tests" / "io" / "json" / "test_pandas.py"
     if not path.is_file():
         import pytest
 
         pytest.skip(f"missing {path}")
+    address_root = _address_root(path, corpus)
 
     # Every open walks the one entry (``_open_at_seat``) into the residency
     # door; count the seats it is asked for there.
@@ -71,7 +67,7 @@ def test_pandas_test_open_never_materializes_pytest() -> None:
             path,
             root=address_root,
             construction_context=TreeConstructionContextV1.for_source_call_construction(),
-            source_workspace_root=corpus,
+            source_workspace_root=address_root,
         )
     finally:
         residency._source_file_from_identity = orig

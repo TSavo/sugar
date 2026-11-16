@@ -200,6 +200,63 @@ def _ground_edges(ctx, edge_keys, effect):
     return replace(ctx, ground_branch_results={**table, **decided})
 
 
+def _edge_table(ctx, edge_keys):
+    """``ctx``'s grounded slots when it carries a table the ``try-edge``
+    slots can be stated in, else None (``_ground_edges``' own guard)."""
+    if not edge_keys or ctx is None:
+        return None
+    table = getattr(ctx, "ground_branch_results", None)
+    from dataclasses import is_dataclass
+
+    if not isinstance(table, dict) or not is_dataclass(ctx):
+        return None
+    return table
+
+
+def _ground_arm_edges(ctx, edge_keys, arms):
+    """A context in which the ``try-edge`` slots say the halt left an
+    ``except`` arm, never a body statement: every body statement's edge is
+    false, and arm ``k``'s (``<site>:edge:arm<k>``, ``try_edge_slot``) is
+    true when ``arms`` is ``{k}``.  Several arms that may each have raised
+    this effect leave theirs undecided.
+
+    The arm's record carries the context its handler ran in, which grounded
+    the body statement whose exception the arm received
+    (``_route_one_halt.handler_exits``); left as it is, a ``finally`` under
+    the arm's halt would read that body statement's state, not the arm's."""
+    table = _edge_table(ctx, edge_keys)
+    if table is None:
+        return ctx
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    named = {f"arm{arm}" for arm in arms}
+    grounded = dict(table)
+    for slot, _keys in edge_keys:
+        edge = slot.rpartition(":edge:")[2]
+        if edge not in named:
+            grounded[slot] = FalseBoolLiteralSugar(site=None)
+        elif len(named) == 1:
+            grounded[slot] = TrueBoolLiteralSugar(site=None)
+        else:
+            grounded.pop(slot, None)
+    return replace(ctx, ground_branch_results=grounded)
+
+
+def _edges_grounded(ctx, edge_keys) -> bool:
+    """Whether ``ctx`` decides any of this ``try``'s ``try-edge`` slots: only
+    a handler grounds them before ``finally`` (``_route_one_halt``), so a
+    halt whose record holds them ran in an arm."""
+    table = _edge_table(ctx, edge_keys)
+    return table is not None and any(slot in table for slot, _keys in edge_keys)
+
+
 def _and_finally_with_raise_context(
     pre_finally,
     finalbody,
@@ -286,14 +343,24 @@ def _and_finally_with_raise_context(
                 # no exception is in flight, no body statement raised.
                 return _ground_edges(context, edge_keys, None)
             # Only a body halt that left untouched by every arm says which
-            # body statement raised; a halt an arm raised (or re-raised)
-            # after its own stores leaves the edges undecided.
-            edge_ctx = (
-                _ground_edges(context, edge_keys, halt.effect)
-                if any(halt.effect is effect for effect in body_effects)
-                and not any(halt.effect is effect for effect in arm_effects)
-                else context
-            )
+            # body statement raised.  A halt an arm raised (or re-raised)
+            # after its own stores left that arm, never a body statement:
+            # its record's context still holds the handler's grounding (the
+            # body statement whose exception the arm received), which would
+            # read the body's state under the arm's halt
+            # (``_ground_arm_edges``).
+            # A re-raise is the body's own effect, which may also have left
+            # the body directly (beside an arm whose match is retained): it
+            # left through an arm only where its record ran in a handler,
+            # which grounded the body's edges (``_edges_grounded``).
+            arms = {arm for arm, effect in arm_effects if effect is halt.effect}
+            from_body = any(halt.effect is effect for effect in body_effects)
+            if arms and (not from_body or _edges_grounded(context, edge_keys)):
+                edge_ctx = _ground_arm_edges(context, edge_keys, arms)
+            elif from_body and not arms:
+                edge_ctx = _ground_edges(context, edge_keys, halt.effect)
+            else:
+                edge_ctx = context
             from sugar_lift_py_tests.occurrence import site_coordinate_cid
 
             return bind_in_flight_effect(
@@ -719,9 +786,10 @@ def _route_handlers_over_exits(
                 if arm is not None:
                     if arm_effects is not None:
                         # Whatever an arm halts with -- a re-raise of this very
-                        # effect included -- left after the arm's own stores.
+                        # effect included -- left after the arm's own stores,
+                        # from that arm: ``(arm index, effect)``.
                         arm_effects.extend(
-                            halted.effect
+                            (arm, halted.effect)
                             for halted in part.exits
                             if isinstance(halted, Halted)
                         )

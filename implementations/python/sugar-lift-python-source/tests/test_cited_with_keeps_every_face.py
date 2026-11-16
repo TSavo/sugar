@@ -79,9 +79,15 @@ def test_head_enter_exit_and_completion_faces_all_reach_the_function(
         and "UnknownCallee:tarfile.open" in str(face.effect)
         for face in exits.exits
     ), names
-    # __enter__ and __exit__ may each raise.
-    assert "ContextManagerEnterRuntimeEffect" in names
-    assert "ContextManagerExitRuntimeEffect" in names
+    # __enter__ and __exit__ may each raise: the undecided manager's two
+    # protocol steps, each the one undetermined raise (#7757, #8280).
+    steps = {
+        face.effect.producer_node_owner
+        for face in exits.exits
+        if isinstance(face, Halted) and isinstance(face.effect, UndeterminedRaiseEffect)
+    }
+    assert "ReducedManagerProtocolV1.__enter__" in steps, names
+    assert "ReducedManagerProtocolV1.__exit__" in steps, names
     # A completed face reaches ``return 7``: the body completed, or its raise
     # was suppressed by an exit result whose truth is undecided.
     assert _returns_seven(exits)

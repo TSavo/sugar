@@ -12,6 +12,10 @@ The spread call has no call receipt, so the callee Attribute itself is read.
 It reads as the import member its transported receipt testifies (an
 off-population stdlib callable, called two-faced), never as an attribute of
 the module value ``urllib.request`` (an undecided-receiver refusal).
+
+The function is reduced as itself: a same-file call is its coordinate and
+edge (#7757 step 6, #8744), so no caller's reduction follows a manager's
+``__enter__`` into it.
 """
 
 from __future__ import annotations
@@ -19,33 +23,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from sugar_lift_py_tests.outcome import Halted
-from sugar_source_tree.nodes import FunctionDef
 
-from test_contextmanager_generator_protocol import _imported
+from test_undetermined_raise_except_matching import _exits
 
-_IMPL = (
-    "def u(*args, **kwargs):\n"
+_SOURCE = (
+    "def f(*args, **kwargs):\n"
     "    import urllib.request\n"
     "    return urllib.request.{member}(*args, **kwargs)\n"
-    "class M:\n"
-    "    def __enter__(self):\n"
-    "        u('http://x')\n"
-    "        return 1\n"
-    "    def __exit__(self, *exc):\n"
-    "        return False\n"
-    "def cm():\n"
-    "    return M()\n"
 )
 
 
 def _owners(tmp_path: Path, member: str):
-    tree, _with_node = _imported(
-        tmp_path, _IMPL.format(member=member), "pass", contextlib_enrolled=False
-    )
-    func = next(
-        n for n in tree.nodes() if isinstance(n, FunctionDef) and n.name == "f"
-    )
-    exits = func.sugar().desugar().exits
+    exits = _exits(tmp_path, _SOURCE.format(member=member)).exits
     return {
         str(getattr(face.effect, "producer_node_owner", None))
         for face in exits

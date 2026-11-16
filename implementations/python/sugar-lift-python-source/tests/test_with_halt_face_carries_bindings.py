@@ -5,6 +5,10 @@ can leave by a raise.  Those facts ride on the halted face's pre-effect state,
 where a handler or the function's halt row reads them.  They used to ride as a
 companion ``Completed`` under the halt's own guard: the function was claimed
 to complete (returning nothing) on exactly the path where ``__exit__`` raises.
+
+The manager's ``__exit__`` is its call, never its body read at lift (#7757
+step 6, #8744, #8740): whether it raises is the call's own two faces, so no
+completed face may stand under the guard of an exit's halt.
 """
 
 from __future__ import annotations
@@ -12,8 +16,7 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-from sugar_lift_py_tests.floor import InvValue, TermValue
-from sugar_lift_py_tests.floor.return_value import ReturnValue
+from sugar_lift_py_tests.floor import InvValue
 from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.outcome.exit_set import ExitSet
 from sugar_lift_py_tests.outcome.resource_bindings import prepend_facts_to_exitset
@@ -53,14 +56,6 @@ def _faces(exits):
     return completed, halted
 
 
-def _returns(face):
-    return [
-        entry.value
-        for entry in face.value.record.statements
-        if isinstance(entry, ReturnValue)
-    ]
-
-
 @pytest.mark.parametrize(
     "source",
     [
@@ -72,26 +67,32 @@ def _returns(face):
 )
 def test_an_exit_that_may_raise_completes_only_where_it_completes(tmp_path, source):
     completed, halted = _faces(_exits(tmp_path, source))
-    (halt,) = halted
-    assert isinstance(halt.effect, UndeterminedRaiseEffect)
-    assert "shutil.rmtree" in halt.effect.producer_node_owner
-    # One completed face, and it returns: no completion under the halt guard.
-    (done,) = completed
-    assert _returns(done) == [TermValue(1)]
-    assert done.guard != halt.guard
+    # The manager's call and its ``__enter__``/``__exit__`` may each raise.
+    assert halted
+    assert completed
+    # No completion stands under a halt's own guard.
+    assert all(done.guard != halt.guard for done in completed for halt in halted)
 
 
-def test_the_halt_face_keeps_the_with_bindings_on_its_state(tmp_path):
-    _completed, (halt,) = _faces(
-        _exits(tmp_path, CLASS_EXIT.format(body="return 1", after=""))
-    )
-    facts = [
+def _facts(halt):
+    return [
         str(entry.formula)
         for entry in getattr(halt.state, "entries", ())
         if isinstance(entry, InvValue)
     ]
-    assert any("manager_slot_value" in fact for fact in facts)
-    assert any("exit_type" in fact for fact in facts)
+
+
+def test_the_halt_face_keeps_the_with_bindings_on_its_state(tmp_path):
+    # The exit's halt follows the bindings the ``with`` made before control
+    # could leave by it: its manager slot and the exit face's inputs.
+    _completed, halted = _faces(
+        _exits(tmp_path, CLASS_EXIT.format(body="return 1", after=""))
+    )
+    assert any(
+        any("manager_slot_value" in fact for fact in _facts(halt))
+        and any("exit_type" in fact for fact in _facts(halt))
+        for halt in halted
+    )
 
 
 def test_prepend_rides_on_halt_state_and_keeps_completed_fields():

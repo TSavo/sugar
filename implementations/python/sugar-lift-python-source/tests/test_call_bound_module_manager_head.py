@@ -99,10 +99,11 @@ def test_the_undecided_with_keeps_the_body_raise(tmp_path):
 
 
 def test_a_present_module_is_its_module_coordinate():
-    assert pinned_present_top_level_module("zstandard")
+    # Asked of a module every pinned interpreter holds (``json``): whether
+    # ``zstandard`` is installed is the runner's environment, not the law.
     assert pinned_present_top_level_module("json")
     assert not pinned_present_top_level_module("zz_sugar_absent_module_7742")
     assert not pinned_present_top_level_module("os.path")  # dotted: not asked
-    assert imported_module_value("zstandard").term == ctor(
-        "python:module", (str_const("zstandard"),)
+    assert imported_module_value("json").term == ctor(
+        "python:module", (str_const("json"),)
     )

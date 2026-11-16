@@ -17243,7 +17243,9 @@ class Raise(Statement):
             if (
                 len(call.args) != 2
                 or call.keywords
-                or not isinstance(call.args[1], (List, Tuple))
+                # The tuple display's node is ``Tuple_``; ``Tuple`` here is
+                # ``typing.Tuple``, which no node is.
+                or not isinstance(call.args[1], (List, Tuple_))
                 # A starred member is any number of members: not one each.
                 or any(isinstance(member, Starred) for member in call.args[1].elts)
             ):

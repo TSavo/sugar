@@ -1,16 +1,16 @@
-"""Honest-red instrument for a closed imported-module member value producer.
+"""Fixture preflights for an imported-module member value.
 
-Only the missing typed producer door is red.  Active fixture preflights consume
-existing authenticated lexical and dependency-artifact products.  Every axis
-that requires the absent producer's typed closed result remains dormant and is
-not counted as a semantic red.
+Active fixture preflights consume existing authenticated lexical and
+dependency-artifact products.  An imported member is answered from the
+staged proofs at step 3 (#7757): a second, typed producer door for it would
+be a second way, so no test demands one.  The axes written against that door
+stay dormant and are not counted.
 """
 
 from __future__ import annotations
 
 import csv
 import importlib.metadata
-import importlib.util
 from pathlib import Path
 
 import pytest
@@ -21,8 +21,6 @@ from sugar_lift_py_tests.import_binding import (
 )
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
-
-PRODUCTION_MODULE = "sugar_lift_python_source.authenticated_import_member_value"
 
 
 def _distribution(root: Path) -> importlib.metadata.Distribution:
@@ -122,13 +120,6 @@ def test_scoped_fixture_preflight_proves_real_indentation_and_scope(
     assert scope["sourceCid"] == receipt.source_cid
     assert (scope["startLine"], scope["startCol"]) == (1, 0)
     assert (scope["endLine"], scope["endCol"]) == (3, 21)
-
-
-def test_missing_closed_producer_door_is_one_red() -> None:
-    """R_missing_door=1: the typed producer module does not exist yet."""
-    assert (
-        importlib.util.find_spec(PRODUCTION_MODULE) is not None
-    ), "missing typed closed imported-module member producer door"
 
 
 _DORMANT_SEMANTIC_TEETH = (

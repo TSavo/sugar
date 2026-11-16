@@ -14,8 +14,8 @@ don't.  Two heads have nothing to read:
 Each manager is what its head reduces to (#7757), and nothing decides it:
 it is the undecided manager (``WithReducedManagerSugar``): enter and exit may
 each raise, suppression is undecided, and a raise in the body still
-propagates.  A source class at the head runs its own methods, and a source
-class lacking them raises the interpreter's TypeError.
+propagates.  A source class at the head is its dispatched calls, joined at
+prove (#8744): no method body is read at lift.
 """
 
 from __future__ import annotations
@@ -112,29 +112,16 @@ def test_an_unauthenticated_callee_keeps_the_body_raise(tmp_path):
     assert ("halt", "KeyError") in rows
 
 
-def test_a_readable_source_manager_runs_its_own_methods(tmp_path):
-    # The lying twin: a source class at the head enters and exits through
-    # its own methods, read at reduce on the head's value.
+def test_a_same_file_manager_is_its_dispatched_calls(tmp_path):
+    # A source class at the head: its call and its ``__enter__``/``__exit__``
+    # are calls, coordinate and edge, joined at prove (#7757 step 6, #8744);
+    # no method body is read here, so each may raise and the body falls
+    # through.  Whether the class binds the protocol is decided at prove too
+    # (``ReducedManagerProtocolV1._dispatched_manager``).
     consumer, rows = _lifted(tmp_path, _SOURCE_CLASS_HEAD, "pass")
     assert consumer is WithReducedManagerSugar
-    # Its enter and exit are its own source: neither may raise.
-    assert rows == [("return", 7)]
-
-
-def test_a_source_class_without_the_protocol_raises_type_error(tmp_path):
-    # A class whose own type lacks ``__enter__`` raises the interpreter's
-    # TypeError at the head, never a manager.
-    template = (
-        "class N:\n"
-        "    pass\n"
-        "def f():\n"
-        "    with N():\n"
-        "        {body}\n"
-        "    return 7\n"
-    )
-    _consumer, rows = _lifted(tmp_path, template, "pass")
-    assert ("halt", "TypeError") in rows
-    assert ("return", 7) not in rows
+    assert ("halt", None) in rows
+    assert ("return", 7) in rows
 
 
 _NOT_BRIDGED_HEADS = {

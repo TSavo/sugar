@@ -45,10 +45,12 @@ def _owners(exits):
 
 
 def _completes_under_unanswered_atom(exits, name: str) -> bool:
+    """Every completed face holds under the call's completes atom, stated
+    over its call term ``call:<name>(<arg terms>)`` (#7757 step 5, #8753)."""
     completed = [face for face in exits.exits if isinstance(face, Completed)]
     return bool(completed) and all(
         "python:unknown_callee_call.completes" in repr(face.guard)
-        and f"value='{name}'" in repr(face.guard)
+        and f"_Ctor(name='call:{name}'" in repr(face.guard)
         for face in completed
     )
 
@@ -96,7 +98,10 @@ def test_a_callee_with_no_source_is_not_asked_its_language(tmp_path) -> None:
     assert not owners[0].startswith("LanguageOwned")
 
 
-def test_local_function_call_is_not_floored(tmp_path) -> None:
+def test_a_same_file_call_is_its_coordinate_and_edge(tmp_path) -> None:
+    # #7757 step 6 (#8647, #8958): ``g``'s body is never followed at lift; the
+    # call is two-faced under its call term, joined to ``g``'s contract at
+    # prove, exactly as an imported callee's is.
     exits = _exits(tmp_path, "def g():\n    return 1\ndef f():\n    return g()\n")
-    assert _owners(exits) == []
-    assert all(isinstance(face, Completed) for face in exits.exits)
+    assert _owners(exits) == ["UnknownCallee:e.g"]
+    assert _completes_under_unanswered_atom(exits, "e.g")
