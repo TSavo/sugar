@@ -6,12 +6,11 @@ and apply none of them (``ClassDef._class_method_defaults``): a decorator
 that raises was a dropped halt, so ``Box()`` after such a class completed
 at lift and a lying claim that the import completes could read ``sat``.
 
-Now a class-body ``def`` decorated by anything the class body's descriptor
-table does not model (``ClassDef.descriptor_table_models``: ``staticmethod``,
-``classmethod``, ``property``, a property's own ``@x.setter``, identity
-decorators) is the one decorator application
+Now every decorated class-body ``def`` is the one decorator application
 (``_decorated_statement_sugar``), as a decorated ``def`` in a module or
-function body is.  The decorator's call is ``d``'s edge, joined at prove;
+function body is; a builtin ``staticmethod``, ``classmethod`` or
+``property`` is answered there by the one builtin door (the descriptor
+wrapping the function, ``builtin_decorator_application``).  The decorator's call is ``d``'s edge, joined at prove;
 its halts are the class statement's, so the module's run.
 
 Each twin goes through ``run_source_through_real_solver``: real ``sugar

@@ -1650,12 +1650,17 @@ def test_box():
     assert _raises(outcome, "ValueError") == []
 
 
-def test_a_builtin_descriptor_stays_the_descriptor_tables(tmp_path) -> None:
-    """``staticmethod``, ``classmethod``, ``property`` and a property's own
-    ``@x.setter`` are builtins the class body's descriptor table models
-    (``ClassDef.descriptor_table_models``): the class statement applies
-    none of them, so it owes nothing for them, while a source decorator
-    beside them is applied and owed."""
+def test_a_builtin_descriptor_is_the_one_applications_descriptor(tmp_path) -> None:
+    """``staticmethod``, ``classmethod`` and ``property`` on a class-body
+    ``def`` are the one decorator application, answered by the one builtin
+    door (``builtin_decorator_application``): the descriptor wrapping the
+    function, which never raises, so the class statement owes nothing for
+    them, while a source decorator beside them is applied and owed.  There
+    is no class-body descriptor table (#7757, A5): the kind the namespace
+    row states (``_method_descriptor_kind``) is the kind that same door
+    answers.  ``@size.setter`` is the read of ``size.setter`` applied to the
+    function by the same application; the namespace reads that name as
+    undecided (``method_value_is_written``)."""
     source = """\
 def replace(fn):
     return fn
@@ -1692,18 +1697,100 @@ def test_box():
         if isinstance(node, ClassDef) and node.name == "Box"
     )
     methods = tuple(item for item in box.body if isinstance(item, FunctionDef))
-    assert [box.descriptor_table_models(method) for method in methods] == [
-        True,  # @property
-        True,  # @size.setter of the body's own property
-        True,  # @staticmethod
-        True,  # @classmethod
-        False,  # @replace: the one application
+    assert not hasattr(ClassDef, "descriptor_table_models")
+    assert [box._method_descriptor_kind(method) for method in methods] == [
+        "property",
+        None,  # @size.setter: no builtin descriptor constructor
+        "staticmethod",
+        "classmethod",
+        None,  # @replace
+    ]
+    assert [box.method_value_is_written(method) for method in methods] == [
+        True,
+        False,
+        True,
+        True,
+        False,
     ]
     outcome = _rooted_outcome(tmp_path, source)
     owed = _owed_symbols(outcome)
     assert "python:subject.replace" in owed, outcome
-    for builtin in ("property", "staticmethod", "classmethod", "setter"):
+    for builtin in ("property", "staticmethod", "classmethod"):
         assert not any(builtin in str(symbol) for symbol in owed), owed
+
+
+def test_a_builtin_descriptor_is_answered_by_the_one_builtin_arm() -> None:
+    """``staticmethod``, ``classmethod`` and ``property`` are decided by the
+    one builtin arm wherever the ``def`` stands -- a module ``def`` here --
+    as a ``descriptor`` step of their kind (#7757, A5), never the
+    unanswered member a descriptor outside a class body used to be."""
+    from sugar_source_tree.nodes import builtin_decorator_step
+
+    tree = _tree(
+        """\
+@staticmethod
+def s():
+    return 1
+
+
+@classmethod
+def c(cls):
+    return 2
+
+
+@property
+def p(self):
+    return 3
+"""
+    )
+    steps = {
+        node.name: builtin_decorator_step(node, node.decorators[0])
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef)
+    }
+    assert {name: (step.kind, step.descriptor) for name, step in steps.items()} == {
+        "s": ("descriptor", "staticmethod"),
+        "c": ("descriptor", "classmethod"),
+        "p": ("descriptor", "property"),
+    }
+
+
+def test_a_property_setter_is_the_property_copy() -> None:
+    """``x.setter(f)`` on a property is a copy of it with ``f`` as its
+    setter (``property.setter``); a ``staticmethod`` object calls its
+    function's own application; a ``classmethod`` or ``property`` object is
+    not callable (``TypeError``).  Nothing here raises but that."""
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.floor import LambdaCallable, TermValue
+    from sugar_lift_py_tests.floor.builtin_descriptor_value import (
+        BuiltinDescriptorValue,
+        PropertyAccessorValue,
+    )
+
+    # Functions, whose ``__doc__`` the copy reads without raising.
+    getter = LambdaCallable(("self",), None, "getter")
+    setter = LambdaCallable(("self", "value"), None, "setter")
+    prop = BuiltinDescriptorValue("property", getter)
+    accessor = prop.attribute("setter", "setter-site", None).completed_value()
+    assert accessor == PropertyAccessorValue(prop, "setter")
+    copied = accessor.callable_application_with(
+        CallableApplication((setter,), (), "setter-site"), None
+    ).completed_value()
+    assert copied == BuiltinDescriptorValue("property", getter, setter=setter)
+    assert copied.attribute("fset", "fset-site", None).completed_value() is setter
+    for kind in ("property", "classmethod"):
+        called = BuiltinDescriptorValue(kind, getter).callable_application_with(
+            CallableApplication((), (), "call-site"), None
+        )
+        assert _halt_names(called) == ["TypeError"]
+    # A getter that is no function: its ``__doc__`` read may run code, so
+    # the copy is not decided here -- never a completion.
+    opaque = BuiltinDescriptorValue("property", TermValue("opaque"))
+    unanswered = PropertyAccessorValue(opaque, "setter").callable_application_with(
+        CallableApplication((setter,), (), "setter-site"), None
+    )
+    assert unanswered.completed_value() is None
+    assert unanswered.halts()
 
 
 def test_a_def_statement_evaluates_its_annotations() -> None:

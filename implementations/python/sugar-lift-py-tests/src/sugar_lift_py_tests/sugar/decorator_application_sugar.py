@@ -95,10 +95,23 @@ class DecoratorStepV1:
     # ``apply``: the decorator is the value this sugar reduces to (a source
     # ``def`` read as a value among them: the one read of its name).
     callee: object = field(default=None, compare=False)
+    # ``descriptor``: the builtin descriptor constructor's kind
+    # (``staticmethod``, ``classmethod``, ``property``,
+    # ``nodes.METHOD_DESCRIPTOR_KINDS``).
+    descriptor: str | None = None
 
     @classmethod
     def identity(cls, site, spelling):
         return cls("identity", site, spelling)
+
+    @classmethod
+    def descriptor_of(cls, site, spelling, kind, symbol):
+        """A builtin descriptor constructor (``staticmethod``,
+        ``classmethod``, ``property``; ``symbol`` its target symbol):
+        applied, the descriptor wrapping its argument
+        (``BuiltinDescriptorValue``), wherever the ``def`` stands (#7757,
+        A5)."""
+        return cls("descriptor", site, spelling, symbol=symbol, descriptor=kind)
 
     @classmethod
     def unanswered(cls, site, spelling, symbol, *, evaluate=()):
@@ -138,6 +151,22 @@ class DecoratorStepV1:
         owed, never a completion and never a construction panic (#7757)."""
         if self.kind == "identity":
             return ExitSet.completed(value)
+        if self.kind == "descriptor":
+            from sugar_lift_py_tests.floor.builtin_descriptor_value import (
+                BuiltinDescriptorValue,
+                wraps_without_raising,
+            )
+
+            # The constructor reads the argument's ``__doc__`` (and, for a
+            # ``staticmethod``/``classmethod``, copies ``__module__``,
+            # ``__name__``, ``__qualname__``, ``__dict__``): over a function
+            # or a descriptor that never raises.  Over any other value the
+            # read may run code: the unanswered application, both faces.
+            if wraps_without_raising(value):
+                return ExitSet.completed(
+                    BuiltinDescriptorValue(self.descriptor, value)
+                )
+            return _unanswered_application(self, value, ctx)
         if self.kind == "unanswered":
             return _unanswered_application(self, value, ctx)
         from sugar_lift_py_tests.sugar.computed_call_sugar import (

@@ -323,8 +323,22 @@ def apply_callee(
         ClassDefinitionValue,
         LambdaCallable,
     )
+    from sugar_lift_py_tests.floor.builtin_descriptor_value import (
+        BuiltinDescriptorValue,
+        PropertyAccessorValue,
+    )
 
-    applicable = (ClassDefinitionValue, BoundMethodValue, LambdaCallable)
+    # A builtin descriptor (``staticmethod(f)`` calls ``f``; a
+    # ``classmethod`` or ``property`` object is not callable) and a
+    # property's ``x.setter`` (the property copy) answer their own call
+    # (#7757, A5).
+    applicable = (
+        ClassDefinitionValue,
+        BoundMethodValue,
+        LambdaCallable,
+        BuiltinDescriptorValue,
+        PropertyAccessorValue,
+    )
     if not isinstance(callee, applicable):
         return unanswered()
     from sugar_lift_py_tests.callable_application import CallableApplication

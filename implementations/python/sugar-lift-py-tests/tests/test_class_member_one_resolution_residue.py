@@ -52,8 +52,8 @@ def _statements(source: str, name: str = "residue.py") -> dict:
 def _class_value(outcome):
     """The class value the class statement completes with.
 
-    A statement whose method a decorator the class body's descriptor table
-    does not model decorates (``functools.cache``) applies it where the
+    A statement whose method a decorator nothing here answers decorates
+    (``functools.cache``) applies it where the
     class body runs (#8962, ``ClassDef._class_method_statement``): nothing
     here answers that application, so the statement is two-faced -- it
     completes under the unanswered call's ``completes`` atom, holding the

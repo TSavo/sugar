@@ -11412,19 +11412,23 @@ class ClassDef(Statement):
     def _method_descriptor_kind(
         self, method: "FunctionDef | AsyncFunctionDef"
     ) -> Optional[str]:
-        """Authenticate one language descriptor decorator by its binding.
-
-        The decorator resolves through ``SourceUnit.language_callee_of``: a
-        name that falls through to the builtin namespace (or an import of
-        ``builtins``) reaches the descriptor constructor; any rebinding
-        reaches nothing and never grants property or class/static method
-        semantics.
-        """
+        """The descriptor kind of the class-body ``def`` ``method`` under
+        exactly one decorator, as the one decorator application answers it
+        (``builtin_decorator_step`` -> ``builtin_decorator_application``: a
+        ``descriptor`` step, ``staticmethod``/``classmethod``/``property``),
+        or None.  It is the kind the descriptor the class body's run binds
+        the name to is of (``BuiltinDescriptorValue``), and the kind the
+        class's namespace row states and the method roster carries, which
+        prove's dispatch binds by (#8813): one door answers all of them
+        (#7757, A5).  The decorator resolves through its binding
+        (``SourceUnit.language_callee_of``): any rebinding of the name
+        reaches no builtin and grants no descriptor."""
         if len(method.decorators) != 1:
             return None
-        return METHOD_DESCRIPTOR_KINDS.get(
-            self.unit.language_callee_of(method.decorators[0])
-        )
+        step = builtin_decorator_step(method, method.decorators[0])
+        if step is None or step.kind != "descriptor":
+            return None
+        return step.descriptor
 
     def method_value_is_written(self, method) -> bool:
         """Whether the value the class-body ``def`` statement ``method``
@@ -11441,83 +11445,6 @@ class ClassDef(Statement):
             self.unit.language_callee_of(decorator) in _IDENTITY_DECORATORS
             for decorator in method.decorators
         )
-
-    def descriptor_table_models(self, method) -> bool:
-        """Whether every decorator of the decorated class-body ``def``
-        ``method`` is a builtin the class body's descriptor table models
-        rather than one the class body's run applies: identity decorators
-        (``typing.final``, ``abc.abstractmethod``) around at most one builtin
-        descriptor constructor (``staticmethod``, ``classmethod``,
-        ``property``), each read through the one builtin door
-        (``SourceUnit.language_callee_of``); or exactly one
-        ``@x.setter`` / ``@x.getter`` / ``@x.deleter`` of a property ``x``
-        a ``def`` of this class body bound before it
-        (``_property_accessor``).
-
-        These are modelling of builtins, never a second application: the
-        namespace binds each by the descriptor protocol (``DispatchReceiver``,
-        the row's ``python:class_binds`` kind) or leaves it undecided
-        (``method_value_is_written``), and none of them raises when applied
-        to a function or to a descriptor it builds.  Every other decorated
-        ``def`` of a class body -- a source decorator, an imported one, any
-        other builtin (``functools.cache``, ``contextlib.contextmanager``
-        that does not apply its own frame), a decorator factory -- is the
-        one decorator application where the class body runs it
-        (``_class_method_statement``, ``_decorated_statement_sugar``), as a
-        decorated ``def`` in a module or function body is: every face of
-        it the class statement's (#7757)."""
-        if self._property_accessor(method):
-            return True
-        callees = [self.unit.language_callee_of(item) for item in method.decorators]
-        descriptors = [
-            callee for callee in callees if callee in METHOD_DESCRIPTOR_KINDS
-        ]
-        return len(descriptors) <= 1 and all(
-            callee in METHOD_DESCRIPTOR_KINDS or callee in _IDENTITY_DECORATORS
-            for callee in callees
-        )
-
-    def _property_accessor(self, method) -> bool:
-        """Whether ``method``'s one decorator is ``@x.setter``,
-        ``@x.getter`` or ``@x.deleter`` of a property ``x`` this class body
-        defined: the last statement of the body before ``method`` that binds
-        ``x`` is a ``def`` the descriptor table reads as a builtin
-        ``property`` (alone or around identity decorators), or itself such
-        an accessor.  Decided on the typed occurrences (``_typed_original``),
-        whatever shell the body's threading made of either."""
-        if len(method.decorators) != 1:
-            return False
-        decorator = method.decorators[0]
-        if (
-            not isinstance(decorator, Attribute)
-            or decorator.attr not in ("setter", "getter", "deleter")
-            or not isinstance(decorator.value, Name)
-        ):
-            return False
-        name = decorator.value.id
-        identity = SourceOccurrenceIdentityV1.of(_typed_original(method))
-        binder = None
-        for statement in self.body:
-            if isinstance(statement, (FunctionDef, AsyncFunctionDef)) and (
-                SourceOccurrenceIdentityV1.of(_typed_original(statement)) == identity
-            ):
-                break
-            if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef)):
-                if statement.name == name:
-                    binder = statement
-            elif name in statement.names_bound_within():
-                binder = statement
-        else:
-            return False
-        if not isinstance(binder, (FunctionDef, AsyncFunctionDef)):
-            return False
-        callees = [self.unit.language_callee_of(item) for item in binder.decorators]
-        if callees.count(LanguageCallee.BUILTIN_PROPERTY) == 1 and all(
-            callee is LanguageCallee.BUILTIN_PROPERTY or callee in _IDENTITY_DECORATORS
-            for callee in callees
-        ):
-            return True
-        return self._property_accessor(binder)
 
     def _authenticated_new_constructor_shape(self):
         """One source-owned ``__new__`` allocation followed by field stores.
@@ -11696,26 +11623,28 @@ class ClassDef(Statement):
         None for one that evaluates nothing.
 
         It is the one ``def`` statement (``_def_statement_sugar``), as in a
-        module or function body.  Undecorated (or a ``contextmanager``
-        generator, ``call_applies_own_frame``), it evaluates its decorator
-        expressions and defaults (``DefinitionDefaultsSugar``).  Decorated
-        by any decorator the class body's descriptor table does not model
-        (``descriptor_table_models``), it is the one decorator application
-        (``_decorated_statement_sugar``): its decorator expressions, then
-        its defaults, then each decorator called on the function, innermost
-        first, the name bound to their result under the statement's
-        evaluation key.  Every face of that application -- a decorator that
-        raises, an unanswered one's ``undecided`` member, a source
-        decorator's edge -- is the class body's, and so the class
+        module or function body, whatever decorates it.  Undecorated (or a
+        ``contextmanager`` generator, ``call_applies_own_frame``), it
+        evaluates its decorator expressions and defaults
+        (``DefinitionDefaultsSugar``).  Decorated, it is the one decorator
+        application (``_decorated_statement_sugar``): its decorator
+        expressions, then its defaults, then each decorator called on the
+        function, innermost first, the name bound to their result under the
+        statement's evaluation key.  A builtin ``staticmethod``,
+        ``classmethod`` or ``property`` is answered there by the one builtin
+        door (``builtin_decorator_application``): the descriptor wrapping the
+        function, which never raises; a property's own ``@x.setter`` is the
+        read of ``x.setter`` applied to the function (the property copy,
+        ``PropertyAccessorValue``).  Every face of that application -- a
+        decorator that raises, an unanswered one's ``undecided`` member, a
+        source decorator's edge -- is the class body's, and so the class
         statement's: a decorator that raises when the class body runs halts
         the class statement, as Python's import raises there (#7757).  The
-        namespace reads the method under such a decorator as undecided
-        (``method_value_is_written``), never the plain function.  Under only
-        builtins the descriptor table models (``staticmethod``,
-        ``classmethod``, ``property``, a property's own ``@x.setter``, and
-        identity decorators), the statement evaluates its decorator
-        expressions and defaults, and the descriptor table, not this
-        statement, reads their value: none of them raises.
+        namespace reads a method under one builtin descriptor by the kind
+        that same door answers (``_method_descriptor_kind``), and one under
+        any other decorator as undecided (``method_value_is_written``),
+        never the plain function.  There is no class-body table of its own
+        (#7757, A5).
 
         Python evaluates a method's defaults when its ``def`` statement runs,
         which is when the class body runs.  The statement is the one
@@ -11727,27 +11656,17 @@ class ClassDef(Statement):
         for its ``__init__`` and ``__new__``
         (``ClassDefinitionValue.callable_application_with``).  A decorated method
         evaluates its defaults the same way, before its decorators apply,
-        under the same keys (``_definition_default_evaluations``), whether
-        the descriptor table reads its value or the one application applies
-        its decorators, and every call through it binds the carried values.
+        under the same keys (``_definition_default_evaluations``), and every
+        call through it binds the carried values.
         A default that does not construct is not evaluated here: a call that
         omits it finds its key unbound and is refused by name
-        (``DefaultValueSugar``), never dropped.
-
-        Which way the statement goes is decided on the method's typed
-        occurrence (``_typed_original``), as the namespace's lookup reads it
-        (``method_value_is_written``)."""
+        (``DefaultValueSugar``), never dropped."""
         from sugar_lift_py_tests.sugar.default_value_sugar import (
             DefinitionDefaultsSugar,
         )
         from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
-        if call_applies_own_frame(method) or not self.descriptor_table_models(
-            _typed_original(method)
-        ):
-            statement = _def_statement_sugar(method)
-        else:
-            statement = _definition_defaults_sugar(method)
+        statement = _def_statement_sugar(method)
         if isinstance(statement, InertSugar):
             return None, ()
         if isinstance(statement, DefinitionDefaultsSugar):
@@ -11854,10 +11773,10 @@ class ClassDef(Statement):
         ``if`` is ``IfSugar``, a nested ``class`` the one decorator
         application bound under its evaluation key.  A ``def`` statement is
         the one ``def`` statement (``_class_method_statement``): decorated
-        by anything the class body's descriptor table does not model, the
-        one decorator application bound under its evaluation key, every
-        face of it the class statement's; else its decorator expressions'
-        and defaults' evaluation.  Its body runs only at a call.  The
+        by anything (a builtin descriptor included), the one decorator
+        application bound under its evaluation key, every face of it the
+        class statement's; else its decorator expressions' and defaults'
+        evaluation.  Its body runs only at a call.  The
         docstring and ``pass`` run nothing.
 
         ``fields`` name what the namespace holds once that block ran: one
@@ -25980,9 +25899,7 @@ def _definition_defaults_sugar(statement):
     """A ``def`` statement where its decorators apply nothing here (an
     undecorated statement in a body, a generator under
     ``contextlib.contextmanager`` whose call applies its own frame,
-    ``call_applies_own_frame``, or a class-body method under only builtins
-    the class body's descriptor table models,
-    ``ClassDef.descriptor_table_models``): it evaluates each decorator
+    ``call_applies_own_frame``): it evaluates each decorator
     expression, top to bottom, then each default, left to right, where it
     stands, and binds
     each completed default under the default's key
@@ -26242,12 +26159,13 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
 
     - a builtin the one builtin door names (``SourceUnit.language_callee_of``,
       ``LanguageCallee``): ``typing.final`` and ``abc.abstractmethod`` return
-      their argument; ``dataclasses.dataclass`` returns the class whose
-      constructor frame is the ``__init__`` it writes
+      their argument; ``staticmethod``, ``classmethod`` and ``property``
+      return the descriptor wrapping it, wherever the ``def`` stands
+      (``BuiltinDescriptorValue``); ``dataclasses.dataclass`` returns the
+      class whose constructor frame is the ``__init__`` it writes
       (``ClassDef._dataclass_generated_init_fields``); ``functools.wraps(w)``
       over names returns the wrapper.  Any other builtin
-      (``staticmethod``, ``classmethod`` and ``property`` outside a class
-      body, ``functools.lru_cache``/``cache``, ``typing.overload``, a
+      (``functools.lru_cache``/``cache``, ``typing.overload``, a
       ``contextlib.contextmanager`` this does not model, a builtin decorator
       factory) is answered as an imported decorator is, under the builtin's
       target symbol;
@@ -26528,23 +26446,31 @@ def builtin_decorator_application(member, site, spelling, definition=None):
     explicit call ``member(value)``): a ``DecoratorStepV1``.
 
     ``typing.final`` and ``abc.abstractmethod`` return their argument
-    (``identity``); ``dataclasses.dataclass`` over a ``class`` returns the
-    class whose constructor frame is the ``__init__`` it writes
-    (``ClassDef._dataclass_generated_init_fields``).  Every other builtin
-    (``functools.lru_cache``/``cache``, ``typing.overload``, a descriptor
-    constructor outside a class body, a ``dataclass`` this does not model)
-    is answered by nothing here: its application is the ``undecided`` member
-    under the builtin's target symbol (reason ``unanswered``), exactly as an
-    imported decorator's is, so only a read or call of the decorated name is
+    (``identity``); ``staticmethod``, ``classmethod`` and ``property``
+    return the descriptor wrapping it (``descriptor``:
+    ``BuiltinDescriptorValue``), wherever the ``def`` stands -- a class body,
+    a module, a function body -- and never raise; ``dataclasses.dataclass``
+    over a ``class`` returns the class whose constructor frame is the
+    ``__init__`` it writes (``ClassDef._dataclass_generated_init_fields``).
+    Every other builtin (``functools.lru_cache``/``cache``,
+    ``typing.overload``, a ``dataclass`` this does not model) is answered by
+    nothing here: its application is the ``undecided`` member under the
+    builtin's target symbol (reason ``unanswered``), exactly as an imported
+    decorator's is, so only a read or call of the decorated name is
     undecided, never the run that binds it.  Every reader of a builtin
     decorator's semantics asks this (``_decorator_step``,
     ``ImportMemberValue.callable_application_with``, the manager-protocol
-    absence proof), never a table of its own (#7757).
+    absence proof, and the descriptor kind a class's namespace row states,
+    ``ClassDef._method_descriptor_kind``), never a table of its own (#7757).
     """
     from sugar_lift_py_tests.sugar.decorator_application_sugar import (
         DecoratorStepV1,
     )
 
+    if member in METHOD_DESCRIPTOR_KINDS:
+        return DecoratorStepV1.descriptor_of(
+            site, spelling, METHOD_DESCRIPTOR_KINDS[member], member.value
+        )
     if member in _IDENTITY_DECORATORS or (
         member is LanguageCallee.DATACLASSES_DATACLASS
         and isinstance(definition, ClassDef)
