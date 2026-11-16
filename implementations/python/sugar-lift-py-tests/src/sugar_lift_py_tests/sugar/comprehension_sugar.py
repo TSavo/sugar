@@ -560,7 +560,6 @@ class ComprehensionSugar(ConstructedTermSugar):
 
     def _finite_map(self, generator, iterable, ctx):
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
-        from sugar_lift_py_tests.floor.dict_value import DictValue
         from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.finite_projection import (
             FiniteProjectionNonSuccessV1,
@@ -640,18 +639,21 @@ class ComprehensionSugar(ConstructedTermSugar):
         def finish(projected, binds, _carried):
             from sugar_lift_py_tests.floor.list_value import ListValue
             from sugar_lift_py_tests.floor.object_identity import made_at
-            from sugar_lift_py_tests.sugar.collection_sugar import _built_set
+            from sugar_lift_py_tests.sugar.collection_sugar import (
+                _built_dict,
+                _built_set,
+            )
 
             binds = (
                 () if self.kind == "py.generatorexp" else self._carried_out(binds, ctx)
             )
             if self.key is not None:
-                # The dict comprehension makes a new dict here.
-                return ExitSet.completed(
-                    carry_walrus_binds(
-                        binds,
-                        DictValue(tuple(projected), allocation=made_at(self.site)),
-                    )
+                # The dict comprehension makes a new dict here, by the one
+                # dict display rule (``_built_dict``): a repeated key keeps
+                # its first position and takes the last value, an unhashable
+                # key raises ``TypeError``.
+                return _built_dict(tuple(projected), self.site).and_then(
+                    lambda built: ExitSet.completed(carry_walrus_binds(binds, built))
                 )
             # Every member is in hand.  The value is still this evaluation's
             # own coordinate (``_own_coordinate``), so every reader of its
