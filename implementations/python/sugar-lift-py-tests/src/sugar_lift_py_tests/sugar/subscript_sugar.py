@@ -92,9 +92,20 @@ class SubscriptSugar(ConstructedTermSugar):
         # operand door.  The index is evaluated after the receiver, with its
         # writes applied (``written_by``: ``(y := g())[h(y)]``), and its
         # halt carries them (``evaluated_after``).
+        #
+        # The read is an operation that may run code (``__getitem__``, the
+        # index's ``__index__``/``__hash__``): where its reduction ran code
+        # the lift did not read, it binds its record of every module global
+        # under its key, in the context its operands wrote, by the one
+        # binder every call takes (``bind_after_call``, #7757 H15).
+        from sugar_lift_py_tests.floor.call_site_value import bind_after_call
+
         def subscript(receiver, index):
+            after = written_by(index, written_by(receiver, ctx))
             return consume_operands(
-                lambda receiver, index: self._subscript(receiver, index, ctx),
+                lambda receiver, index: bind_after_call(
+                    self._subscript(receiver, index, ctx), self.site, after
+                ),
                 receiver,
                 index,
             )
