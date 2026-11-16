@@ -193,3 +193,20 @@ def test_a_module_name_an_if_phi_joins_in_a_class_body_loop_is_no_class_field() 
         "increment_32",
     } <= rows
     assert "_date_formats" not in rows
+
+
+def test_a_source_conditional_assignment_is_no_join_phi() -> None:
+    # The loop's names are read off its threaded body alone (#7757 NEW-11):
+    # only the phi a join splices (its test the join's ``BranchResultRef``)
+    # is no binding of its own.  An assignment the source spells, a
+    # conditional expression included, is the class's binding.
+    from sugar_source_tree.nodes import Assign, _is_join_phi
+
+    klass = _class(
+        "class C:\n"
+        "    for i in range(2):\n"
+        "        x = 1 if i else 2\n",
+        "C",
+    )
+    (assign,) = tuple(node for node in klass.walk() if isinstance(node, Assign))
+    assert not _is_join_phi(assign)
