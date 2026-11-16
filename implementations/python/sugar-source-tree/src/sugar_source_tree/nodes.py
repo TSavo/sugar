@@ -11753,6 +11753,28 @@ class ClassDef(Statement):
             written(item, in_branch, bound, armed)
             return False
 
+        def loop_source(item):
+            # The source loop the threading made the one loop recurrence
+            # ``item`` of: the class-body loop of its kind at its span (a
+            # rewrite keeps both).  One the source does not hold is refused
+            # by name, never read as binding nothing.
+            loop = item.loop
+            for statement in self.body:
+                for node in _class_scope_nodes(statement):
+                    if (
+                        isinstance(node, (For, While))
+                        and node.kind == loop.kind
+                        and node.span == loop.span
+                    ):
+                        return node
+            raise SugarNotWritten(
+                blame=item.fragment,
+                owner="ClassDef._construct_sugar",
+                observed=f"class-body loop recurrence with no source {loop.kind}",
+                requested="the class-body loop the threading made the recurrence of",
+                fix="thread the class body's own loop",
+            )
+
         def written(item, in_branch, bound, armed) -> None:
             # Any other simple statement (``_require_class_members``): the
             # mutation statement the threading makes of ``x = r.m()`` or
@@ -11777,20 +11799,39 @@ class ClassDef(Statement):
             # leaves (``written_keys``), read here like any statement's.  A
             # ``def`` under it is in no method roster: refused at the class's
             # reduction (``unrostered``), as one under an ``if``.
+            #
+            # The names the loop binds in the class namespace are the ones
+            # its SOURCE binds (``loop_source``, the rule
+            # ``_class_scope_binds`` reads off the source body).  The
+            # threaded body also holds the phi an ``if`` splices after itself
+            # (``If.substitute``): a join of each name either arm left
+            # changed, a name a call in the arm may rebind
+            # (``container_mutation.havoc_after``: a module global such as
+            # ``pandas/io/stata.py``'s ``_date_formats``) among them.  Such a
+            # phi carries no key and is no row, as at the body's top level
+            # (``rows``); a name only it binds is the state after a call,
+            # read as any statement's write of it: the class's only when the
+            # body bound it before the loop (``bound``, or ``armed``, refused
+            # unkeyed), else a module name's.  Never a field the class owns.
             own = set(item.names_bound_here())
             assigned = getattr(item, "rebinds", None)
             if isinstance(assigned, str):
                 own.add(assigned)
             if isinstance(item, LoopRecurrenceStatement):
+                for node in _class_scope_nodes(loop_source(item)):
+                    if isinstance(node, (Global, Nonlocal)):
+                        continue
+                    own.update(node.names_bound_here())
+                    if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+                        unrostered.append(node.fragment.seal().cid)
                 for node in _class_scope_nodes(item):
                     if node is item or isinstance(node, (Global, Nonlocal)):
                         continue
-                    own.update(node.names_bound_here())
+                    threaded = set(node.names_bound_here())
                     rebound = getattr(node, "rebinds", None)
                     if isinstance(rebound, str):
-                        own.add(rebound)
-                    if isinstance(node, (FunctionDef, AsyncFunctionDef)):
-                        unrostered.append(node.fragment.seal().cid)
+                        threaded.add(rebound)
+                    own.update(threaded & (bound | armed))
             # An assignment of any target shape binds each name under its
             # projection of the statement's evaluation, as the field rows
             # above read (``target_evaluations``).
