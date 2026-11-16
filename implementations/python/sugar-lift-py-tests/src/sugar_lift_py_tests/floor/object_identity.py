@@ -13,7 +13,8 @@ construction that made its object in the frame reading it (``allocation``,
 object (True).  A value of another runtime type, or of another value, is
 never the same object (False).  ``None``, ``True`` and ``False`` are the
 language's singletons (True).  Anything else is the one comparison's own
-undecided atom over this evaluation's operands.
+undecided atom over this evaluation's operands, and it owes the undecided
+member at its site (``undecided_identity``): the solver never picks it.
 
 The same ``allocation`` says whether an object's contents -- a container's
 members, an instance's fields -- are the object's contents now
@@ -648,7 +649,8 @@ def object_identity(left, right, site):
     object has one value).  Anything else is undecided: equal ground values
     (``1000 is 1000``, ``"a" is "a"``, ``(1, 2) is (1, 2)``: interning and
     constant merging are implementation-defined), one construction evaluated
-    twice, a value that arrived."""
+    twice, a value that arrived.  The undecided identity owes the undecided
+    member at ``site`` (``undecided_identity``)."""
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import ctor, identity, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
@@ -682,17 +684,127 @@ def object_identity(left, right, site):
         )
 
         return ExitSet.completed(FalseBoolLiteralSugar(site=site))
+    # Undecided: the atom names this comparison's two operands at its site,
+    # and nothing relates the two coordinates.  ``=`` over them is a choice
+    # the solver makes, and a claim is ``sat`` where some choice satisfies
+    # it, so ``prev is cur`` over one display evaluated twice could read
+    # ``sat`` though Python made two lists.  The atom stands and owes
+    # (``undecided_identity``).
     key = str_const(occurrence_key(site))
-    return ExitSet.completed(
+    return undecided_identity(
+        ExitSet.completed(
+            PredicateValue(
+                identity(
+                    ctor("python:object_at", (key, str_const("left"))),
+                    ctor("python:object_at", (key, str_const("right"))),
+                ),
+                site,
+                operand_callsites=(*left.callsites(), *right.callsites()),
+            )
+        ),
+        site,
+    )
+
+
+def undecided_identity(outcome, site):
+    """``outcome``, the identity an ``is`` emitted at ``site`` over two
+    operands nothing relates, owing the undecided member at ``site``.
+
+    THE ONE RULE for an identity nothing decides (#7757, step 6).  The prover
+    asks whether a claim CAN be true (a raw ``sat`` is ``discharged``), so an
+    ``identity`` atom over two terms it does not interpret is a free
+    equality: the solver chooses them equal, and the lie ``a is b`` over two
+    objects Python made apart reads ``sat``.  So the atom still stands, and
+    every claim that reads it owes the undecided member, by the one rule a
+    value nothing decides owes by (``owing_undecided_slot``): never decided by
+    the solver's choice.  Decided identities never come here: one term
+    compared with itself, one construction's value read twice, two
+    constructions (``made_at``, #8592's per-evaluation keys), a language
+    singleton, two class coordinates."""
+    from sugar_lift_py_tests.floor.branch_result_coordinate import (
+        owing_undecided_slot,
+    )
+
+    return owing_undecided_slot(outcome, site)
+
+
+def term_identity(left, right, site):
+    """``left is right`` stated over the operands' own terms, where neither
+    is an object whose value term is not its object
+    (``answers_identity_by_object``): a formal, a call's result, a slot, a
+    class, a symbolic value.
+
+    Decided where the terms decide it:
+
+    * One term on both sides is one evaluation read twice: ``a is a``.  The
+      identity stands and is valid by its term; nothing is owed.
+    * A language singleton (``None``, ``True``, ``False``, ``...``) on either
+      side: there is one such object, so identity with it is exactly the
+      value equality its term states (``z is None``).  Nothing is owed: the
+      other operand's value is decided, or owed, wherever that value is.
+    * Two class coordinates (``python:type(<name>)``, what a ``ClassValue``
+      and a symbolic class read both project): one class name is one class
+      object, two names are two (True / False).
+
+    Anything else is two terms nothing relates (``a is b`` over two formals,
+    two calls' results, a class and a type read): the emitted identity owes
+    (``undecided_identity``).  ``to_term`` panics where a side cannot enter
+    FOL at all."""
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    owner = str(site)
+    left_term = left.to_term(owner=owner)
+    right_term = right.to_term(owner=owner)
+    left_class = _class_coordinate_name(left_term)
+    right_class = _class_coordinate_name(right_term)
+    if left_class is not None and right_class is not None:
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return ExitSet.completed(
+            TrueBoolLiteralSugar(site=site)
+            if left_class == right_class
+            else FalseBoolLiteralSugar(site=site)
+        )
+    from sugar_lift_py_tests.ir import identity
+
+    emitted = ExitSet.completed(
         PredicateValue(
-            identity(
-                ctor("python:object_at", (key, str_const("left"))),
-                ctor("python:object_at", (key, str_const("right"))),
-            ),
+            identity(left_term, right_term),
             site,
             operand_callsites=(*left.callsites(), *right.callsites()),
         )
     )
+    if left_term == right_term or _is_singleton(left) or _is_singleton(right):
+        return emitted
+    return undecided_identity(emitted, site)
+
+
+def _is_singleton(value) -> bool:
+    """``value`` is one of the language's singletons (``_SINGLETON_KINDS``):
+    every ``None`` is the one ``None``, and so on."""
+    key = _ground_key(value)
+    return key is not None and key[0] in _SINGLETON_KINDS
+
+
+def _class_coordinate_name(term) -> str | None:
+    """The class name a ``python:type(<name>)`` coordinate names, else
+    None."""
+    from sugar_lift_py_tests.ir import _ConstStr, _Ctor
+
+    if (
+        type(term) is _Ctor
+        and term.name == "python:type"
+        and len(term.args) == 1
+        and type(term.args[0]) is _ConstStr
+    ):
+        return term.args[0].value
+    return None
 
 
 def _known_type(value):

@@ -240,6 +240,19 @@ def _publish_undecided_dispatch_edges(
     if not isinstance(predicate, PredicateValue):
         return outcome
 
+    # An ``except ... as e`` / ``with ... as x`` / ``pytest.raises ... as
+    # ei`` slot is a coordinate prove does not interpret, and it testifies to
+    # no value (``denotes_value``), so the type test below would hand back
+    # the bare ``py.eq`` over it: a free predicate the solver satisfies by
+    # choice, so ``errs[0] == errs[1]`` over two items' ``e`` could read
+    # ``sat``.  The object's class selects ``__eq__``, which nothing here
+    # looked at: the undecided dispatch, which owes (``ExitSet.two_faced``),
+    # as for any operand whose type is not decided.
+    from sugar_lift_py_tests.floor.effect_coordinate import reads_an_effect_slot
+
+    if reads_an_effect_slot(left) or reads_an_effect_slot(right):
+        return undecided_dispatch_faces(predicate, site, op_kind)
+
     denotes_left = getattr(left, "denotes_value", None)
     denotes_right = getattr(right, "denotes_value", None)
     if not callable(denotes_left) or not callable(denotes_right):
