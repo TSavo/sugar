@@ -8,10 +8,7 @@ import enum
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.lift_rpc import (
-    _open_at_seat,
-    open_source_file_for_construction,
-)
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.sugar.call_site_sugar import (
     CallSiteSugar,
 )
@@ -97,29 +94,23 @@ def _ordinary_call(tmp_path, *, helper: str, caller: str):
     return source, definition, call, testimony
 
 
-@pytest.mark.parametrize(
-    "case",
-    ("authenticated-enum", "unrelated-renamed-source"),
-)
-def test_parser_call_definition_is_materialized_before_reporter_testimony(
-    case, tmp_path
-) -> None:
-    if case == "authenticated-enum":
-        source, definition, call = _enum_call()
-    else:
-        source, definition, call, _reporter = _ordinary_call(
-            tmp_path, helper="unrelated_predicate", caller="apply_predicate"
-        )
+def _seated(call, definition):
+    """The call-site sugar that names its definition occurrence.
 
-    constructed = call.sugar()
-
-    # The adapter handle is only parser machinery.  The semantic construction
-    # carries the exact typed definition occurrence materialized by this unit.
-    assert constructed.expected_definition_ref is definition
-    assert definition.unit is source.unit
-    assert definition.fragment.unit is call.fragment.unit
-    assert definition.fragment.seal().source_cid == source.unit.source_cid
-    assert definition.kind == "FunctionDef"
+    Its one producer is a call at its definition's recursion seat
+    (``Call._recursion_seat_call``): a call of a same-file ``def`` anywhere
+    else is that function value's application (``Call._function_value_call``,
+    #8958) and names no definition occurrence.  The seat's sugar is built
+    here at the call's own occurrence, the coordinate its construction
+    minted, so the identity guard is asked exactly what a seated call
+    presents."""
+    return CallSiteSugar(
+        target_name=call.func.id,
+        args=(),
+        site=call.fragment,
+        call_occurrence=call._construct_sugar().call_occurrence,
+        expected_definition_ref=definition,
+    )
 
 
 def test_raw_or_reminted_parser_handle_never_becomes_semantic_testimony(
@@ -177,7 +168,7 @@ def test_call_definition_testimony_rejects_foreign_or_wrong_occurrence(
     _source, definition, call, reporter = _ordinary_call(
         tmp_path, helper="predicate", caller="apply"
     )
-    truthful = call._construct_sugar()
+    truthful = _seated(call, definition)
     foreign_source, foreign_definition, foreign_call, _foreign_reporter = (
         _ordinary_call(tmp_path, helper="predicate", caller="foreign_apply")
     )
@@ -215,7 +206,7 @@ def test_every_identity_refusal_names_which_term_refused(tmp_path) -> None:
     _source, definition, call, reporter = _ordinary_call(
         tmp_path, helper="predicate", caller="apply"
     )
-    truthful = call._construct_sugar()
+    truthful = _seated(call, definition)
     foreign_source, foreign_definition, foreign_call, _foreign = _ordinary_call(
         tmp_path, helper="predicate", caller="foreign_apply"
     )
@@ -248,7 +239,7 @@ def test_the_seal_term_is_unreachable_without_a_resolved_definition(tmp_path) ->
     FAILURE -- a census hole, not a census row. The precondition must hold
     structurally, not by luck of ordering.
     """
-    _source, _definition, call, reporter = _ordinary_call(
+    _source, definition, call, reporter = _ordinary_call(
         tmp_path, helper="predicate", caller="apply"
     )
     # NOT ``call.sugar()``. On this context-less open, ``call_occurrence`` is
@@ -258,7 +249,6 @@ def test_the_seal_term_is_unreachable_without_a_resolved_definition(tmp_path) ->
     # tracked separately). Riding on it would make this tooth report that
     # defect instead of the one it is here to catch.
     truthful = call._construct_sugar()
-    definition = truthful.expected_definition_ref
     call_occurrence = truthful.call_occurrence
 
     # The tooth is only worth anything if it REACHES the seal term. Prove the
@@ -320,8 +310,8 @@ def _two_files_one_roll(tmp_path):
     caller_path.write_text("def apply(value):\n    return find_level(value)\n")
 
     collector = CollectingReporter()
-    helper_source = _open_at_seat(helper_path, root=tmp_path, reporter=collector)
-    caller_source = _open_at_seat(caller_path, root=tmp_path, reporter=collector)
+    helper_source = open_source_file_for_construction(helper_path, root=tmp_path, reporter=collector)
+    caller_source = open_source_file_for_construction(caller_path, root=tmp_path, reporter=collector)
     # ONE roll over both units -- `_testimony_root` mints a fresh reporter per
     # source, and two rolls would make the callee legitimately unregistered.
     testimony = ConstructionTestimonyReporterV1(
@@ -423,8 +413,8 @@ def _shadowing_callee_unit(tmp_path):
     caller_path.write_text("def apply(value):\n    return find_level(value)\n")
 
     collector = CollectingReporter()
-    helper_source = _open_at_seat(helper_path, root=tmp_path, reporter=collector)
-    caller_source = _open_at_seat(caller_path, root=tmp_path, reporter=collector)
+    helper_source = open_source_file_for_construction(helper_path, root=tmp_path, reporter=collector)
+    caller_source = open_source_file_for_construction(caller_path, root=tmp_path, reporter=collector)
     testimony = ConstructionTestimonyReporterV1(
         collector, SubstitutionTraceBuilderV1(caller_source.unit.source_cid)
     )
@@ -525,8 +515,8 @@ def _shadowing_allocation_unit(tmp_path):
     caller_path.write_text("def apply(value):\n    raise Boom(value)\n")
 
     collector = CollectingReporter()
-    helper_source = _open_at_seat(helper_path, root=tmp_path, reporter=collector)
-    caller_source = _open_at_seat(caller_path, root=tmp_path, reporter=collector)
+    helper_source = open_source_file_for_construction(helper_path, root=tmp_path, reporter=collector)
+    caller_source = open_source_file_for_construction(caller_path, root=tmp_path, reporter=collector)
     testimony = ConstructionTestimonyReporterV1(
         collector, SubstitutionTraceBuilderV1(caller_source.unit.source_cid)
     )
@@ -674,16 +664,3 @@ def test_a_class_definition_shows_up_on_the_roll(tmp_path) -> None:
         )
     kinds = {type(node).__name__ for node in reporter._materialized_by_ref.values()}
     assert "ClassDef" in kinds, sorted(kinds)
-
-
-def test_an_allocation_handle_is_projected_to_its_typed_class_occurrence(
-    tmp_path,
-) -> None:
-    """The producer closes the field before CallSiteSugar can be minted."""
-    top_level, _nested, call, _reporter = _shadowing_allocation_unit(tmp_path)
-    constructed = call._construct_sugar()
-    assert constructed.expected_definition_ref is top_level
-    assert (
-        constructed.expected_definition_ref.fragment.seal()
-        == top_level.fragment.seal()
-    )

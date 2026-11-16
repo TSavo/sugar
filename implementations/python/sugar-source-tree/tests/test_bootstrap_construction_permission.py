@@ -205,10 +205,14 @@ def test_bare_bootstrap_would_be_caught_if_it_reached_a_consulting_kind(
         try:
             node.sugar()
         except BareConstructionDoor as panic:
-            refused.append(panic.kind)
+            refused.append(type(node).__name__)
         except (Exception, LifterRefusal):
             pass
 
+    # A ``with`` no longer consults the context itself: its manager is what
+    # its head reduces to (``With._reduced_manager_sugar``), so driving it
+    # bare is refused at the call its head is (``Call._construct_sugar``).
+    # The refusal is recorded by the kind DRIVEN, so both entrances still bite.
     assert set(refused) == {"With", "Call"}, (
         f"expected the bare door to refuse both With and Call, got {refused}. "
         f"If it refuses neither, the permission tooth above proves nothing."

@@ -15,7 +15,29 @@ def _fn(src):
 
 
 def _out(src):
-    return _fn(src).sugar().desugar().completed_value().post().args[1]
+    """The call term the function returns.
+
+    A call nothing answers is the unanswered call's two faces
+    (``UnknownCalleeCallV1``): it completes only under its own completes
+    atom, with ``python:call_result(<call term>, <occurrence>)`` as its
+    value, and its halt is kept beside it."""
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import _is_true
+
+    outcome = _fn(src).sugar().desugar()
+    assert isinstance(outcome, ExitSet), outcome
+    assert any(
+        str(getattr(halt.effect, "producer_node_owner", "")).startswith(
+            "UnknownCallee:"
+        )
+        for halt in outcome.halts()
+    ), outcome.exits
+    completed = [e for e in outcome.normalize().exits if isinstance(e, Completed)]
+    assert len(completed) == 1, outcome.exits
+    assert not _is_true(completed[0].guard), completed[0].guard
+    result = completed[0].value.post().args[1]
+    assert result.name == "python:call_result", result
+    return result.args[0]
 
 
 def test_named_call_kwarg_lifts():
@@ -28,10 +50,11 @@ def test_named_call_kwarg_lifts():
 
 
 def test_method_call_kwarg_lifts():
+    # A method on a formal is the dispatched call (``receiver_dispatch``):
+    # its receiver's class rides after the written actuals.
     t = _out("def A(z):\n    return z.get(1, default=2)\n")
-    assert t.name == "call:get"
-    kwarg = t.args[-1]
-    assert kwarg.name == "py.kwarg"
+    assert t.name == "call:dispatch:get"
+    (kwarg,) = [arg for arg in t.args if arg.name == "py.kwarg"]
     assert kwarg.args[0].value == "default"
     assert kwarg.args[1].value == 2
 

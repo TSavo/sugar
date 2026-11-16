@@ -10,17 +10,30 @@ that gap.
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 
-from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+from sugar_source_tree.reporter import CollectingReporter
 
 
 def _fn(src):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
-        path = f.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+    """The one function of ``src``, opened through the one construction door
+    under its own workspace: an ``assert`` halts at a ground exit whose
+    locus is workspace-relative (``ground_exit``)."""
+    root = Path(tempfile.mkdtemp())
+    path = root / "m.py"
+    path.write_text(src, encoding="utf-8")
+    source_file = open_source_file_for_construction(
+        path, root=root, reporter=CollectingReporter()
+    )
+    return next(source_file.functions())
+
+
+def _called(term):
+    """The call a ``python:call_result(<call term>, <occurrence>)`` names:
+    one evaluation of a call nothing answered (``_occurrence_result``)."""
+    assert term.name == "python:call_result", term
+    return term.args[0]
 
 
 def _universe(fn):
@@ -40,7 +53,7 @@ def _call_term(src):
     universe = _universe(_fn(src))
     for entry in universe.record.statements:
         if type(entry).__name__ == "ReturnValue":
-            return entry.value.term
+            return _called(entry.value.term)
     raise AssertionError(
         f"no return/call term in universe statements: "
         f"{[type(s).__name__ for s in universe.record.statements]}"
@@ -57,16 +70,15 @@ def test_computed_call_is_the_py_call_coordinate():
 
 def test_assert_consumes_the_coordinate():
     universe = _universe(_fn("def A(fs, x):\n    assert fs[0](x) == x\n    return x\n"))
-    # Assert may also sit under a pending contract; walk invs and contributions.
-    invs = universe.invs()
-    if invs:
-        inv = invs[0]
-        assert inv.name == "py.eq"
-        assert inv.args[0].name == "py.call"
-        return
-    # Pending-contract path: find py.call in statement tree.
-    text = str(universe.record.statements)
-    assert "py.call" in text
+    # The equality over the call's result is the undecided equality's two
+    # faces, keyed per evaluation (#7757 NEW-1): the truth of
+    # ``python:compare_result("Eq", python:call_result(py.call(..)), x, <key>)``.
+    inv = universe.invs()[0]
+    assert inv.name == "python:truth_result"
+    compared = inv.args[0]
+    assert compared.name == "python:compare_result"
+    assert compared.args[0].value == "Eq"
+    assert _called(compared.args[1]).name == "py.call"
 
 
 def test_discrimination_differs_by_callee_operand():

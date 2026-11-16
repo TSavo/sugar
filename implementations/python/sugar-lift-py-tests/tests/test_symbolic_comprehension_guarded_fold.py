@@ -52,7 +52,7 @@ def _outcome_of(source, path=None):
     function = list(
         SourceFile(
             workspace_path_source(path, root=os.path.dirname(path)),
-            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+            construction_context=TreeConstructionContextV1.for_source_call_construction(workspace_root=os.path.dirname(path)),
         ).functions()
     )[0]
     return function.sugar().desugar(None)

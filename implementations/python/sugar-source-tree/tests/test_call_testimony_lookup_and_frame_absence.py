@@ -95,10 +95,13 @@ def _class_constructor_call(tmp_path):
 
 
 def test_in_population_class_constructor_call_testifies(tmp_path) -> None:
-    """Truthful twin: resolved ClassDef, no constructor frame anywhere -> testimony."""
+    """Truthful twin: an in-population class call testifies.
+
+    A call by name seats no definition's frame (#8958): the class call names
+    no definition occurrence (its class value applies where it reduces), so
+    the identity guard has nothing to ask and the honest absence testifies."""
     call, reporter = _class_constructor_call(tmp_path)
     sugar = call.sugar()
-    assert isinstance(sugar.expected_definition_ref, ClassDef)
-    assert sugar.source_call_frame is None
+    assert not isinstance(getattr(sugar, "expected_definition_ref", None), ClassDef)
     reporter.present_construction(call, sugar)
     assert constructed_value_cid_v2(sugar).startswith("blake3-512:")

@@ -147,7 +147,7 @@ def _outcome(tmp_path: Path, source: str, stem: str):
     functions = list(
         SourceFile(
             workspace_path_source(str(path), root=str(tmp_path)),
-            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+            construction_context=TreeConstructionContextV1.for_source_call_construction(workspace_root=str(tmp_path)),
         ).functions()
     )
     return function_universe_outcome(functions[-1])
