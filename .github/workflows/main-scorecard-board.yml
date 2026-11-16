@@ -18,6 +18,11 @@ name: Main scorecard board
 #
 # Incremental carry, the persistent venv and `set +e` are as described in
 # main-scorecard.yml.
+#
+# The hourly run has its own group and a gate, as in main-scorecard.yml
+# ("THE HOUR NEVER REPLACES A PUSH", #8416): it never replaces the push run
+# waiting for the same head, and it measures nothing when a board run on the
+# head is queued or measuring or already posted its row.
 
 on:
   push:
@@ -27,7 +32,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: main-scorecard-board
+  group: main-scorecard-board${{ github.event_name == 'schedule' && '-schedule' || '' }}
   cancel-in-progress: false
 
 permissions:
@@ -47,6 +52,27 @@ env:
   GH_REPO: ${{ github.repository }}
 
 jobs:
+  # Scheduled runs only: measure=false when this head is already queued,
+  # measuring or posted. Skipped on push and dispatch, where the board runs.
+  # A gate that fails leaves measure empty, so the board measures.
+  gate:
+    name: schedule gate
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      measure: ${{ steps.gate.outputs.measure }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: tools/main_scorecard_schedule_gate.sh
+          sparse-checkout-cone-mode: false
+      - name: Does this head still need a row?
+        id: gate
+        shell: bash
+        run: bash tools/main_scorecard_schedule_gate.sh main-scorecard-board.yml
+
   # The pass kit's shape (run.sh): BOARD_SEATS seats of --slice i/K, each with
   # its own checkpoint, joined, then --aggregate-only. With --carry-store a
   # seat measures only the files whose recorded dependencies changed and
@@ -54,6 +80,8 @@ jobs:
   # sugar-lift-py-tests[test] and docs/ledgers/pins/pandas-3.0.3.pin.json.
   board:
     name: pandas board
+    needs: [gate]
+    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 240
     steps:
