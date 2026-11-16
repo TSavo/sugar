@@ -127,15 +127,29 @@ class RaiseSugar(Sugar):
         construction raised, so no group is built) stays a halt; each
         completed arm answers the effect the member would raise with
         (``_effect``), carrying the arm's guard, faces and ``owed``.  A
-        member that is itself a raised group instance is that group."""
+        member that is itself a raised group instance is that group.
+
+        The class is read off the value the construction presents beneath
+        the writes it carries -- a call's record of what it may have changed
+        (``call_site_value.bind_after_call``), a callee's store -- never off
+        the carrier, which names no class (#7757 H7).  The writes ride the
+        member's effect to the group (``GroupedRaiseSugar._group_after``),
+        which applies them before the group's halts, never drops them."""
         from sugar_lift_py_tests.floor.grouped_exception_value import (
             GroupedExceptionValue,
         )
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            carry_walrus_binds,
+            peel_walrus_binds,
+        )
 
         def member(raised_value):
-            if isinstance(raised_value, GroupedExceptionValue):
-                return ExitSet.completed(raised_value.effect)
-            return ExitSet.completed(self._effect(raised_value, ctx))
+            binds, presented = peel_walrus_binds(raised_value)
+            if isinstance(presented, GroupedExceptionValue):
+                effect = presented.effect
+            else:
+                effect = self._effect(presented, ctx)
+            return ExitSet.completed(carry_walrus_binds(binds, effect))
 
         return self.exception.desugar(ctx).and_then(member)
 

@@ -468,17 +468,32 @@ class ComparisonOpSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
             evaluated_after,
             written_by,
         )
 
         # The right side is evaluated after the left, with the left's writes
-        # applied, and its halt carries them (``evaluated_after``).
+        # applied, and its halt carries them (``evaluated_after``).  The
+        # comparison runs on the values the sides present, through the one
+        # operand door (``consume_operands``), as a chained comparison's leg
+        # does: a write a side carries (a walrus's bind, a callee's store, the
+        # record of what a call may have changed, ``bind_after_call``) rides
+        # the comparison's completed result, and its halts carry it.  Handed
+        # the carrier itself, ``in`` asked the carrier for ``contains`` (a
+        # construction panic) and the undecided-dispatch rule asked it
+        # whether it denotes a value, dropping the undecided halt (#7757 H7).
         return self.left.desugar(ctx).and_then(
             lambda left: evaluated_after(
                 (left,), self.right, written_by(left, ctx)
             ).and_then(
-                lambda right: self.apply_reduced(left, right, ctx)
+                lambda right: consume_operands(
+                    lambda presented_left, presented_right: self.apply_reduced(
+                        presented_left, presented_right, ctx
+                    ),
+                    left,
+                    right,
+                )
             )
         )
 

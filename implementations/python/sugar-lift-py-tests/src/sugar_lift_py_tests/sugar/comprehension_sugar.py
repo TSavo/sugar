@@ -290,9 +290,65 @@ class ComprehensionSugar(ConstructedTermSugar):
             )
         generator = self.generators[index]
         return generator.iterable.desugar(ctx).and_then(
-            lambda iterable: self._after_iterable(
+            lambda iterable: self._after_written_iterable(
                 generator, iterable, index, ctx, writes=writes, outer=outer
             )
+        )
+
+    def _after_written_iterable(
+        self, generator, iterable, index, ctx, *, writes, outer
+    ):
+        """Generator ``index`` over the value ``iterable`` presents beneath
+        the writes it carries, as a ``for`` iterates its iterable's
+        (``LoopRecurrenceSugar.desugar``).  No walrus is one of them (Python
+        refuses an assignment expression in a comprehension's iterable): they
+        are what a call there left -- its record of what it may have changed
+        (``call_site_value.bind_after_call``), a callee's store.
+
+        - The first generator's iterable is evaluated once, in the enclosing
+          scope, before any member: its writes are applied before the
+          members run and before the comprehension's walrus reads its prior
+          value (``outer``), and ride the comprehension's completed value
+          through the one operand door (``consume_operands``), every halt of
+          the comprehension carrying them.
+        - A later generator's is evaluated in each member that reaches it:
+          its writes are that member's, as a condition's walrus writes are
+          (``_desugar_filters``), carried out of the recurrence guarded by
+          some member writing (``_complete``).
+
+        Handed the carrier itself, the iteration asked it for ``iter``, a
+        construction panic, and never saw a ``range`` call beneath it
+        (#7757 H7)."""
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            peel_walrus_binds,
+            written_by,
+        )
+
+        binds, presented = peel_walrus_binds(iterable)
+        if not binds:
+            return self._after_iterable(
+                generator, iterable, index, ctx, writes=writes, outer=outer
+            )
+        if index == 0:
+            return consume_operands(
+                lambda value: self._after_iterable(
+                    generator,
+                    value,
+                    index,
+                    written_by(iterable, ctx),
+                    writes=writes,
+                    outer=written_by(iterable, outer),
+                ),
+                iterable,
+            )
+        return self._after_iterable(
+            generator,
+            presented,
+            index,
+            self._written(binds, ctx, finite=False),
+            writes=(*writes, *binds),
+            outer=outer,
         )
 
     def _after_iterable(self, generator, iterable, index, ctx, *, writes, outer):
