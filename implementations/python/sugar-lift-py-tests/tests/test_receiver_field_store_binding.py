@@ -21,13 +21,9 @@ from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
     ReceiverFieldStoreSugar,
 )
-from sugar_lift_py_tests.sugar.constructed_receiver_ref_sugar import (
-    ConstructedReceiverRefSugar,
-)
 from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
 from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 from sugar_source_tree.nodes import (
-    ClassDef,
     FunctionDef,
     ReceiverFieldStoreState,
     Return,
@@ -89,17 +85,15 @@ class _FixedSugar(ConstructedTermSugar):
         return self.value.to_term(owner=owner)
 
 
-def test_class_initializer_reaches_the_authenticated_receiver_store_entrance() -> None:
-    """The active class initializer must not enter as an arbitrary formal."""
+def test_class_initializer_s_store_is_the_one_field_store_on_its_formal() -> None:
+    """An ``__init__`` is an ordinary method (#7757 B2): its receiver is its
+    formal, and ``self.value = 1`` is the one field store on it, as on any
+    parameter (``mutate`` below); the class call reaches it through the
+    dispatched ``__init__`` edge."""
     source = "class Box:\n" "    def __init__(self):\n" "        self.value = 1\n"
     tree = SourceFile(
         (source, "class_receiver.py", blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-    )
-    definition = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, ClassDef) and node.name == "Box"
     )
     initializer = next(
         node
@@ -109,7 +103,6 @@ def test_class_initializer_reaches_the_authenticated_receiver_store_entrance() -
 
     universe = initializer.sugar()
     statement = universe.statements[0]
-    frame = definition.source_visible_constructor_frame()
 
     # The statement evaluates its value once under its key; the one field
     # store reads the value through that key (``KeyedStoreSugar``).
@@ -119,8 +112,7 @@ def test_class_initializer_reaches_the_authenticated_receiver_store_entrance() -
     assert isinstance(store.value, EvaluationRefSugar)
     assert store.value.place
     assert store.value.evaluation == statement.evaluation
-    assert isinstance(store.receiver, ConstructedReceiverRefSugar)
-    assert store.receiver.binding_coordinate_cid == frame.body.receiver_coordinate_cid
+    assert isinstance(store.receiver, FormalRefSugar)
 
 
 def test_genuine_formal_receiver_takes_the_one_field_store() -> None:
@@ -145,8 +137,10 @@ def test_genuine_formal_receiver_takes_the_one_field_store() -> None:
     assert isinstance(statement.store.receiver, FormalRefSugar)
 
 
-def test_class_initializer_universe_seats_its_constructed_receiver() -> None:
-    """Enumeration binds the exact class receiver before body reduction."""
+def test_class_initializer_universe_completes_where_its_store_does() -> None:
+    """An ``__init__``'s own universe runs on its formal (#7757 B2): it
+    completes where its field store does (the store's own two faces, its
+    plain-store guard over ``class:self`` undecided here)."""
     source = "class Box:\n" "    def __init__(self):\n" "        self.value = 1\n"
     tree = SourceFile(
         (source, "class_receiver.py", blake3_512_of(source.encode())),
@@ -160,7 +154,7 @@ def test_class_initializer_universe_seats_its_constructed_receiver() -> None:
 
     outcome = function_universe_outcome(initializer)
 
-    assert outcome.completed_value() is not None
+    assert any(isinstance(face, Completed) for face in outcome.exits), outcome
 
 
 def test_receiver_field_store_rebinds_the_same_receiver_for_the_tail():
@@ -299,7 +293,7 @@ def test_receiver_field_post_state_preserves_mapping_identity_and_entries() -> N
         "site",
     ).desugar(None)
 
-    assert outcome.completed_value() is not None
+    assert any(isinstance(face, Completed) for face in outcome.exits), outcome
     assert isinstance(outcome.completed_value(), MappingObjectValue)
     assert outcome.completed_value().identity == receiver.identity
     assert outcome.completed_value().entries == receiver.entries
@@ -321,7 +315,7 @@ def test_receiver_field_post_state_preserves_defining_class_authority() -> None:
         _FixedSugar(receiver), _FixedSugar(TermValue(7)), "owner", "site"
     ).desugar(None)
 
-    assert outcome.completed_value() is not None
+    assert any(isinstance(face, Completed) for face in outcome.exits), outcome
     assert outcome.completed_value().defining_class is defining_class
 
 
