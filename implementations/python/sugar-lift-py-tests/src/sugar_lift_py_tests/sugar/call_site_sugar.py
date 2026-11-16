@@ -1556,9 +1556,24 @@ def stated_global_values(definition) -> tuple:
     is not decided.  One the
     module body does not decide (read through its undecided key,
     ``nodes.undecided_module_binding_key``) is never stated, and the run is
-    not asked for it."""
-    from sugar_lift_py_tests.floor.object_identity import holds_stale, instance_stale
+    not asked for it.
 
+    Beside a stated value, the class of that object for a contract that
+    takes the global's ``class:global:<name>`` input
+    (``nodes._receiver_class_globals``), where the run decides it
+    (``receiver_dispatch.class_value``: a list it made is the builtin
+    ``list``): prove's one binder binds the stated class only where it binds
+    the global to its stated value too, never beside a ``py.global`` a call
+    supplies (#7757 step 7)."""
+    from sugar_lift_py_tests.contract_input import CLASS_INPUT, input_formal
+    from sugar_lift_py_tests.floor.object_identity import holds_stale, instance_stale
+    from sugar_lift_py_tests.receiver_dispatch import class_value
+
+    classes = {
+        item.formal
+        for item in definition.contract_inputs()
+        if item.coordinate.input_kind == CLASS_INPUT
+    }
     stated = []
     for item in _global_inputs(definition):
         value = _module_final_global(definition.unit, item.coordinate.name)
@@ -1570,6 +1585,11 @@ def stated_global_values(definition) -> tuple:
         if holds_stale(value) or instance_stale(value):
             continue
         stated.append((item.formal, value.to_term(owner="stated_global_values")))
+        class_formal = input_formal(CLASS_INPUT, item.formal)
+        if class_formal in classes:
+            term = class_value(value)
+            if term is not None:
+                stated.append((class_formal, term))
     return tuple(stated)
 
 

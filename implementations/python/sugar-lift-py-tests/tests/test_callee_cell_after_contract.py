@@ -128,6 +128,34 @@ def test_an_append_on_a_parameter_is_stated_over_the_dispatched_call() -> None:
         assert "class:xs" in post, post
 
 
+_GLOBAL_STORED_IN_PLACE = """\
+G = [1]
+
+
+def bump():
+    G[0] = 2
+
+
+def test_bump():
+    bump()
+    assert G[0] == 2
+"""
+
+
+def test_a_global_stored_in_place_is_stated_over_the_dispatched_call() -> None:
+    # ``G[0] = 2`` on the global's input is the dispatched ``__setitem__``
+    # over its class input ``class:global:G`` (#7757 step 7): the global is
+    # stated as that call leaves its receiver, under ``global:G``, never the
+    # global's input itself.
+    posts = _posts(_GLOBAL_STORED_IN_PLACE, "bump")
+    stated = [post for post in posts if "python:after" in post]
+    assert stated, posts
+    for post in stated:
+        assert "global:G" in post, post
+        assert "__setitem__" in post, post
+        assert "class:global:G" in post, post
+
+
 _BRANCH = """\
 def test_count(c):
     n = 0

@@ -513,6 +513,69 @@ def class_arguments(positional, keywords, *, shift: int = 0) -> list:
     return arguments
 
 
+def global_class_arguments(globals_read, unit) -> list:
+    """``py.class("global:<name>", <class>)`` for each module global a call
+    of a same-file definition supplies (``globals_read``: ``(name, value)``,
+    the value its ``py.global`` states) that some function of the module
+    mutates through a dispatched call (``nodes._module_received_globals``),
+    where its class is decided (#7757 step 7):
+
+    - a value whose class is decided here (``class_value``: a list the
+      module's run made, an instance a construction in the frame made);
+    - the caller's own ``global:<name>`` input (its free input, or a state a
+      call left that object in, ``call_site_sugar._global_after_call``,
+      which keeps the input's coordinate): the class of that object is the
+      caller's own ``class:global:<name>`` input
+      (``nodes._receiver_class_globals``), which its caller supplies in
+      turn, and its row states beside the global's value.  A state a call
+      left is that object only where no body of the module rebinds the
+      global (``SourceUnit.module_rebindable_names``: a ``global``
+      declaration's write, a dynamic writer); a call's mutation never
+      changes a builtin object's class, and a module that stores a
+      ``__class__`` dispatches nothing (``module_attribute_names``).
+
+    Prove's one binder binds it to the callee's ``class:global:<name>``
+    input, the class of the formal ``global:<name>`` the call's
+    ``py.global`` binds: the one input kind, as a cell's class rides
+    ``py.class("cell:<name>", ...)``.  A callee that takes no such input
+    binds it to nothing.  Anything else supplies no class."""
+    from sugar_lift_py_tests.contract_input import (
+        CLASS_INPUT,
+        GLOBAL_INPUT,
+        ContractInputCoordinateV1,
+        input_formal,
+    )
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import ctor, make_var, str_const
+    from sugar_source_tree.nodes import _module_received_globals
+
+    if not globals_read:
+        return []
+    mutated = _module_received_globals(unit)
+    rebindable = None
+    arguments = []
+    for name, value in globals_read:
+        if name not in mutated:
+            continue
+        formal = input_formal(GLOBAL_INPUT, name)
+        term = class_value(value)
+        coordinate = getattr(value, "formal_coordinate", None)
+        if (
+            term is None
+            and type(value) is SymbolicValue
+            and isinstance(coordinate, ContractInputCoordinateV1)
+            and coordinate.input_kind == GLOBAL_INPUT
+            and coordinate.name == name
+        ):
+            if value.term != make_var(formal) and rebindable is None:
+                rebindable = frozenset(unit.module_rebindable_names())
+            if value.term == make_var(formal) or name not in rebindable:
+                term = make_var(input_formal(CLASS_INPUT, formal))
+        if term is not None:
+            arguments.append(ctor(CLASS_ARGUMENT, [str_const(formal), term]))
+    return arguments
+
+
 def dispatch_on_receiver(
     name, receiver, positional, kw_values, site, *, unit, halted_at=None
 ):
@@ -594,19 +657,20 @@ def _receiver_class(name, receiver, unit):
 
 def _class_input_coordinate(coordinate) -> bool:
     """Whether ``coordinate`` is one a class input may name: a positional or
-    keyword parameter's (``FormalParameterCoordinateV1``), or a captured
-    cell's ``cell:<name>`` input's (``ContractInputCoordinateV1``)."""
+    keyword parameter's (``FormalParameterCoordinateV1``), a captured cell's
+    ``cell:<name>`` input's or a module global's ``global:<name>`` input's
+    (``ContractInputCoordinateV1``)."""
     from sugar_lift_py_tests.contract_input import (
         CELL_INPUT,
+        GLOBAL_INPUT,
         ContractInputCoordinateV1,
     )
     from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 
     if isinstance(coordinate, FormalParameterCoordinateV1):
         return coordinate.parameter_kind in _PARAMETER_KINDS
-    return (
-        isinstance(coordinate, ContractInputCoordinateV1)
-        and coordinate.input_kind == CELL_INPUT
+    return isinstance(coordinate, ContractInputCoordinateV1) and (
+        coordinate.input_kind in (CELL_INPUT, GLOBAL_INPUT)
     )
 
 
@@ -623,10 +687,15 @@ def class_input_formals(unit) -> frozenset:
     never a dispatched edge, since nothing would ever bind its class (#7757
     NEW-1, #8960 decision 1).  Each captured cell whose class is an
     input (``nodes._receiver_class_cells``) is named so too, by the
-    coordinate of its ``cell:<name>`` input (#7757 step 7).  Read once per
-    typed module."""
+    coordinate of its ``cell:<name>`` input (#7757 step 7), and so is each
+    module global a function mutates through a dispatched call and whose
+    class is an input of its contract (``nodes._received_globals``,
+    ``nodes._receiver_class_globals``), by the coordinate of its
+    ``global:<name>`` input.  A function that only takes a global's class to
+    hand it on dispatches nothing over it.  Read once per typed module."""
     from sugar_lift_py_tests.contract_input import (
         CELL_INPUT,
+        GLOBAL_INPUT,
         ContractInputCoordinateV1,
     )
     from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
@@ -634,7 +703,9 @@ def class_input_formals(unit) -> frozenset:
         AsyncFunctionDef,
         FunctionDef,
         Lambda,
+        _received_globals,
         _receiver_class_cells,
+        _receiver_class_globals,
         _receiver_class_parameters,
     )
 
@@ -662,6 +733,20 @@ def class_input_formals(unit) -> frozenset:
                             name=name,
                         ).coordinate_cid
                     )
+            mutated = _received_globals(node)
+            if mutated:
+                # The coordinate the function's own universe reads the
+                # global through (``call_site_sugar.bind_global_inputs``).
+                owner = node.fragment.seal().cid
+                for name in _receiver_class_globals(node):
+                    if name in mutated:
+                        found.add(
+                            ContractInputCoordinateV1.mint(
+                                owner_definition_cid=owner,
+                                input_kind=GLOBAL_INPUT,
+                                name=name,
+                            ).coordinate_cid
+                        )
             inputs = set(_receiver_class_parameters(node))
             if not inputs:
                 continue

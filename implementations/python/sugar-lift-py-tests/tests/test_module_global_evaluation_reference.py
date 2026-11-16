@@ -307,7 +307,12 @@ def test_a_global_a_module_call_may_change_is_undecided_after_it() -> None:
     assert read.name == "X"
     assert read.evaluation == key
     assert global_input_keys(unit, "X") == (key,)
-    assert [item.formal for item in function.contract_inputs()] == ["global:X"]
+    # ``add`` mutates ``X`` through a dispatched call: a contract that takes
+    # ``X`` takes the class of its object too (#7757 step 7).
+    assert [item.formal for item in function.contract_inputs()] == [
+        "global:X",
+        "class:global:X",
+    ]
     entry = bind_global_inputs(None, function, owner="test")
     assert entry is not None
     bound = entry.temporal.value_if_bound(key)

@@ -10310,7 +10310,12 @@ class FunctionDef(Statement):
         last dispatched call's ``python:after(<call result>, "0")``
         (``receiver_dispatch.receiver_after_dispatch``), decided at prove
         where the caller binds the class input to a builtin whose law
-        answers the call."""
+        answers the call.  A module global the body never declares
+        ``global`` and only mutates through dispatched calls over its
+        ``class:global:<name>`` input (``_settled_receivers``) is read so
+        too, under ``global:<name>``: the object it changed in place
+        (``def bump(): G[0] = 2``), the term a caller reads the global by
+        after the call."""
         if type(self) is not FunctionDef or FunctionDef._owns_yield(self.body):
             return ()
         names, _coordinates = self._captured_bindings()
@@ -10339,6 +10344,11 @@ class FunctionDef(Statement):
                 if name in settled and name not in rebound
             ),
             *((GLOBAL_INPUT, name) for name in declared),
+            *(
+                (GLOBAL_INPUT, name)
+                for name in _receiver_class_globals(self)
+                if name in settled and name not in declared
+            ),
         ):
             if not _rebound_in_branches_and_loops(self.body, name):
                 continue
@@ -24044,6 +24054,13 @@ def _contract_inputs(definition) -> tuple:
       mutates the same way (``_receiver_class_cells``, #7757 step 7): the
       class of the formal ``cell:<name>``, the one input kind, supplied by
       ``py.class("cell:<name>", <class>)``.
+    - ``class:global:<name>`` for each ``global:<name>`` input whose object
+      some function of this module mutates the same way
+      (``_receiver_class_globals``, #7757 step 7): the class of the formal
+      ``global:<name>``, the one input kind, supplied by
+      ``py.class("global:<name>", <class>)`` beside the call's
+      ``py.global``, and stated by the row beside the global's value where
+      the module's run decides it (``call_site_sugar.stated_global_values``).
     - ``field:<receiver>.<name>`` for each field ``<receiver>.<name>`` a
       method reads of its receiver where the object's ``__dict__`` is the
       one it arrived with (``_receiver_field_inputs``, #7757): the read is
@@ -24110,6 +24127,14 @@ def _contract_inputs(definition) -> tuple:
         )
         for name in _receiver_class_cells(definition)
     )
+    global_classes = tuple(
+        ContractInputV1.mint(
+            owner_definition_cid=owner_cid,
+            input_kind=CLASS_INPUT,
+            name=input_formal(GLOBAL_INPUT, name),
+        )
+        for name in _receiver_class_globals(definition)
+    )
     fields = tuple(
         ContractInputV1.mint(
             owner_definition_cid=owner_cid,
@@ -24118,7 +24143,7 @@ def _contract_inputs(definition) -> tuple:
         )
         for receiver, field in _receiver_field_inputs(definition)
     )
-    return cells + defaults + globals_ + classes + cell_classes + fields
+    return cells + defaults + globals_ + classes + cell_classes + global_classes + fields
 
 
 def _receiver_class_parameters(definition) -> tuple:
@@ -24481,6 +24506,93 @@ def _receiver_class_cells(definition) -> tuple:
     return answer
 
 
+def _received_globals(definition) -> frozenset:
+    """The module globals ``definition``'s own body mutates through a
+    dispatched call and reads in no other way (#7757 step 7): each global it
+    reads (``_module_globals_read``) that the body calls a method of or
+    stores or deletes an item of (``_receiver_uses``' ``received``), under
+    the rules a captured cell's class input takes (``_receiver_class_cells``):
+    never read bare, never through a field's method, never by a nested
+    function, lambda or class.  Such a call on it is the dispatched call over
+    its ``class:global:<name>`` input (``receiver_dispatch.
+    class_input_formals``), and the object the body leaves in it is stated
+    over ``python:after(out, "global:<name>")``
+    (``FunctionDef._cells_where_the_body_ends``).  Empty for a generator
+    function or an ``async def`` (``_receiver_uses`` reads nothing) and for
+    anything that reads no module global.  Read once per definition."""
+    row = definition._coordinate()[2]
+    held = row.get("__received_globals__")
+    if held is not None:
+        return held
+    answer = frozenset()
+    reads = getattr(definition, "_module_globals_read", None)
+    uses = _receiver_uses(definition) if reads is not None else None
+    if uses is not None:
+        received, blocked, _read, _super = uses
+        answer = frozenset(
+            name for name in reads() if name in received and name not in blocked
+        )
+    row["__received_globals__"] = answer
+    return answer
+
+
+# Module -> (module, names), the last few typed modules read.
+_MODULE_RECEIVED_GLOBALS: dict = {}
+
+
+def _module_received_globals(unit) -> frozenset:
+    """Every module global some function of the module ``unit`` holds
+    mutates through a dispatched call (``_received_globals``), a ``def`` or
+    lambda at any depth.  Read once per typed module."""
+    module = getattr(unit, "typed_module", None)
+    if module is None:
+        return frozenset()
+    held = _MODULE_RECEIVED_GLOBALS.get(id(module))
+    if held is not None and held[0] is module:
+        return held[1]
+    found: set = set()
+    for statement in module.body:
+        for node in statement.walk():
+            if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
+                found.update(_received_globals(node))
+    answer = frozenset(found)
+    if len(_MODULE_RECEIVED_GLOBALS) >= 8:
+        _MODULE_RECEIVED_GLOBALS.clear()
+    _MODULE_RECEIVED_GLOBALS[id(module)] = (module, answer)
+    return answer
+
+
+def _receiver_class_globals(definition) -> tuple:
+    """The ``global:<name>`` inputs of ``definition`` whose class is an input
+    of its contract too, ``class:global:<name>`` (#7757 step 7), in name
+    order: each global input (``_global_input_names``) some function of the
+    module mutates through a dispatched call (``_module_received_globals``).
+
+    A function that mutates the global itself (``_received_globals``)
+    dispatches the call over the input.  Every other function that takes the
+    global takes its class too, so that it can supply it, beside the global,
+    to a call of a function that dispatches over it: the class of the object
+    the global binds at its entry, which it hands on unchanged where the
+    value it supplies is that entry object (``receiver_dispatch.
+    global_class_arguments``), as a caller supplies a global itself from its
+    own input (``_global_input_names``).  The row states it beside the
+    global's value where the module's run decides the object's class
+    (``call_site_sugar.stated_global_values``); prove's one binder binds a
+    stated class only where the global is bound to its stated value too.
+    Read once per definition."""
+    row = definition._coordinate()[2]
+    held = row.get("__receiver_class_globals__")
+    if held is not None:
+        return held
+    answer = ()
+    names = _global_input_names(definition)
+    if names:
+        mutated = _module_received_globals(definition.unit)
+        answer = tuple(sorted(name for name in names if name in mutated))
+    row["__receiver_class_globals__"] = answer
+    return answer
+
+
 def _settled_receivers(definition) -> frozenset:
     """The parameters and captured cells of ``definition`` whose class is an
     input of its contract and whose every use is a dispatched call on it --
@@ -24490,14 +24602,24 @@ def _settled_receivers(definition) -> frozenset:
     states over ``python:after(out, <formal>)``
     (``FunctionDef._cells_where_the_body_ends``, #7757 step 7).  An
     attribute read runs ``type(p).__getattribute__`` and whatever descriptor
-    it finds, which no state here records."""
+    it finds, which no state here records.
+
+    A module global the body so mutates (``_received_globals``) whose class
+    is an input (``_receiver_class_globals``) is settled the same way: the
+    object it holds where the body ends is the one its dispatched calls
+    left, stated over ``python:after(out, "global:<name>")``."""
     uses = _receiver_uses(definition)
     if uses is None:
         return frozenset()
     _received, _blocked, read, _super = uses
     parameters = _receiver_class_parameters(definition)
     cells = _receiver_class_cells(definition)
-    return frozenset(parameters + cells) - frozenset(read)
+    globals_ = tuple(
+        name
+        for name in _receiver_class_globals(definition)
+        if name in _received_globals(definition)
+    )
+    return frozenset(parameters + cells + globals_) - frozenset(read)
 
 
 def _receiver_uses(definition):
