@@ -43,7 +43,7 @@ class ReturnSugar(Sugar):
         # The returned value is this statement's header: every write it
         # carries -- a walrus's bind (``return (x := 5) + 1``), and the
         # receiver field stores a call in it carried
-        # (``call_site_value.caller_visible_stores``) -- reaches the record
+        # -- reaches the record
         # the ``return`` leaves by the one header rule (``header_applied``,
         # ``header_ran``), as a call in statement position lays them
         # (``record_statement_value``).  The return holds the value the

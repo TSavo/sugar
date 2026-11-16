@@ -24,7 +24,7 @@ class ReceiverFieldStoreSugar(Sugar):
         (``ObjectValue.plain_store_guard``, decided at prove alone) the
         plain store: the statement records it (``ReceiverFieldStoreValue``),
         which advances every binding of the object (``extend_scope``) and is
-        what a call carries to its caller (``caller_visible_stores``).  The
+        what a call carries to its caller.  The
         field is then known on the object even where it arrived
         (``ObjectValue.stored_fields``); the rest of it stays as its
         currency says.
@@ -32,7 +32,7 @@ class ReceiverFieldStoreSugar(Sugar):
         (``ObjectValue.field_store_call``), applied like any call, its
         halts the store's and its value recorded as a call in statement
         position is (``record_statement_value``: what it did to what this
-        frame sees rides it, ``caller_visible_stores``).
+        frame sees rides it).
 
       Where no class term is decided (an instance not current, no workspace
       root), the call alone: the unanswered call where no class is named.

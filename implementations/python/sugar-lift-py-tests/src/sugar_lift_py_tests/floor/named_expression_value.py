@@ -329,13 +329,12 @@ def carry_walrus_binds(binds, presented):
 @dataclass(frozen=True)
 class CallerStoreValue(NamedExpressionValue):
     """A store a callee made on an object its caller sees
-    (``call_site_value.caller_visible_stores``), riding the call's completed
+    (``carry_caller_stores``), riding the call's completed
     value to the caller's statement as a walrus's write rides its value: through
     every operand door (``consume_operands``), applied where the statement
     applies its writes (``bind_walrus_binds``).  So the caller sees what the
     callee did wherever the call sits -- a statement alone, an assignment's
-    value, an argument, a condition -- as a halt leaving the call carries it
-    in its record (``call_site_value.at_the_call``).
+    value, an argument, a condition.
 
     ``assigned_value`` is the store (a ``ReceiverFieldStoreValue``); it binds
     no name and no key."""
@@ -416,8 +415,7 @@ def evaluated_after(earlier, operand, ctx, *, inside=()):
     Every halt of it carries those writes (``halted_after_writes``): one
     that offers no record halted at ``operand``'s head, in ``ctx``, and is
     recorded there; and the callee stores among them were made before it,
-    so they are first in every halt's record's entries, a call's halt
-    inside it (``at_the_call``) included.  ``x = [f(o), d[k]]``: ``d[k]``'s
+    so they are first in every halt's record's entries.  ``x = [f(o), d[k]]``: ``d[k]``'s
     ``KeyError`` carries what ``f`` stored on ``o``, in its entries and its
     context, never the statement's prefix, which holds none of it.
 
@@ -546,8 +544,7 @@ def _halted_after(binds, outcome):
     first in every halt's record's entries (``laid_in_record``, the halts
     alone: the completed results carry the stores on): they were made
     before the step ran, and a record's entries are what its caller reads
-    of it (``caller_visible_stores``), not the context it halted in
-    alone."""
+    of it, not the context it halted in alone."""
     from sugar_lift_py_tests.sugar.function_universe_sugar import laid_in_record
 
     _walrus, stores = caller_stores_of(binds)

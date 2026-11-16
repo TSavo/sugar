@@ -158,7 +158,7 @@ def evaluate_assignment_values(
     Python evaluates the whole right side first, then assigns the targets
     left to right: no target is bound while a RHS evaluates, so a later
     RHS's halt never carries an earlier RHS's target (``x, y = 1, f()``:
-    ``f()``'s halt, and the call's record of it, ``at_the_call``, hold no
+    ``f()``'s halt holds no
     ``x``). It carries every walrus bind the RHSs before it made
     (``x, y = (a := 1), f()``: ``a``): each RHS is evaluated in the context
     those binds wrote (``_walrus_bound``), and its halt is recorded there
@@ -203,7 +203,7 @@ def evaluate_assignment_values(
         # frame sees (``CallerStoreValue``), already applied to ``active``;
         # they are laid in the statement's record as a statement alone lays
         # them (``record_statement_value``), so a ``return`` and the frame's
-        # exit carry them to its caller (``caller_visible_stores``).  The
+        # exit carry them to its caller.  The
         # tail's every arm carries them: a completed record of any kind (a
         # class body's fields too) and a halt after the values were computed
         # (a store target's), whose record is where it halted -- a halt of
