@@ -60,6 +60,17 @@ name: Main scorecard
 #
 # GitHub runs `shell: bash` as `bash -e`: every step whose commands may exit
 # nonzero on purpose (pytest, run.sh, the recensus) says `set +e` (#8293).
+#
+# THE HOUR NEVER REPLACES A PUSH (#8416)
+#
+# The hourly run measures the head of main. Sharing the push runs' group, it
+# replaced the push run waiting there for the same head (0c85193a5,
+# 41f6d6298) and measured that head again. The scheduled run has its own
+# group (`-schedule`), so it never replaces a push run, and its `gate` job
+# (tools/main_scorecard_schedule_gate.sh) makes it a no-op when a run of this
+# workflow on the head is queued or measuring or already posted its row.
+# Push and dispatch runs skip the gate; their group and its
+# cancel-in-progress are unchanged.
 
 on:
   push:
@@ -69,7 +80,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: main-scorecard-fast
+  group: main-scorecard-fast${{ github.event_name == 'schedule' && '-schedule' || '' }}
   cancel-in-progress: false
 
 permissions:
@@ -89,9 +100,33 @@ env:
   GH_REPO: ${{ github.repository }}
 
 jobs:
+  # ------------------------------------------------- (0) the schedule's gate
+  # Scheduled runs only: measure=false when this head is already queued,
+  # measuring or posted. Skipped on push and dispatch, where every job runs.
+  # A gate that fails leaves measure empty, so the run measures.
+  gate:
+    name: schedule gate
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      measure: ${{ steps.gate.outputs.measure }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: tools/main_scorecard_schedule_gate.sh
+          sparse-checkout-cone-mode: false
+      - name: Does this head still need a row?
+        id: gate
+        shell: bash
+        run: bash tools/main_scorecard_schedule_gate.sh main-scorecard.yml
+
   # ------------------------------------------------------- (1) package suite
   suite:
     name: package suite
+    needs: [gate]
+    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 120
     outputs:
@@ -273,6 +308,8 @@ jobs:
   # ------------------------------------- (2) solver twins + (3) federation
   solver:
     name: solver twins + federation
+    needs: [gate]
+    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 120
     steps:
@@ -428,6 +465,8 @@ jobs:
   # unmeasured, never a smaller total.
   rust:
     name: rust tests
+    needs: [gate]
+    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 60
     steps:
@@ -523,8 +562,8 @@ jobs:
   # a measure that never reported becomes unmeasured, and is compared.
   scorecard:
     name: scorecard (final row)
-    needs: [suite, suite-shard, suite-join, solver, rust]
-    if: ${{ !cancelled() }}
+    needs: [gate, suite, suite-shard, suite-join, solver, rust]
+    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     steps:
