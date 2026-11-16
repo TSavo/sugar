@@ -49,7 +49,8 @@ receiver an active ``__init__`` constructs):
   objects it reads and the closure cells of its function
   (``_ambient_targets``).  One rule for every operation that may run code
   -- a call of any kind (a method, a callable value, an import, a builtin,
-  a source function not followed), an operator, a comparison, a truth
+  a same-file source function: its body is never read for what it may
+  reach), an operator, a comparison, a truth
   test, an item or attribute access, an iteration, an ``await``
   (``_sites_at``): each is rebound to its value after the operation,
   unknown when it runs code (decided at reduce by the values it runs on:
@@ -3162,34 +3163,6 @@ def _answered_where_minted(source, followed, kept=()) -> None:
                 node.discharge_by_substitution()
 
 
-class _Cell(NamedTuple):
-    """The caller's read of a closure cell a source callee reaches."""
-
-    name: str
-    node: object
-    # A callee declares it ``nonlocal``: it may rebind it, whatever it holds.
-    nonlocal_: bool
-    # The callee's own (its body reads or declares it), not a cell only a
-    # source function it calls by name reaches.
-    direct: bool
-
-
-class _Reach(NamedTuple):
-    """What a call to a source function named at the call reaches of what
-    its caller holds, beyond its operands (``_callee_reach``)."""
-
-    definition: object
-    # ``[(name, node)]``: the module objects it, or a source function it
-    # calls by name, reads as globals (``_module_objects_named``).
-    module: list
-    # ``[_Cell]``: the closure cells it, or such a function, reads.
-    cells: list
-    # Every operation in it, and in every source function it calls by name,
-    # is one of those calls or runs no code (``_runs_no_code``): it reaches
-    # nothing else.
-    closed: bool
-
-
 def _source_callee(call, scope):
     """The source ``def`` a call runs: the local ``def`` whose function value
     its callee is (``nodes._function_value_definition``); for a call by name,
@@ -3227,89 +3200,6 @@ def _source_callee(call, scope):
     return None
 
 
-def _callee_reach(call, scope):
-    """``_Reach`` for a call to a source function named at the call, or None.
-
-    ``module``: each module object the callee reaches by name -- a global it
-    reads, or one a source function it calls by name reads, through every
-    such call -- that ``scope`` (the caller's) binds a mutable read of
-    (``_module_objects_named``).  ``cells``: the caller's read of each
-    closure cell it reads or declares ``nonlocal``, and of each one a source
-    function it calls by name reads; the binding the call carries for it
-    (``Call._closure_cells``), else the binding ``scope`` holds.  A callee
-    changing one changes the caller's object, on its completed and its
-    halted arm alike."""
-    definition = _source_callee(call, scope)
-    if definition is None:
-        return None
-    functions, frees, closed = _closure(definition)
-    carried = dict(getattr(call, "closure_cells", None) or ())
-    cells = []
-    named = set()
-    for reader, name, nonlocal_ in frees:
-        if name in named:
-            continue
-        named.add(name)
-        node = carried.get(name) if reader is definition else None
-        if node is None and name in scope:
-            node = _read_of(scope[name])
-        if node is None or getattr(node, "kind", None) == "Name":
-            continue
-        if not nonlocal_ and not _may_be_changed(node):
-            continue
-        cells.append(_Cell(name, node, nonlocal_, reader is definition))
-    return _Reach(
-        definition, _module_objects_named(call, scope, functions), cells, closed
-    )
-
-
-def _module_objects_named(call, scope, functions):
-    """``[(name, node)]``: the module objects ``functions`` (``_closure``'s)
-    read as globals (``_module_reads``) that ``scope`` (the caller's) binds a
-    mutable read of: ``node`` is the caller's read of it, ``name`` the name
-    a function reaching it reads it by.
-
-    Empty when the caller holds no module object a call may change
-    (``_may_be_changed``).  One rule for both doors that thread a module
-    body (``Module._construct_sugar`` and the readers' threading,
-    ``SourceUnit.module_binding_states``): a callee's module bindings are
-    read where the call runs (``_module_reads``)."""
-    held = _held_module_objects(scope, call.unit)
-    if not held:
-        return []
-    found = []
-    taken = set()
-    for owner, name, reference in _module_reads(call, functions):
-        for held_name, node in held:
-            if _ref(node) in taken:
-                continue
-            if not (
-                same_object(node, reference)
-                or (
-                    # An object the caller's threading left an unknown of
-                    # (no prior to name it by) is the one its module name
-                    # binds, where caller and reader share the module.
-                    held_name == name
-                    and owner.unit is call.unit
-                    and _unnamed_unknown(node)
-                )
-            ):
-                continue
-            taken.add(_ref(node))
-            found.append((name, node))
-    return found
-
-
-def _unnamed_unknown(node) -> bool:
-    """An unknown minted at a call with no prior read to name the object by
-    (``_havoc`` with no conditions)."""
-    node = _identity(node)
-    return (
-        getattr(node, "kind", None) == "ReceiverAfterCall"
-        and getattr(node, "prior", None) is None
-    )
-
-
 def _held_module_objects(scope, unit):
     """``[(name, read)]``: the caller's reads of the module objects ``scope``
     binds by their module names (``SourceUnit.module_threaded_names``) that a
@@ -3323,130 +3213,6 @@ def _held_module_objects(scope, unit):
         if node is not None and _may_be_changed(node):
             held.append((name, node))
     return held
-
-
-def _module_reads(call, functions):
-    """``[(reader, name, reference)]``: the module binding of each global
-    each of ``functions`` reads (``FunctionDef._module_globals_read``) where
-    ``call`` runs them; ``reader`` the function that reads it.
-
-    A call the module body runs (``SourceUnit.module_execution_site``) runs
-    its callees at its own point of the module body, and each reads a
-    global as the module binds it there; any other call runs them where
-    the function holding it is called (``_MODULE_EXECUTION_SITE``), after
-    import when nothing is (``SourceUnit.module_bindings_at``).  A binding
-    the module body does not decide there (``UNDECIDED_MODULE_BINDING``)
-    names no object the caller holds: it is not a reach, and what the
-    callee may change of the caller's objects takes the exposure rule
-    (``_unfollowed_reach``, ``_ambient_targets``).  The callee's own frame
-    reads it through its undecided key (``undecided_module_binding_key``)."""
-    from .nodes import (
-        UNDECIDED_MODULE_BINDING,
-        _site_where_called,
-        current_module_execution_site,
-    )
-
-    site = call.unit.module_execution_site(call)
-    if site is None:
-        site = current_module_execution_site()
-    found = []
-    for current in functions:
-        reads = current._module_globals_read()
-        if not reads:
-            continue
-        bindings = current.unit.module_bindings_at(
-            _site_where_called(current.unit, site), reads
-        )
-        found.extend(
-            (current, name, bindings[name])
-            for name in sorted(bindings)
-            if bindings[name] is not UNDECIDED_MODULE_BINDING
-        )
-    return found
-
-
-@functools.lru_cache(maxsize=4096)
-def _closure(definition):
-    """``(functions, frees, closed)`` over ``definition`` and every source
-    function it calls by name, through every such call (``_source_callee``):
-
-    - ``functions``: each of them, ``definition`` first;
-    - ``frees``: ``(reader, name, nonlocal)`` for each enclosing function's
-      local one of them reads or declares ``nonlocal`` (``_free_names``);
-    - ``closed``: every other operation any of them runs (``_sites_at``) --
-      a method, a callable value, an import, a class, a builtin, an
-      f-string's ``format``, an operator, a truth test, an item or
-      attribute access, an iteration, an ``await``, a ``yield`` -- runs no code
-      (``_runs_no_code``), so they reach nothing their bodies do not name.
-
-    Read off the source alone (CPython's symtable, the unit's lexical call
-    rows), once per definition."""
-    from .nodes import FunctionDef
-
-    functions, frees = [], []
-    closed = True
-    seen = set()
-    pending = [definition]
-    while pending:
-        current = pending.pop(0)
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        if not isinstance(current, FunctionDef):
-            continue
-        functions.append(current)
-        frees.extend(
-            (current, name, nonlocal_) for name, nonlocal_ in _free_names(current)
-        )
-        for inner in _body_calls(current):
-            callee = _source_callee(inner, {})
-            if callee is not None:
-                if id(callee) not in seen:
-                    pending.append(callee)
-            elif not _runs_no_code(inner):
-                closed = False
-    return tuple(functions), tuple(frees), closed
-
-
-def _free_names(definition):
-    """``[(name, nonlocal)]``: each enclosing function's local
-    ``definition``'s body reads, or declares ``nonlocal`` (CPython's free
-    variables).  ``__class__`` (the cell a class body gives a method that
-    uses ``super()``) is the class's, not a function's local."""
-    table = definition.unit.function_symtable(
-        definition.name, definition.line_col_span().start_line
-    )
-    return [
-        (symbol.get_name(), symbol.is_nonlocal())
-        for symbol in table.get_symbols()
-        if (symbol.is_free() or symbol.is_nonlocal())
-        and symbol.get_name() != "__class__"
-    ]
-
-
-def _body_calls(definition):
-    """The operations ``definition``'s body runs that may run code
-    (``_sites_at``: its calls, f-string fields, operators, truth tests, item
-    and attribute accesses, iterations, awaits, yields), not inside a nested
-    ``def``, ``class`` or ``lambda`` (which run when called)."""
-    from .nodes import AsyncFunctionDef, ClassDef, FunctionDef, Lambda, Node
-
-    # Each node once: a body a block already threaded (a local ``def`` the
-    # scope binds) is a DAG of shared nodes, and ``_closure`` asks of each
-    # operation only whether it is there.
-    seen = set()
-    stack = list(definition.body)
-    while stack:
-        current = stack.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        if isinstance(current, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef)):
-            continue
-        yield from _sites_at(current)
-        for _name, _index, child in current._child_edges():
-            if isinstance(child, Node):
-                stack.append(child)
 
 
 def _runs_no_code(call) -> bool:
@@ -3516,73 +3282,61 @@ def _ambient_targets(statement, call, scope, ambient=None):
     does not follow (``_sites_at``) -- may change of what the caller holds
     beyond its operands: the module objects and the closure cells the code
     it runs can reach (``ambient``, ``_ambient_objects`` at ``statement``).
-    One rule for every operation that may run code.
-
-    - A source function named at the call reaches what its body, and the
-      source functions it calls by name, name (``_callee_reach``) when every
-      other operation in them runs no code (``_Reach.closed``); otherwise
-      every module object and cell the caller holds.  Each is exposed as an
-      operand handed to it is (``_OPERAND_RULES``).
-    - Any other operation -- a method on any receiver, a callable value (a
-      bound function, a lambda, a class), an import, a builtin, an
-      f-string's ``format``, the one door's operation, an operator, a
-      comparison, a truth test, an item or attribute access, an iteration,
-      an ``await``, a ``yield`` (its consumer's code) -- reaches every one,
-      when it runs code at all: whether
-      it does is decided at reduce by the values of the reads it runs on
-      (``_code_subjects``: a builtin value runs none; a source object or an
-      undecided value may); where no read decides it, each is exposed as an
-      operand is.
+    One rule for every operation that may run code, a call of a source
+    function named at the call included (#7757, the owner's ruling of
+    2026-11-15: what the caller needs from the callee is stated by the
+    callee's contract, never read here off its body): a method on any
+    receiver, a source function, a callable value (a bound function, a
+    lambda, a class), an import, a builtin, an f-string's ``format``, the
+    one door's operation, an operator, a comparison, a truth test, an item
+    or attribute access, an iteration, an ``await``, a ``yield`` (its
+    consumer's code) reaches every module object and cell the caller holds,
+    when it runs code at all: whether it does is decided at reduce by the
+    values of the reads it runs on (``_code_subjects``: a builtin value runs
+    none; a source object, a source function by its name or an undecided
+    value may); where no read decides it, each is exposed as an operand is
+    (``_OPERAND_RULES``).
 
     A cell a nested scope declares ``nonlocal`` may be rebound by such code
     whatever it holds: it is unknown after the call.  So is a module global
-    some body writes through a ``global`` declaration (``_frame_globals``):
-    a source callee whose reach is read rebinds those it, or a function it
-    calls by name, writes (``_closure_global_writes``).  ``ambient`` (no
-    arguments) answers what the caller holds, once per statement.
+    some body writes through a ``global`` declaration (``_frame_globals``).
+    Where the call is a source function's, each closure cell the call binds
+    its contract's ``cell:<name>`` input to (``_cell_slots``) and each such
+    global (``_global_targets``) reads, after it, what the callee's
+    contract states it left there (``python:after(<call result>,
+    "cell:<name>")``), decided at prove where the contract states it and
+    the unknown anywhere else.  ``ambient`` (no arguments) answers what the
+    caller holds, once per statement.
 
     An operation handed the frame's own namespace reaches every name of the
     frame as well (``_frame_targets``), whether or not it runs code: a
     builtin container's own method on a ``locals()`` mapping's member
     changes the local's object as much as code ``exec`` runs does.
 
-    A source function named at the call rebinds each module global it, or
-    a source function it calls by name, declares ``global``: every such
-    global the caller's frame reads is unknown after the call whatever it
-    held, or what the callee's contract states of it (``_global_targets``,
-    #7757 step 7)."""
+    A call of a source function may rebind any module global some body
+    writes through a ``global`` declaration that the caller's frame reads:
+    each is unknown after the call, or what the callee's contract states of
+    it (``_global_targets``, #7757 step 7)."""
     from .nodes import Call
 
     frame = [
         *_frame_targets(statement, call, scope),
         *_global_targets(statement, call, scope),
     ]
-    subjects = reach = None
+    subjects = None
     if not isinstance(call, Call):
-        # An operation no source function is named at: its operands' values
-        # decide, asked first (most run over builtin values, and reach
-        # nothing).
+        # An operation that is no call: its operands' values decide, asked
+        # first (most run over builtin values, and reach nothing).
         subjects = _code_subjects(call, scope)
         if subjects is not None and not subjects:
             return frame
-    objects, rebound, globals_ = (
+    objects, rebound = (
         _ambient_objects(statement, scope) if ambient is None else ambient()
     )
     if not objects and not rebound:
         return frame
     if isinstance(call, Call):
-        reach = _callee_reach(call, scope)
-    if reach is not None and reach.closed:
-        objects = [node for _name, node in reach.module]
-        objects.extend(cell.node for cell in reach.cells if not cell.nonlocal_)
-        rebound = [cell.node for cell in reach.cells if cell.nonlocal_]
-        # A global it, or a source function it calls by name, writes
-        # through a ``global`` declaration is rebound by the call.
-        writes = _closure_global_writes(reach.definition) if globals_ else ()
-        rebound.extend(node for name, node in globals_ if name in writes)
-        subjects = None
-    elif isinstance(call, Call):
-        subjects = None if reach is not None else _code_subjects(call, scope)
+        subjects = _code_subjects(call, scope)
     if subjects is not None and not subjects:
         # It runs no code: nothing beyond its operands (and the frame's
         # namespace it is handed) is reached.
@@ -3594,8 +3348,8 @@ def _ambient_targets(statement, call, scope, ambient=None):
             (node, rules, subject) for node in objects for subject, rules in subjects
         ]
     targets.extend((node, None, None) for node in rebound)
-    # The callee's own cells and the module globals it declares ``global``:
-    # its contract names each as it left it (``cell:<name>``,
+    # The cells a source function's call binds and the module globals it may
+    # rebind: its contract names each it left changed (``cell:<name>``,
     # ``global:<name>``, #7757 step 7).  Such a global is in ``rebound`` here
     # and in ``frame`` with its slot (``_global_targets``): it is the one
     # slotted target, never a second unslotted one, which would leave its
@@ -3603,7 +3357,7 @@ def _ambient_targets(statement, call, scope, ambient=None):
     # ``reached``).
     cells = {
         **{_object_key(target[0]): target[3] for target in frame if len(target) > 3},
-        **_cell_slots(call, reach, scope),
+        **_cell_slots(call, scope),
     }
     if cells:
         targets = [
@@ -3616,106 +3370,56 @@ def _ambient_targets(statement, call, scope, ambient=None):
     return targets
 
 
-def _cell_slots(call, reach, scope) -> dict:
-    """``{object key: (key, ("cell", name))}`` for each closure cell the
-    source function ``call`` runs reads or declares ``nonlocal`` itself
-    (``_Cell.direct``): the formal ``cell:<name>`` of its contract
-    (``_call_slot``), under the key its completed record is bound under
-    (``_after_call_key``).  Empty for any other operation, and for a cell
-    only a function it calls by name reaches: that function's contract,
-    not this callee's, says what it did to it."""
-    if reach is None:
-        return {}
-    direct = [cell for cell in reach.cells if cell.direct]
-    if not direct:
+def _cell_slots(call, scope) -> dict:
+    """``{object key: (key, ("cell", name))}`` for each closure cell a call
+    of a source function binds its contract's ``cell:<name>`` input to --
+    the binding the call carries for it (``Call._closure_cells``, the
+    edge's ``py.closure``): the formal ``cell:<name>`` (``_call_slot``),
+    under the key its completed record is bound under (``_after_call_key``).
+    The callee's contract states what its body left in a cell where it does
+    (``FunctionDef._cells_where_the_body_ends``), read at prove; anywhere
+    else the read after the call is the unknown.  Empty for any other
+    operation."""
+    carried = tuple(getattr(call, "closure_cells", None) or ())
+    if not carried:
         return {}
     key = _after_call_key(call, scope)
     if key is None:
         return {}
-    return {
-        _object_key(cell.node): (key, _call_slot("cell", cell.name)) for cell in direct
-    }
+    slots = {}
+    for name, binding in carried:
+        node = _read_of(binding)
+        if node is None or getattr(node, "kind", None) == "Name":
+            continue
+        slots[_object_key(node)] = (key, _call_slot("cell", name))
+    return slots
 
 
 def _global_targets(statement, call, scope):
     """``_rebind``'s targets for the module globals a call of a source
-    function may rebind: each global the callee, or a source function it
-    calls by name (``_closure``), declares ``global`` that the caller's
-    frame reads (``scope`` binds it).  Each is unknown after the call
-    whatever it held (``rules`` None).  The ones the callee declares itself
-    carry its slot ``("global", name)`` under the call's key
+    function may rebind: each global the caller's frame reads that some
+    body of the module writes through a ``global`` declaration
+    (``_frame_globals``), whichever function that is -- the callee's body is
+    never read here (#7757, the owner's ruling of 2026-11-15).  Each is
+    unknown after the call whatever it held (``rules`` None), and carries
+    the call's slot ``("global", name)`` under its key
     (``_after_call_key``): on the call's completed face the global reads
     ``python:after(<call result>, "global:<name>")``, which the callee's
-    contract states (``FunctionDef._cells_where_the_body_ends``, #7757 step
-    7).
+    contract states where its body rebinds it
+    (``FunctionDef._cells_where_the_body_ends``, #7757 step 7) and nothing
+    states anywhere else: the unknown.
 
     Only a statement a function runs: the module body threads its own
     globals for its readers (``SourceUnit.module_binding_states``), where a
     global some function rebinds is undecided (``UNDECIDED_MODULE_BINDING``).
-    Empty for any other operation, and where no function of the module
-    declares a global the frame reads."""
-    from .nodes import AsyncFunctionDef, Call, FunctionDef
-
-    if not isinstance(call, Call):
+    Empty for any other operation."""
+    key = _after_call_key(call, scope)
+    if key is None:
         return []
-    unit = statement.unit
-    module_table = getattr(unit, "module_symtable", None)
-    if module_table is None:
-        return []
-    declared = _declared_globals_below(module_table)
-    if not any(isinstance(name, str) and name in declared for name in scope):
-        return []
-    owner = unit.innermost_function_containing(statement.line_col_span())
-    if not isinstance(owner, (FunctionDef, AsyncFunctionDef)):
-        return []
-    definition = _source_callee(call, scope)
-    if definition is None:
-        return []
-    functions, _frees, _closed = _closure(definition)
-    key = None
-    targets = []
-    for function in functions:
-        table = function.unit.function_symtable(
-            function.name, function.line_col_span().start_line
-        )
-        for name in sorted(_declared_globals_of(table)):
-            if name not in scope:
-                continue
-            node = _read_of(scope[name])
-            if node is None or getattr(node, "kind", None) == "Name":
-                continue
-            if function is definition:
-                if key is None:
-                    key = _after_call_key(call, scope)
-                if key is not None:
-                    slot = (key, _call_slot("global", name))
-                    targets.append((node, None, None, slot))
-                    continue
-            targets.append((node, None, None))
-    return targets
-
-
-@functools.lru_cache(maxsize=4096)
-def _declared_globals_of(table) -> frozenset:
-    """The names CPython's symtable ``table`` itself declares ``global``."""
-    return frozenset(
-        symbol.get_name()
-        for symbol in table.get_symbols()
-        if symbol.is_declared_global()
-    )
-
-
-@functools.lru_cache(maxsize=64)
-def _declared_globals_below(table) -> frozenset:
-    """The names any scope below CPython's symtable ``table`` declares
-    ``global``."""
-    names = set()
-    pending = list(table.get_children())
-    while pending:
-        current = pending.pop()
-        names.update(_declared_globals_of(current))
-        pending.extend(current.get_children())
-    return frozenset(names)
+    return [
+        (node, None, None, (key, _call_slot("global", name)))
+        for name, node in _frame_globals(statement, scope)
+    ]
 
 
 def _frame_targets(statement, call, scope):
@@ -4185,17 +3889,15 @@ def _code_subjects(call, scope):
 
 
 def _ambient_objects(site, scope, *, rebound_only=False):
-    """``(objects, rebound, globals_)``: the reads of what the caller at
-    ``site`` holds that code it does not follow may reach other than through
-    an operand -- the module objects ``scope`` binds
-    (``_held_module_objects``), in a module body's threading for its readers
-    as in any other, the closure cells of the function ``site`` runs in
-    (``_frame_cells``) and the module globals that function reads that such
-    code may rebind (``_frame_globals``).  ``objects``: those a call may
-    change; ``rebound``: the cells a nested scope declares ``nonlocal`` and
-    those globals, which it may rebind whatever they hold; ``globals_``:
-    ``[(name, read)]`` of those globals, for a callee whose reach is read
-    (``_ambient_targets``).  ``rebound_only``: ``objects`` is not asked
+    """``(objects, rebound)``: the reads of what the caller at ``site``
+    holds that code it runs may reach other than through an operand -- the
+    module objects ``scope`` binds (``_held_module_objects``), in a module
+    body's threading for its readers as in any other, the closure cells of
+    the function ``site`` runs in (``_frame_cells``) and the module globals
+    that function reads that such code may rebind (``_frame_globals``).
+    ``objects``: those a call may change; ``rebound``: the cells a nested
+    scope declares ``nonlocal`` and those globals, which it may rebind
+    whatever they hold.  ``rebound_only``: ``objects`` is not asked
     (``rebound_after`` reads only what is rebound)."""
     cells, rebound = _frame_cells(site, scope)
     if rebound_only:
@@ -4203,8 +3905,10 @@ def _ambient_objects(site, scope, *, rebound_only=False):
     else:
         objects = [node for _name, node in _held_module_objects(scope, site.unit)]
         objects.extend(cells)
-    globals_ = _frame_globals(site, scope)
-    return objects, [*rebound, *(node for _name, node in globals_)], globals_
+    return objects, [
+        *rebound,
+        *(node for _name, node in _frame_globals(site, scope)),
+    ]
 
 
 def rebound_after(scope, evaluated, substituted, operated=()):
@@ -4216,8 +3920,8 @@ def rebound_after(scope, evaluated, substituted, operated=()):
     that may run code, each name such code may rebind whatever it holds
     (``rules`` None): a closure cell a scope declares ``nonlocal`` and a
     module global a body writes through a ``global`` declaration
-    (``_ambient_objects``' ``rebound``), a module global a source callee
-    declares ``global`` (``_global_targets``), and, at module or class
+    (``_ambient_objects``' ``rebound``), with the call's slot where a source
+    function's call may rebind it (``_global_targets``), and, at module or class
     scope, every name of a namespace ``exec`` is handed (``_frame_targets``).
     The block applies it after each statement (``havoc_after``) and a
     compound statement after its header (``thread_header``).  Python
@@ -4369,31 +4073,6 @@ def _frame_globals(site, scope):
             continue
         found.append((name, node))
     return found
-
-
-@functools.lru_cache(maxsize=4096)
-def _closure_global_writes(definition) -> frozenset:
-    """The module globals ``definition`` and every source function it calls
-    by name (``_closure``'s ``functions``) write through a ``global``
-    declaration (CPython's symtable: declared global, and assigned,
-    deleted or imported there).  Every global, when the module reaches a
-    dynamic global writer: a ``globals()`` mapping's item store runs no code
-    and still rebinds."""
-    unit = definition.unit
-    if unit._module_reaches_dynamic_global_writer():
-        return unit.module_rebindable_names()
-    names = set()
-    for function in _closure(definition)[0]:
-        table = unit.function_symtable(
-            function.name, function.line_col_span().start_line
-        )
-        names.update(
-            symbol.get_name()
-            for symbol in table.get_symbols()
-            if symbol.is_declared_global()
-            and (symbol.is_assigned() or symbol.is_imported())
-        )
-    return frozenset(names)
 
 
 def _frame_cells(site, scope):
