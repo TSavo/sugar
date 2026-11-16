@@ -1002,8 +1002,15 @@ class FloorValue:
             NoneValue,
             decided_builtin_other_than_none,
         )
+        from sugar_lift_py_tests.floor.object_identity import equality_by_identity
         from sugar_lift_py_tests.floor.object_value import ObjectValue
 
+        # Two operands whose ``__eq__`` is ``object``'s or ``type``'s (or a
+        # singleton's, which defers): Python answers ``==`` by identity, the
+        # one identity rule, never a free ``py.eq`` (``equality_by_identity``).
+        by_identity = equality_by_identity(self, other, site)
+        if by_identity is not None:
+            return by_identity
         if type(other) is NoneValue and decided_builtin_other_than_none(self):
             # ``x == None`` for a decided builtin ``x``: identity, so False.
             from sugar_lift_py_tests.outcome import ExitSet

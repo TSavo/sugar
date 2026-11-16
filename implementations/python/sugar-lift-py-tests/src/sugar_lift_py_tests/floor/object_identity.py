@@ -602,6 +602,74 @@ def arrived_outcome(outcome, site):
     return outcome.and_then(lambda value: ExitSet.completed(arrived(value, site)))
 
 
+def equality_by_identity(left, right, site):
+    """``left == right`` where Python answers it by identity, else None.
+
+    ``==`` is ``type(left).__eq__(left, right)``, then the reflection.
+    ``object.__eq__`` answers ``True`` for one object and ``NotImplemented``
+    otherwise, and so does ``type.__eq__`` for a class; a language singleton's
+    ``__eq__`` (``None``, ``True``, ``False``, ``...``) answers
+    ``NotImplemented`` for any operand of another type.  Where both sides
+    answer so, Python falls back to identity: ``left is right``.  So:
+
+    * an instance whose class's MRO binds no ``__eq__`` (decided by the
+      class namespace rows: ``ObjectValue.has_method``) against another such
+      instance or a singleton is ``object_identity``: two constructions are
+      two objects, one read twice is one, anything else owes;
+    * a class object whose metaclass is decided to be ``type`` (a source
+      class, ``ClassDefinitionValue._metaclass_is_type``; a builtin class)
+      against another such class or a singleton is ``term_identity``: one
+      class name is one class object, anything else owes.
+
+    Never a bare ``py.eq`` over them: that atom is a free predicate the
+    solver may choose either way, so a lie could read ``sat``.  An instance
+    whose class binds ``__eq__`` is the dispatched call (#8750), and any
+    other operand keeps its own equality."""
+    from .object_value import ObjectValue
+
+    def plain_instance(value) -> bool:
+        # The one class-namespace lookup decides that no class of the MRO
+        # but ``object`` binds ``__eq__`` (a builtin base such as ``int``
+        # binds its own, which is not identity).
+        if not isinstance(value, ObjectValue):
+            return False
+        defining = value.defining_class
+        lookup = getattr(defining, "namespace_member", None)
+        if getattr(defining, "class_definition", None) is None or not callable(
+            lookup
+        ):
+            return False
+        decided, found, *_rest = lookup("__eq__")
+        return bool(decided) and (found is None or found == "object")
+
+    if (plain_instance(left) or _is_singleton(left)) and (
+        plain_instance(right) or _is_singleton(right)
+    ):
+        if plain_instance(left) or plain_instance(right):
+            return object_identity(left, right, site)
+        return None
+    if (_type_class(left) or _is_singleton(left)) and (
+        _type_class(right) or _is_singleton(right)
+    ):
+        if _type_class(left) or _type_class(right):
+            return term_identity(left, right, site)
+    return None
+
+
+def _type_class(value) -> bool:
+    """``value`` is a class object whose metaclass is decided to be
+    ``type``: a source class whose statement and MRO carry no class keyword
+    (``ClassDefinitionValue._metaclass_is_type``), or a builtin class
+    (``object``, a builtin exception)."""
+    from .builtin_exception_class_value import BuiltinExceptionClassValue
+    from .builtin_object_class_value import BuiltinObjectClassValue
+    from .class_definition_value import ClassDefinitionValue
+
+    if isinstance(value, ClassDefinitionValue):
+        return value._metaclass_is_type()
+    return isinstance(value, (BuiltinExceptionClassValue, BuiltinObjectClassValue))
+
+
 def answers_identity_by_object(value) -> bool:
     """``value`` is a reduced object whose value term is not its object: a
     builtin container, an instance, or a ``tuple``/``str``/``bytes``/number
