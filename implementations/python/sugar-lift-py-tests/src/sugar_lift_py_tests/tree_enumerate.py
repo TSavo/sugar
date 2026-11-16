@@ -1448,6 +1448,33 @@ def reduction_rows(outcome, *, owner, blame, def_memento, definition):
         def_memento=def_memento,
         unreached_assertion_sites=unreached,
         halted_guards=tuple(arm.guard for arm in halted),
+        leaves=parameters_left_unchanged(definition, tuple(stated.formals)),
+    )
+
+
+def parameters_left_unchanged(definition, formals) -> tuple:
+    """The parameters among ``formals`` whose object a call of
+    ``definition`` never changes and whose binding it never rebinds: read
+    off its body by the alias rule's one question of a callee
+    (``nodes._names_a_call_may_change``, #7757 step 7).  The contract states
+    each (``python:leaves``, ``exit_arms_payload_rows``), so prove can ask
+    it of the function a dispatched call resolves to: a call binding one
+    object to two formals neither of which the function changes is that
+    contract's call (``consistency::dispatch_answer``, step 8).  None for a
+    contract that is no function's (a class's: ``definition`` None), a
+    generator or ``async def``, or anything the body is not read for
+    (``EVERY_NAME``); a contract input (``class:``, ``global:``, ...) is no
+    parameter."""
+    from sugar_source_tree.nodes import EVERY_NAME, _names_a_call_may_change
+
+    if definition is None:
+        return ()
+    changed = _names_a_call_may_change(definition)
+    if changed is EVERY_NAME:
+        return ()
+    names, _runs_unseen_code = changed
+    return tuple(
+        formal for formal in formals if ":" not in formal and formal not in names
     )
 
 

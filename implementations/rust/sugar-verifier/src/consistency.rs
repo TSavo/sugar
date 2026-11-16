@@ -4865,6 +4865,104 @@ const PYTHON_INSTANCE: &str = "python:instance";
 /// The symbol prefix of a dispatched method call's `undecided` member:
 /// `python:dispatch:<method>`. No join symbol is spelled so.
 const DISPATCH_SYMBOL_PREFIX: &str = "python:dispatch:";
+/// The mark after which a dispatched call's member names the operands that
+/// may share an object, by argument key (the kit's
+/// `receiver_dispatch.DISPATCH_SHARES_MARK`): `python:dispatch:<m>#0~1,0~k`.
+/// No Python name holds `#`.
+const DISPATCH_SHARES_MARK: char = '#';
+/// The join of one pair's two argument keys (the kit's
+/// `receiver_dispatch.DISPATCH_SHARED_PAIR`).
+const DISPATCH_SHARED_PAIR: char = '~';
+/// `python:leaves("<parameter>")`: a function's contract states, beside its
+/// post, that it never changes the object a parameter binds nor rebinds it
+/// (the kit's `universe_value.LEAVES`).
+const PYTHON_LEAVES: &str = "python:leaves";
+/// The builtin classes whose instances hold no object a call could change:
+/// an operand of one is never changed through a formal.
+const OBJECTLESS_BUILTINS: [&str; 6] = ["int", "str", "bool", "float", "bytes", "complex"];
+
+/// A dispatched member with the pairs of operands that may share an object
+/// split off (`DISPATCH_SHARES_MARK`): `(member, pairs)`. A pair that does
+/// not read as two keys names no operand, so it is never left unchanged.
+fn dispatch_shares(member: &str) -> (&str, Vec<(String, String)>) {
+    let Some((member, pairs)) = member.split_once(DISPATCH_SHARES_MARK) else {
+        return (member, Vec::new());
+    };
+    let shares = pairs
+        .split(',')
+        .map(|pair| match pair.split_once(DISPATCH_SHARED_PAIR) {
+            Some((left, right)) => (left.to_string(), right.to_string()),
+            None => (String::new(), String::new()),
+        })
+        .collect();
+    (member, shares)
+}
+
+/// Whether the function a dispatched call resolved to changes the shared
+/// object through neither operand of every pair that may share one (#7757
+/// step 8, the alias rule's own test, `object_identity.shared_pairs`): its
+/// contract states it never changes the parameter the operand's key binds
+/// (`python:leaves`, a top-level conjunct of its `post`), or the operand's
+/// decided class holds no object (`OBJECTLESS_BUILTINS`). A key that binds
+/// no plain parameter (out of range, a variadic one, no parameter by that
+/// keyword) is never left unchanged. Only for arguments bound as they stand
+/// (`DispatchReceiver::AsCalled`): the keys count the call's own positions.
+fn shared_operands_left_unchanged(
+    shares: &[(String, String)],
+    formals: &[String],
+    post: &Json,
+    args: &[Json],
+) -> bool {
+    let parameters: Vec<&str> = formals
+        .iter()
+        .map(String::as_str)
+        .filter(|formal| !is_contract_input(formal))
+        .collect();
+    let stated = top_level_conjuncts(post.clone());
+    let leaves = |parameter: &str| {
+        stated.iter().any(|conjunct| {
+            conjunct.get("kind").and_then(Json::as_str) == Some("atomic")
+                && conjunct.get("name").and_then(Json::as_str) == Some(PYTHON_LEAVES)
+                && conjunct
+                    .get("args")
+                    .and_then(Json::as_array)
+                    .is_some_and(|args| {
+                        args.len() == 1 && const_str(&args[0]) == Some(parameter)
+                    })
+        })
+    };
+    let unchanged = |key: &str| {
+        let objectless = args.iter().any(|arg| match class_argument(arg) {
+            Some(Ok((class_key, class))) => {
+                let named = match &class_key {
+                    ClassKey::Position(position) => position.to_string() == key,
+                    ClassKey::Keyword(keyword) => keyword == key,
+                };
+                named
+                    && builtin_class_name(&class)
+                        .is_some_and(|name| OBJECTLESS_BUILTINS.iter().any(|b| *b == name))
+            }
+            _ => false,
+        });
+        if objectless {
+            return true;
+        }
+        let parameter = if !key.is_empty() && key.bytes().all(|b| b.is_ascii_digit()) {
+            key.parse::<usize>()
+                .ok()
+                .and_then(|position| parameters.get(position).copied())
+        } else {
+            parameters.iter().copied().find(|parameter| *parameter == key)
+        };
+        match parameter {
+            Some(parameter) if variadic_formal(parameter).is_none() => leaves(parameter),
+            _ => false,
+        }
+    };
+    shares
+        .iter()
+        .all(|(left, right)| unchanged(left) && unchanged(right))
+}
 
 /// What one class's namespace row states (step 8, #7757).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -5714,6 +5812,10 @@ struct DispatchEdge {
     method: String,
     read: bool,
     table: Arc<DispatchTable>,
+    /// The pairs of operands, by argument key, that may share an object
+    /// (`dispatch_shares`): the call is the resolved function's only where
+    /// it changes neither (`shared_operands_left_unchanged`).
+    shares: Vec<(String, String)>,
 }
 
 /// The contract that answers a dispatched method call or attribute read at
@@ -5733,9 +5835,10 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         Some(Ok((ClassKey::Position(0), class))) => Some(class),
         _ => None,
     })?;
-    // A builtin class (#7757 step 7): its method's law, or nothing.
+    // A builtin class (#7757 step 7): its method's law, or nothing. A law
+    // states no `python:leaves`, so operands that may share stay owed.
     if let Some(builtin) = builtin_class_name(&class) {
-        if dispatch.read {
+        if dispatch.read || !dispatch.shares.is_empty() {
             return None;
         }
         return builtin_dispatch_answer(post, builtin, &dispatch.method, args);
@@ -5756,6 +5859,20 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
     let (mut binding, answer, halt_guards, every_halt_guarded, typed_halts) =
         dispatch.table.answers.get(&target.symbol)?.clone()?;
     let rebound = dispatched_arguments(&target.receiver, args)?;
+    // Operands that may share an object (the alias rule, step 7): the call
+    // is this function's only where it changes neither, which its contract
+    // states (`shared_operands_left_unchanged`); anything else stays owed.
+    if !dispatch.shares.is_empty()
+        && (target.receiver != DispatchReceiver::AsCalled
+            || !shared_operands_left_unchanged(
+                &dispatch.shares,
+                &binding.formals,
+                &answer,
+                args,
+            ))
+    {
+        return None;
+    }
     // The fields of a class call's result its constructor contract states:
     // the value each `field:<p>.<f>` input of the answer is bound to.
     let fields = constructed_field_inputs(&dispatch.table, &binding.formals, &rebound);
@@ -6270,6 +6387,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 &edge.site_cid,
                 DroppedAmbientPostReason::Unanswered,
             );
+            let (member, shares) = dispatch_shares(member);
             let (method, read) = match member.strip_prefix(DISPATCH_READ_MARK) {
                 Some(attribute) => (attribute, true),
                 None => (member, false),
@@ -6278,6 +6396,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 method: method.to_string(),
                 read,
                 table: Arc::clone(table),
+                shares,
             }));
             owed.push(post);
             continue;
@@ -14612,6 +14731,41 @@ mod tests {
         );
         // A claim over decided values reads none.
         assert!(undetermined_states_read(&json!({"inv": eqf(int(1), int(1))})).is_empty());
+    }
+
+    #[test]
+    fn a_dispatched_call_on_shared_operands_is_answered_only_where_neither_changes() {
+        assert_eq!(dispatch_shares("check"), ("check", Vec::new()));
+        let (member, shares) = dispatch_shares("check#0~1");
+        assert_eq!(member, "check");
+        assert_eq!(shares, vec![("0".to_string(), "1".to_string())]);
+        let text = |value: &str| {
+            json!({"kind": "const", "sort": {"kind": "primitive", "name": "String"}, "value": value})
+        };
+        let leaves = |parameter: &str| {
+            json!({"kind": "atomic", "name": "python:leaves", "args": [text(parameter)]})
+        };
+        let post = |stated: Vec<Json>| json!({"kind": "and", "operands": stated});
+        let formals = vec!["self".to_string(), "n".to_string(), "class:self".to_string()];
+        let args = vec![json!({"kind": "var", "name": "o"}), json!({"kind": "var", "name": "n"})];
+        // `self.check(n)` after `self.n = n`, `check` leaving both: joined.
+        let both = post(vec![leaves("self"), leaves("n")]);
+        assert!(shared_operands_left_unchanged(&shares, &formals, &both, &args));
+        // A function that may change the receiver: owed.
+        let only_n = post(vec![leaves("n")]);
+        assert!(!shared_operands_left_unchanged(&shares, &formals, &only_n, &args));
+        // An `int` operand holds no object a call could change.
+        let only_self = post(vec![leaves("self")]);
+        assert!(!shared_operands_left_unchanged(&shares, &formals, &only_self, &args));
+        let int_class = json!({"kind": "ctor", "name": "py.class", "args": [
+            text("1"),
+            {"kind": "ctor", "name": "python:builtin", "args": [text("int")]}
+        ]});
+        let typed = vec![args[0].clone(), args[1].clone(), int_class];
+        assert!(shared_operands_left_unchanged(&shares, &formals, &only_self, &typed));
+        // A pair that does not read as two keys is never left unchanged.
+        let (_member, unread) = dispatch_shares("check#0");
+        assert!(!shared_operands_left_unchanged(&unread, &formals, &both, &args));
     }
 
     #[test]
