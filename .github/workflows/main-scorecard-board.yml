@@ -7,9 +7,9 @@ name: Main scorecard board
 # finished (over an hour while the board is slow), so the suite, twins and
 # federation numbers were posted once per board run instead of once per merge.
 #
-# This workflow is the board alone, in its own concurrency group: one board
-# run measures while the newest trigger waits, and main-scorecard.yml posts
-# its own row on every merge without waiting for it. The board row is posted
+# This workflow is the board alone, in its own concurrency groups (below),
+# and main-scorecard.yml posts its own row on every merge without waiting
+# for it. The board row is posted
 # on the same "Main scorecard" issue by tools/main_scorecard_post.py;
 # SCORECARD_MEASURES names the board as this workflow's only number, so the
 # other numbers are written `-` in a board row and are never compared there.
@@ -23,6 +23,18 @@ name: Main scorecard board
 # ("THE HOUR NEVER REPLACES A PUSH", #8416): it never replaces the push run
 # waiting for the same head, and it measures nothing when a board run on the
 # head is queued or measuring or already posted its row.
+#
+# THE FAST LANE FIRST; SUPERSEDED BOARDS ARE CANCELLED (#8416, 2026-11-16)
+#
+# The board (one runner for ~20 minutes) and main-scorecard.yml share three
+# self-hosted runners, and the board often took one first, so the suite
+# shards queued behind it. The `wait` job (a GitHub-hosted runner,
+# tools/main_scorecard_wait_fast_lane.sh) now holds the board until
+# main-scorecard.yml's run on the same commit has finished: the fast lane is
+# the measurement that gates work. The concurrency group is per commit, and
+# the `supersede` job (tools/main_scorecard_supersede.sh) cancels every older
+# board run on main whose commit is not this run's, waiting or measuring, so
+# a merge burst measures the board of its head, not of its first commit.
 
 on:
   push:
@@ -32,7 +44,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: main-scorecard-board${{ github.event_name == 'schedule' && '-schedule' || '' }}
+  group: main-scorecard-board-${{ github.sha }}${{ github.event_name == 'schedule' && '-schedule' || '' }}
   cancel-in-progress: false
 
 permissions:
@@ -52,6 +64,24 @@ env:
   GH_REPO: ${{ github.repository }}
 
 jobs:
+  # Every older board run on main whose commit is not this run's.
+  supersede:
+    name: cancel superseded runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: tools/main_scorecard_supersede.sh
+          sparse-checkout-cone-mode: false
+      - name: Cancel older runs on other commits
+        shell: bash
+        run: bash tools/main_scorecard_supersede.sh main-scorecard-board.yml
+
   # Scheduled runs only: measure=false when this head is already queued,
   # measuring or posted. Skipped on push and dispatch, where the board runs.
   # A gate that fails leaves measure empty, so the board measures.
@@ -73,6 +103,28 @@ jobs:
         shell: bash
         run: bash tools/main_scorecard_schedule_gate.sh main-scorecard-board.yml
 
+  # Holds the board until main-scorecard.yml's run on this commit finished.
+  # measure=false only when every such run was cancelled (superseded). A wait
+  # that fails leaves measure empty, so the board measures.
+  wait:
+    name: wait for the fast lane
+    needs: [gate]
+    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    outputs:
+      measure: ${{ steps.wait.outputs.measure }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: tools/main_scorecard_wait_fast_lane.sh
+          sparse-checkout-cone-mode: false
+      - name: Wait until the fast lane on this commit finished
+        id: wait
+        shell: bash
+        run: bash tools/main_scorecard_wait_fast_lane.sh
+
   # The pass kit's shape (run.sh): BOARD_SEATS seats of --slice i/K, each with
   # its own checkpoint, joined, then --aggregate-only. With --carry-store a
   # seat measures only the files whose recorded dependencies changed and
@@ -80,8 +132,8 @@ jobs:
   # sugar-lift-py-tests[test] and docs/ledgers/pins/pandas-3.0.3.pin.json.
   board:
     name: pandas board
-    needs: [gate]
-    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
+    needs: [gate, wait]
+    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' && needs.wait.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 240
     steps:

@@ -1085,17 +1085,62 @@ def cmd_suite_plan(args: argparse.Namespace) -> int:
     return 0
 
 
-def summarize(inputs: Iterable[str | os.PathLike[str]], label: str) -> dict[str, Any]:
+def _path_suffixes(paths: Iterable[str]) -> set[str]:
+    """Every whole-component suffix of each path (a/b/c -> a/b/c, b/c, c)."""
+    out: set[str] = set()
+    for path in paths:
+        parts = path.strip().strip("/").split("/")
+        for i in range(len(parts)):
+            out.add("/".join(parts[i:]))
+    return out
+
+
+def summarize(
+    inputs: Iterable[str | os.PathLike[str]],
+    label: str,
+    filtered: Iterable[str | os.PathLike[str]] = (),
+    only_files: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Merge carry summaries into totals.
+
+    ``filtered`` summaries contribute only the node IDs whose test file is one
+    of ``only_files`` (paths relative to any ancestor of pytest's rootdir: a
+    node ID's file matches when it is a whole-component suffix of a listed
+    path). The solver twins inside the suite tree are counted this way from
+    the suite's own results instead of being run a second time (#8416).
+    """
     items: dict[str, dict[str, Any]] = {}
     errors: set[str] = set()
     opaque: dict[str, str] = {}
     read = 0
-    for path in inputs:
+    keep_files = _path_suffixes(only_files or ())
+
+    def wanted(nodeid: str) -> bool:
+        return nodeid.split("::", 1)[0] in keep_files
+
+    sources = [(path, False) for path in inputs] + [(path, True) for path in filtered]
+    for path, is_filtered in sources:
         try:
             doc = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         read += 1
+        if is_filtered:
+            doc = {
+                "items": {
+                    nodeid: entry
+                    for nodeid, entry in (doc.get("items") or {}).items()
+                    if wanted(nodeid)
+                },
+                "collectionErrors": [
+                    nodeid for nodeid in (doc.get("collectionErrors") or []) if wanted(nodeid)
+                ],
+                "opaque": {
+                    nodeid: reason
+                    for nodeid, reason in (doc.get("opaque") or {}).items()
+                    if wanted(nodeid)
+                },
+            }
         for nodeid, entry in (doc.get("items") or {}).items():
             previous = items.get(nodeid)
             # A fresh result always wins over a carried one.
@@ -1133,7 +1178,14 @@ def summarize(inputs: Iterable[str | os.PathLike[str]], label: str) -> dict[str,
 
 
 def cmd_summarize(args: argparse.Namespace) -> int:
-    totals = summarize(args.inputs, args.label)
+    only_files: list[str] | None = None
+    if args.only_files:
+        only_files = [
+            line.strip()
+            for line in Path(args.only_files).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    totals = summarize(args.inputs, args.label, args.filtered, only_files)
     _write_json(args.out, totals)
     c, k = totals["counts"], totals["carry"]
     if args.result:
@@ -1252,6 +1304,13 @@ def main(argv: list[str] | None = None) -> int:
     summ.add_argument("--out", required=True)
     summ.add_argument("--label", default="suite")
     summ.add_argument("--result", default=None, help="also write the scorecard result")
+    summ.add_argument(
+        "--filtered",
+        action="append",
+        default=[],
+        help="a summary counted only for the node IDs of --only-files (repeatable)",
+    )
+    summ.add_argument("--only-files", default=None, help="test files kept from --filtered")
     summ.add_argument("inputs", nargs="*")
     summ.set_defaults(func=cmd_summarize)
 
