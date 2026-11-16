@@ -27,7 +27,12 @@ class EffectCoordinate(FloorValue):
         return ctor("python:effect_slot", [str_const(self.slot_id)])
 
     def attribute(self, name, site, ctx):
-        if self.slot_id.endswith("#enter_result") and type(self) is EffectCoordinate:
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import effect_slot_source
+
+        if (
+            effect_slot_source(self.slot_id).endswith("#enter_result")
+            and type(self) is EffectCoordinate
+        ):
             # ``with m as r: r.x`` read through the body's enter-result slot:
             # the value ``__enter__`` returned at that one entry, whose runtime
             # type nothing here testified to.  The opaque attribute law holds:
