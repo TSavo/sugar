@@ -193,10 +193,11 @@ class SubscriptStoreEffectSugar(Sugar):
         )
 
 
-#: ``(noun, owner)`` of each item mutation's undecided faces.
+#: The owner of each item mutation's undecided faces over a receiver whose
+#: type nothing here decides.
 _ITEM_MUTATIONS = {
-    "__setitem__": ("setitem", "UndecidedSetitem"),
-    "__delitem__": ("delitem", "UndecidedDelitem"),
+    "__setitem__": "UndecidedSetitem",
+    "__delitem__": "UndecidedDelitem",
 }
 
 
@@ -228,8 +229,15 @@ def item_mutation(
       member.  No operation waits on a caller's actual.
     - A receiver whose type the lift decides is its floor's own store or
       delete, every face of it (an ``IndexError``, a ``KeyError``, a
-      ``TypeError``) kept.  A value that only carries others (a guarded
-      choice, ``GuardedValue``; a walrus, ``NamedExpressionValue``; an
+      ``TypeError``) kept.  Where that floor does not decide the store -- an
+      index, a key, a slice bound or a right-hand side's members it does not
+      hold, or contents that are not current -- it is the same undecided
+      mutation (``undecided_item_mutation_faces``, #7757 NEW-9): there is one
+      spelling of "an item store or delete nothing decides", as there is one
+      of an attribute store or delete
+      (``undecided_attribute_mutation_faces``).  A value that only carries
+      others (a guarded choice, ``GuardedValue``; a walrus,
+      ``NamedExpressionValue``; an
       authenticated exception-type operand) takes each value it carries
       through this door again, never that value's own ``setitem`` or
       ``delitem``: a symbolic arm of a guarded receiver is the undecided
@@ -271,22 +279,28 @@ def item_mutation(
 
         return dispatched.and_then(after)
     if not receiver.runtime_type_is_decided():
-        noun, undecided_owner = _ITEM_MUTATIONS[method]
         return undecided_item_mutation_faces(
-            site, noun=noun, method=method, owner=undecided_owner
+            site, method=method, owner=_ITEM_MUTATIONS[method]
         )
     return floor()
 
 
-def undecided_item_mutation_faces(site, *, noun: str, method: str, owner: str):
-    """Two faces for ``r[k] = v`` / ``del r[k]`` over an undecided receiver.
+def undecided_item_mutation_faces(site, *, method: str, owner: str):
+    """Two faces for ``r[k] = v`` / ``del r[k]`` (``method`` ``__setitem__``
+    / ``__delitem__``) that nothing here decides: a receiver whose type is
+    undecided, or a decided ``list`` / ``dict`` whose store or delete reads
+    what is not decided (an index, a key, a slice bound, a right-hand side's
+    members, contents that are not current).  The one spelling (#7757
+    NEW-9).
 
     The mutation completes only under
-    ``python:<noun>.completes(python:<noun>(<occurrence>))``, keyed on this
-    exact site and occurrence so two mutations are never forced to agree, and
-    its post-state is ``python:receiver_after_call(<occurrence>, <method>)``:
-    the receiver's contents after the call are unknown, as for any undecided
-    mutation.  The complement halts with an ``UndeterminedRaiseEffect``
+    ``python:<noun>.completes(python:<noun>(<occurrence>))`` (``<noun>``
+    ``setitem`` / ``delitem``), keyed on the occurrence where it evaluates
+    -- inside a live loop item, that item's path -- so two evaluations are
+    never forced to agree, and its completed value is the receiver after it,
+    ``python:receiver_after_call(<occurrence>, <method>)``: unknown, keyed
+    the same way, so no reader takes the receiver as unchanged and no entry
+    is read off it.  The complement halts with an ``UndeterminedRaiseEffect``
     (``owner``).  No entry is written or removed and no exception type is
     guessed.
     """
@@ -296,6 +310,7 @@ def undecided_item_mutation_faces(site, *, noun: str, method: str, owner: str):
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _unknown_after
 
+    noun = method.strip("_")
     key = occurrence_key(site)
     completes = atomic(
         f"python:{noun}.completes",

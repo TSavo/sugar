@@ -20,7 +20,8 @@ deleted (#7825):
    that holds a ``ReturnValue``; Python returns ``2`` there.
 
 Confirmed and fixed by H2 of #7825 (the store family answers its two faces
-at the producer, ``store_faces``):
+at the producer, now the one undecided mutation
+``undecided_item_mutation_faces``):
 
 4. ``generator_construction.py`` attribute-store step: a generator manager
    whose body stores ``o.x = 1`` before ``yield`` reaches its yield on the

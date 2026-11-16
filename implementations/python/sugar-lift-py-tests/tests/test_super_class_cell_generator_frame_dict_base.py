@@ -279,7 +279,7 @@ def _undecided_deletion_arms(outcome):
     """``del`` on the dict base: whether the key is held is read off storage
     that is not current (``MappingObjectValue._builtin_dict``), so the
     deletion is the undecided item mutation
-    (``list_value.stale_item_mutation``): it completes under its own
+    (``store_effect_sugar.undecided_item_mutation_faces``): it completes under its own
     site-keyed atom, leaving the receiver after it unknown, and halts with an
     undetermined raise under the complement.  Neither ``KeyError`` nor the
     key's removal is decided from contents the object may no longer hold, and

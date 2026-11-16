@@ -90,21 +90,23 @@ class ComprehensionValue(GuardStableValue):
         A list comprehension or generator with every member projected answers
         with those members, in order. Anything else (a set/dict comprehension,
         whose iteration order or members are not testified, or no finite
-        testimony) is an undecided RHS -- never ``TypeError``."""
+        testimony) is an undecided RHS -- never ``TypeError``: the store is the
+        one undecided item mutation, the receiver after it unknown."""
         del ctx
-        from dataclasses import replace
-
         from sugar_lift_py_tests.ir import _Ctor
         from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
+        )
 
         name = self.term.name if type(self.term) is _Ctor else None
         ordered = ("py.listcomp", "py.generatorexp")
         if self.finite_elements is not None and name in ordered:
             return ExitSet.completed(tuple(self.finite_elements))
-        # The order a set's members are assigned in is not testified: the
-        # undecided RHS names the comprehension by its own coordinate, never
-        # by its display (a ground term is no runtime operand).
-        return _undecided_slice_rhs(operation, replace(self, display=None))
+        # The order a set's members are assigned in is not testified.
+        return undecided_item_mutation_faces(
+            operation.blame, method="__setitem__", owner=operation.owner
+        )
 
     def project_sequence_with(self, operation, ctx):
         """`a, b = <comprehension>` -- the comprehension owns the cardinality.
@@ -369,26 +371,5 @@ class ComprehensionValue(GuardStableValue):
         )
 
         return undecided_item_mutation_faces(
-            site,
-            noun="setitem",
-            method="__setitem__",
-            owner="ComprehensionValue.setitem",
+            site, method="__setitem__", owner="ComprehensionValue.setitem"
         )
-
-
-def _undecided_slice_rhs(operation, value):
-    """A slice-assignment RHS that is iterable but whose members are not
-    testified: the named runtime boundary, never a decided TypeError."""
-    from sugar_lift_py_tests.effect import (
-        SubscriptStoreRuntimeEffect,
-        runtime_effect_evidence,
-    )
-    from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
-
-    return store_faces(
-        SubscriptStoreRuntimeEffect(
-            "list slice assignment RHS members are undecided at lift; "
-            f"owner={operation.owner} site={operation.blame}",
-            **runtime_effect_evidence("py.setitem", value, operation.blame),
-        )
-    )

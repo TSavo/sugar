@@ -407,6 +407,6 @@ def test_an_undecided_item_mutation_owes_its_setitem() -> None:
     )
 
     faces = undecided_item_mutation_faces(
-        _Site(), noun="setitem", method="__setitem__", owner="UndecidedSetitem"
+        _Site(), method="__setitem__", owner="UndecidedSetitem"
     )
     _assert_two_faced_and_owed(faces, "UndecidedSetitem")

@@ -928,8 +928,8 @@ def reduce_block_to_exitset(
                     # follow and its scope (``project``); the fall-through
                     # guard stays in the record, where every earlier statement
                     # left it. A store is not split here: its producer answers
-                    # its two faces (``store_faces``), and they arrive through
-                    # the seam below.
+                    # its two faces (``undecided_item_mutation_faces``), and they
+                    # arrive through the seam below.
                     return project(plain)
 
                 # The boundary: a halt leaves a statement with its record, or

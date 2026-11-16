@@ -10,7 +10,7 @@ class FollowStep:
 
     A step either continues or halts. A step that does both under
     complementary guards (a store) is not a FollowStep: its producer answers
-    its two faces as an ExitSet (``store_faces``)."""
+    its two faces as an ExitSet (``undecided_item_mutation_faces``)."""
 
     continues: bool
     keeps_rest: bool = False

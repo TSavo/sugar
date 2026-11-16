@@ -19,7 +19,7 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceMementoDto,
     SourceSpanDto,
 )
-from sugar_lift_py_tests.effect import RuntimeEffect, SubscriptStoreRuntimeEffect
+from sugar_lift_py_tests.effect import RuntimeEffect, AppendRuntimeEffect
 from sugar_lift_py_tests.effect.runtime_effect import runtime_effect_evidence
 from sugar_lift_py_tests.ir import gte, make_var, num
 from sugar_lift_py_tests.proofir import (
@@ -83,7 +83,7 @@ def _named_runtime_effect(tmp_path, reason: str) -> RuntimeEffect:
         SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
     )
     site = function.body[0].fragment
-    return SubscriptStoreRuntimeEffect(
+    return AppendRuntimeEffect(
         reason, **runtime_effect_evidence("py.setitem", make_var("i"), site)
     )
 

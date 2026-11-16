@@ -240,23 +240,20 @@ class MappingObjectValue(ObjectValue):
         return (
             self._builtin_dict()
             .setitem(index, value, site, ctx)
-            .and_then(
-                lambda updated: ExitSet.completed(
-                    self.mapping_with_entries(updated.entries)
-                )
-            )
+            .and_then(lambda updated: ExitSet.completed(self._base_after(updated)))
         )
 
     def _base_after(self, updated):
-        """The receiver ``del self[k]`` on the dict base leaves, read off the
-        deletion's completed face ``updated``.
+        """The receiver ``self[k] = v`` or ``del self[k]`` on the dict base
+        leaves, read off the store's or deletion's completed face ``updated``.
 
-        Where the deletion decided the storage after it (a ``DictValue``),
-        this instance holding those entries.  Where it did not -- the base
-        storage is never current (``_builtin_dict``), so a deletion, which
-        must read whether the key is held, takes the undecided item mutation
-        (``list_value.stale_item_mutation``), whose completed face states the
-        receiver after the call as unknown
+        Where it decided the storage after it (a ``DictValue``), this
+        instance holding those entries.  Where it did not -- a key whose
+        presence is not decided, or base storage that is never current
+        (``_builtin_dict``) under a deletion, which must read whether the key
+        is held -- it is the one undecided item mutation
+        (``store_effect_sugar.undecided_item_mutation_faces``), whose
+        completed face states the receiver after the call as unknown
         (``python:receiver_after_call``) -- that unknown post-state is the
         receiver, as it is: no entries are read off a value that holds none,
         and none are invented.  Any other completed value is refused by

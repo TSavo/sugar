@@ -24,7 +24,8 @@ very fact the off-population refusal exists to protect.  So each is modelled
 the way this tree already models every runtime-selected outcome: an
 authenticated per-occurrence coordinate plus the complementary guard pair
 ``g`` / ``not g``.  This is deliberately the SAME mechanism as
-``floor/store_outcome_coordinate.py`` and ``floor/branch_result_coordinate.py``,
+``store_effect_sugar.undecided_item_mutation_faces`` and
+``floor/branch_result_coordinate.py``,
 not a second one.
 
 **No biconditional is emitted, and that is the point.**  Tying a coordinate to

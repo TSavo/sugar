@@ -7,7 +7,7 @@ import pytest
 from sugar_lift_py_tests.effect import (
     NameErrorEffect,
     RaiseEffect,
-    SubscriptDeleteRuntimeEffect,
+    UndeterminedRaiseEffect,
 )
 from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_python_source.source_oracle import path_source
@@ -48,7 +48,7 @@ def _halt_effects(entries) -> list:
 @pytest.mark.parametrize(
     ("source", "effect_type"),
     [
-        ("def f(d,k):\n del d[k]\n return d\n", SubscriptDeleteRuntimeEffect),
+        ("def f(d,k):\n del d[k]\n return d\n", UndeterminedRaiseEffect),
     ],
 )
 def test_store_delete_builds_typed_effect_and_continues(source, effect_type):
