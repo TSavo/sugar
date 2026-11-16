@@ -1976,3 +1976,47 @@ def test_an_omitted_formal_still_binds_its_default_at_the_call(tmp_path) -> None
         term = _edge_term(outcome, f"{module}.f")
         assert _positional(term) == (num(1),), term
         assert _supplied_defaults(term) == {"b": num(7)}, term
+
+
+# ---------------------------------------------------------------------------
+# A decorator whose value nothing here resolves is its unanswered call.
+# ---------------------------------------------------------------------------
+
+
+def test_a_decorator_whose_value_is_undecided_is_its_unanswered_call() -> None:
+    """``@property`` in a class body that binds its own ``property``
+    (``pandas/tests/test_errors.py``'s ``Foo``): no builtin door reads the
+    name, so the decorator is applied as the value its read reduced to.
+    Where that value is undecided (a ``SymbolicValue``), applying it is the
+    one unanswered call of a value (``computed_call_sugar.
+    unanswered_value_call``), as ``d(f)`` written as a call is: one
+    completion and the undetermined raise, owed.  It was a construction
+    panic (``SymbolicValue`` has no ``callable_application_with``) where
+    the class body applied its methods' decorators (#8962)."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor import SymbolicValue, TermValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.sugar.decorator_application_sugar import (
+        DecoratorStepV1,
+    )
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    tree = _tree(
+        "class Foo:\n"
+        "    @property\n"
+        "    def property(self):\n"
+        "        return 1\n"
+    )
+    (method,) = [node for node in tree.nodes() if isinstance(node, FunctionDef)]
+    site = method.decorators[0].fragment
+    step = DecoratorStepV1.apply(site, "property", callee=method.decorators[0])
+
+    outcome = step.applied(SymbolicValue(make_var("property")), TermValue(1), None)
+
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert len(completed) == 1 and len(halted) == 1, outcome
+    assert isinstance(halted[0].effect, UndeterminedRaiseEffect), halted[0].effect
+    assert halted[0].effect.exception_name is None
+    assert owed_calls(outcome), outcome

@@ -125,16 +125,33 @@ class DecoratorStepV1:
         return then(None)
 
     def applied(self, decorator, value, ctx) -> ExitSet:
-        """``decorator(value)``: this decorator applied to ``value``."""
+        """``decorator(value)``: this decorator applied to ``value``.
+
+        An ``apply`` decorator is a value the statement reduced, applied by
+        the one routine a called value is applied by
+        (``computed_call_sugar.apply_callee``), as ``d(value)`` spelled as a
+        call is: a source class, a bound method or a function value through
+        its own application; any other value -- an undecided read (a formal,
+        a class-body name the body itself rebinds), an opaque call's result
+        -- is a callee nothing here resolved, the one unanswered call of a
+        value (``computed_call_sugar.unanswered_value_call``), two-faced and
+        owed, never a completion and never a construction panic (#7757)."""
         if self.kind == "identity":
             return ExitSet.completed(value)
         if self.kind == "unanswered":
             return _unanswered_application(self, value, ctx)
-        from sugar_lift_py_tests.callable_application import CallableApplication
+        from sugar_lift_py_tests.sugar.computed_call_sugar import (
+            apply_callee,
+            unanswered_value_call,
+        )
 
-        return decorator.callable_application_with(
-            CallableApplication((value,), (), self.site, owner="DecoratorApplication"),
+        return apply_callee(
+            decorator,
+            (value,),
+            (),
+            self.site,
             ctx,
+            lambda: unanswered_value_call(decorator, (value,), (), self.site),
         ).and_then(lambda result: _returned(result, ctx))
 
 
