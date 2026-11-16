@@ -1,7 +1,7 @@
-"""Arm census for the four ExitSet composition sites (#6309, halted face).
+"""Arm census for the three ExitSet composition sites (#6309, halted face).
 
 Method-patching instrument only: it wraps ``ExitSet.and_then``,
-``ExitSet.and_finally``, ``ExitSet.and_exit`` and
+``ExitSet.and_exit`` and
 ``ExitSet.and_exit_truthiness`` (plus ``ExitSet.normalize``, to capture the
 pre-normalize arm list) and restores every original on exit. **No production
 file changes, so the source stamp does not move.**
@@ -38,23 +38,7 @@ never enter the inner loop::
 The inner arm count is driven by ``step()`` and is not a function of the
 inputs, so ``and_then`` reports iterations and faces but claims no product.
 That is the point of a control: it should show the halted face FLAT while the
-other three show it growing.
-
-``and_finally`` (:405-418) -- one append per iteration.  A completed cleanup
-re-emits the incoming only when ``restores(clean.value)`` (:411-416); the
-``else`` at :417-418 is terminal cleanup completion (return-in-finally), which
-CONVERTS a halted incoming into a completion.  So the completed cleanups split
-into restoring (``c_r``) and terminal (``c_t``) and must be counted apart::
-
-    iterations           = |S| * |O|
-    halted_from_exit     = |S| * h(O)
-    halted_from_incoming = h(S) * c_r                # NOT h(S) * c(O)
-    completed_out        = c(S) * c_r + |S| * c_t
-
-With the default predicate (``cleanup_restores=None`` -> always True) ``c_t``
-is 0 and the two spellings coincide, which is exactly why a plain
-``completed(O)`` column would pass unnoticed until someone models
-return-in-finally.
+other two show it growing.
 
 ``and_exit`` (:454-487) -- ``exit_disposition_effect(disposition, incoming)``
 reads ``incoming`` ONLY; ``ex`` never reaches it.  So the verdict is a
@@ -132,10 +116,6 @@ class CensusRow:
     n_other_completed: int = 0
     n_other_halted: int = 0
 
-    # and_finally only: the completed cleanups split by the restores predicate.
-    n_other_completed_restoring: int | None = None
-    n_other_completed_terminal: int | None = None
-
     # and_exit only: verdict shapes, counted over INCOMINGS (the verdict is a
     # function of the incoming exit alone), each weighted by n_other_completed.
     n_verdict_none: int | None = None
@@ -210,7 +190,7 @@ def _faces(exits):
 
 @contextmanager
 def arm_census():
-    """Patch the four sites; yield the list of rows collected."""
+    """Patch the three sites; yield the list of rows collected."""
     import sugar_lift_py_tests.outcome.exit_set as exit_set_module
 
     ExitSet = exit_set_module.ExitSet
@@ -219,7 +199,6 @@ def arm_census():
 
     original_normalize = ExitSet.normalize
     original_and_then = ExitSet.and_then
-    original_and_finally = ExitSet.and_finally
     original_and_exit = ExitSet.and_exit
     original_and_exit_truthiness = ExitSet.and_exit_truthiness
 
@@ -266,52 +245,6 @@ def arm_census():
         # step() drives the inner loop, so the arm count is not a function of
         # the inputs; iterations are still exact -- one append per turn.
         row.iterations = row.pre_len - row.n_incoming_halted
-        row.check()
-        return result
-
-    def patched_and_finally(self, cleanup, *, cleanup_restores=None):
-        row = CensusRow(site="and_finally")
-        row.n_incoming, row.n_incoming_completed, row.n_incoming_halted = _faces(
-            self.exits
-        )
-        seen: list = []
-
-        def recording_cleanup():
-            # Forward the real callable once and keep its result; never invoke
-            # cleanup() a second time.
-            built = cleanup()
-            seen.append(built)
-            return built
-
-        with _frame(row) as frame:
-            result = original_and_finally(
-                self, recording_cleanup, cleanup_restores=cleanup_restores
-            )
-            _observe(frame, result)
-
-        if seen:
-            from sugar_lift_py_tests.outcome.exit_set import Completed
-
-            cleanup_exits = seen[-1].exits
-            row.n_other, row.n_other_completed, row.n_other_halted = _faces(
-                cleanup_exits
-            )
-            restores = cleanup_restores or (lambda _value: True)
-            restoring = sum(
-                1
-                for e in cleanup_exits
-                if isinstance(e, Completed) and restores(e.value)
-            )
-            row.n_other_completed_restoring = restoring
-            row.n_other_completed_terminal = row.n_other_completed - restoring
-            row.iterations = row.n_incoming * row.n_other
-            row.halted_from_exit = row.n_incoming * row.n_other_halted
-            row.halted_from_incoming = row.n_incoming_halted * restoring
-            row.predicted_completed_out = (
-                row.n_incoming_completed * restoring
-                + row.n_incoming * row.n_other_completed_terminal
-            )
-            row.predicted_pre_len = row.iterations
         row.check()
         return result
 
@@ -391,7 +324,6 @@ def arm_census():
 
     ExitSet.normalize = patched_normalize
     ExitSet.and_then = patched_and_then
-    ExitSet.and_finally = patched_and_finally
     ExitSet.and_exit = patched_and_exit
     ExitSet.and_exit_truthiness = patched_and_exit_truthiness
     try:
@@ -399,12 +331,11 @@ def arm_census():
     finally:
         ExitSet.normalize = original_normalize
         ExitSet.and_then = original_and_then
-        ExitSet.and_finally = original_and_finally
         ExitSet.and_exit = original_and_exit
         ExitSet.and_exit_truthiness = original_and_exit_truthiness
 
 
-SITES = ("and_then", "and_finally", "and_exit", "and_exit_truthiness")
+SITES = ("and_then", "and_exit", "and_exit_truthiness")
 
 
 def totals(rows):
