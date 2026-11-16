@@ -375,10 +375,10 @@ def test_a_receiver_with_no_class_statement_stores_and_deletes_its_class_by_the_
     """A receiver built with no class statement has no lookup of its
     type's MRO: ``object.__class__`` (or a class between that overrides it)
     answers ``o.__class__ = C`` and ``del o.__class__``, never the instance
-    field.  The store is the owed ``type(o).__setattr__`` call
-    (``field_store_route`` undecided: it runs code, so the object after it
-    has arrived and no method call on it is dispatched); the delete is the
-    owed ``type(o).__delattr__`` call, two faces, never the certain
+    field.  The store is the owed ``type(o).__setattr__`` call (no class
+    term, so no ``python:plain_store`` guard: the object after it has
+    arrived and no method call on it is dispatched, #7757 H1b); the delete
+    is the owed ``type(o).__delattr__`` call, two faces, never the certain
     ``TypeError`` that only a decided lookup gives (#7757, surfaced in
     #8817)."""
     receiver = ObjectValue(
@@ -388,10 +388,10 @@ def test_a_receiver_with_no_class_statement_stores_and_deletes_its_class_by_the_
         allocation=FRAME_FRESH,
     )
 
-    assert receiver.field_store_route("__class__") == ("undecided", None)
-    assert receiver.field_store_runs_code("__class__")
-    # Any other name stays the instance-field store.
-    assert receiver.field_store_route("x") == ("plain", None)
+    # No class statement names a class term: no store of it is guarded as
+    # the plain store, ``__class__`` or any other name.
+    assert receiver.plain_store_guard("__class__") is None
+    assert receiver.plain_store_guard("x") is None
 
     outcome = receiver.delattr("__class__", "del-site", None)
     halted = [face for face in outcome.exits if isinstance(face, Halted)]

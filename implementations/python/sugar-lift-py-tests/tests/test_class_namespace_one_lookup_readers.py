@@ -145,14 +145,6 @@ def test_an_instance_read_of_a_stored_name_is_the_unanswered_read() -> None:
     assert halt.effect.producer_node_owner == "ObjectValue.attribute"
 
 
-def test_a_store_of_an_undecided_member_is_not_an_instance_field() -> None:
-    receiver = _instance(_class_value(_classes(_STORED)["B"]))
-
-    assert receiver.authenticates_plain_attribute_store("m") is False
-    # A name no class binds is an ordinary instance field.
-    assert receiver.authenticates_plain_attribute_store("fresh") is True
-
-
 def test_a_class_call_of_a_stored_name_is_the_unanswered_call() -> None:
     b_value = _class_value(_classes(_STORED)["B"])
 

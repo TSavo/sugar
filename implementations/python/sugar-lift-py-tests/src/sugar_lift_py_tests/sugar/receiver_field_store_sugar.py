@@ -17,28 +17,25 @@ class ReceiverFieldStoreSugar(Sugar):
 
     - an instance of a source class (``ObjectValue``), made in this frame or
       arrived -- a formal's actual, a class call's coordinate receiver, a
-      value read off a binding -- is decided by the one class lookup on its
-      type (``ObjectValue.field_store_route``: the store is
-      ``type(receiver).__setattr__``):
+      value read off a binding -- is ``type(receiver).__setattr__``, on two
+      faces of one partition (``ObjectValue.plain_store_faces``, #7757 H1b):
 
-      - a class that takes ``object``'s ``__setattr__`` and binds no data
-        descriptor for the name takes the plain store (``setattr``; a
-        property with no setter this lookup selects refuses with
-        ``AttributeError``); the statement records the store
-        (``ReceiverFieldStoreValue``), which advances every binding of the
-        object (``extend_scope``) and is what a call carries to its caller
-        (``caller_visible_stores``).  The field is then known on the object
-        even where it arrived (``ObjectValue.stored_fields``); the rest of
-        it stays as its currency says.
-      - a class whose lookup selects a source ``__setattr__``, or a source
-        descriptor's ``__set__`` for the name, runs that function: the store
-        is that call (``ObjectValue.field_store_call``), applied like any
-        call, its halts the store's and its value recorded as a call in
-        statement position is (``record_statement_value``: what it did to
-        what this frame sees rides it, ``caller_visible_stores``).
-      - a class whose lookup does not decide (an unread base, a builtin
-        base with a ``__setattr__`` of its own, a member not decided) is the
-        one unanswered call: two faces, owed.
+      - under ``python:plain_store(<class>, "<attr>")``
+        (``ObjectValue.plain_store_guard``, decided at prove alone) the
+        plain store: the statement records it (``ReceiverFieldStoreValue``),
+        which advances every binding of the object (``extend_scope``) and is
+        what a call carries to its caller (``caller_visible_stores``).  The
+        field is then known on the object even where it arrived
+        (``ObjectValue.stored_fields``); the rest of it stays as its
+        currency says.
+      - under its complement, the dispatched call
+        (``ObjectValue.field_store_call``), applied like any call, its
+        halts the store's and its value recorded as a call in statement
+        position is (``record_statement_value``: what it did to what this
+        frame sees rides it, ``caller_visible_stores``).
+
+      Where no class term is decided (an instance not current, no workspace
+      root), the call alone: the unanswered call where no class is named.
 
       A store that ran code leaves the receiver as that call states it
       (``ObjectValue.after_field_store_call``: where it states nothing, the
@@ -110,20 +107,21 @@ class ReceiverFieldStoreSugar(Sugar):
                 ctx,
                 unit=self.unit,
             )
-        if not receiver.field_store_runs_code(self.attr):
-            return receiver.setattr(self.attr, value, self.site, ctx).and_then(
-                lambda _after: ExitSet.completed(
-                    ReceiverFieldStoreValue(receiver, self.attr, value)
-                )
-            )
-        # The store is a call: the one the class lookup selected, or the
-        # unanswered one.
+        # The store is ``type(receiver).__setattr__``: the plain store
+        # recorded under ``python:plain_store(<class>, "<attr>")``, the call
+        # under its complement (``ObjectValue.plain_store_faces``); prove
+        # decides which (#7757 H1b).
         outcome = receiver.field_store_call(self.attr, value, self.site, ctx)
-        if not isinstance(outcome, ExitSet):
-            # A deferred native operation of the body: the caller's to
-            # discharge, as for any call.
-            return outcome
-        return outcome.and_then(lambda result: self._ran(receiver, result, ctx))
+        if isinstance(outcome, ExitSet):
+            outcome = outcome.and_then(
+                lambda result: self._ran(receiver, result, ctx)
+            )
+        return receiver.plain_store_faces(
+            self.attr,
+            ExitSet.completed(ReceiverFieldStoreValue(receiver, self.attr, value)),
+            outcome,
+            self.site,
+        )
 
     def _ran(self, receiver, result, ctx) -> ExitSet:
         """The record of a store that ran code and completed with ``result``

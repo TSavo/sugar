@@ -225,19 +225,21 @@ def test_ground_star_store_rest_and_field() -> None:
         site=site,
     )
     exits = reduce_block_to_exitset((sugar,), ReduceContext.root(owner="ground_star"))
-    assert isinstance(exits.exits[0], Completed)
-    state = exits.exits[0].value
-    assert state.context.temporal.value_if_bound("rest") == fresh(
-        ListValue, (TermValue(2), TermValue(3))
-    )
-    # The leaf's one field store is the record's: ``obj.x = 1`` on the
-    # receiver (``ReceiverFieldStoreSugar`` records ``ReceiverFieldStoreValue``
-    # for a plain store on an object whose store runs no code).
-    stores = [s for s in state.entries if isinstance(s, ReceiverFieldStoreValue)]
-    assert stores, state.entries
-    assert stores[-1].receiver.identity == receiver.identity
-    assert stores[-1].attr == "x"
-    assert stores[-1].value == TermValue(1)
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    assert completed, exits.exits
+    for face in completed:
+        state = face.value
+        assert state.context.temporal.value_if_bound("rest") == fresh(
+            ListValue, (TermValue(2), TermValue(3))
+        )
+        # The leaf's one field store is ``type(obj).__setattr__``: on a
+        # receiver whose class names no class term no face is guarded as
+        # the plain store, so no ``ReceiverFieldStoreValue`` is recorded
+        # (#7757 H1b); the store is the call.
+        assert not [
+            s for s in state.entries if isinstance(s, ReceiverFieldStoreValue)
+        ], state.entries
+    assert receiver.plain_store_guard("x") is None
 
 
 def test_interleaved_name_store_name_order() -> None:
@@ -268,11 +270,13 @@ def test_interleaved_name_store_name_order() -> None:
         site=site,
     )
     exits = reduce_block_to_exitset((sugar,), ReduceContext.root(owner="ltr"))
-    assert isinstance(exits.exits[0], Completed)
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    assert completed, exits.exits
     assert order == ["name:a", "attr:x", "name:b"]
-    temporal = exits.exits[0].value.context.temporal
-    assert temporal.value_if_bound("a") == TermValue(1)
-    assert temporal.value_if_bound("b") == TermValue(3)
+    for face in completed:
+        temporal = face.value.context.temporal
+        assert temporal.value_if_bound("a") == TermValue(1)
+        assert temporal.value_if_bound("b") == TermValue(3)
 
 
 def test_first_store_halt_blocks_later_name() -> None:
@@ -280,7 +284,7 @@ def test_first_store_halt_blocks_later_name() -> None:
     site = _site("def f(obj, xs):\n    obj.x, name = xs\n")
 
     class _RefuseSet(ObjectValue):
-        def setattr(self, name, value, site_, ctx):
+        def field_store_call(self, name, value, site_, ctx):
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(
@@ -318,7 +322,7 @@ def test_earlier_name_survives_later_store_halt() -> None:
     site = _site("def f(obj, xs):\n    name, obj.x = xs\n")
 
     class _RefuseSet(ObjectValue):
-        def setattr(self, name, value, site_, ctx):
+        def field_store_call(self, name, value, site_, ctx):
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(

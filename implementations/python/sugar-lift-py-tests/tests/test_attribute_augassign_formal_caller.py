@@ -143,8 +143,24 @@ class _FloorSugar(Sugar):
         return ()
 
 
+# ``(attr, value)`` every ``_RecordingStore`` store handed its call.
+_STORED: list = []
+
+
+@dataclass(frozen=True)
+class _RecordingStore(ObjectValue):
+    """An instance whose store's call records what it is handed.  With no
+    class term the one field store is ``type(o).__setattr__`` alone, never
+    a plain store the lift decides (#7757 H1b): what the statement stores
+    is what it hands that call."""
+
+    def field_store_call(self, name, value, site, ctx):
+        _STORED.append((name, value))
+        return super().field_store_call(name, value, site, ctx)
+
+
 def _obj_with_field(n: int = 1) -> ObjectValue:
-    return ObjectValue(
+    return _RecordingStore(
         "Widget",
         (ObjectField("field", TermValue(n)),),
         (),
@@ -155,13 +171,18 @@ def _obj_with_field(n: int = 1) -> ObjectValue:
 
 
 def _production_desugar(receiver, rhs, *, attr="field"):
+    _STORED.clear()
     return _read_modify_store(_FloorSugar(receiver), _FloorSugar(rhs), attr=attr)
 
 
 def _stored(out):
-    stored = out.completed_value()
-    assert isinstance(stored, ReceiverFieldStoreValue), out
-    return stored
+    """``(attr, value)`` the one field store handed ``type(o).__setattr__``;
+    no face records the field as stored (no ``python:plain_store`` guard)."""
+    assert isinstance(out, ExitSet), out
+    for face in out.exits:
+        assert not isinstance(getattr(face, "value", None), ReceiverFieldStoreValue)
+    assert len(_STORED) == 1, _STORED
+    return _STORED[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -212,12 +233,14 @@ def test_discrimination_not_plain_store_of_the_rhs() -> None:
 
 
 def test_production_desugar_object_field_augassign_completes() -> None:
-    """``obj.field += 10`` on field=1 → field=11."""
+    """``obj.field += 10`` on field=1 → the store is handed 11."""
     out = _production_desugar(_obj_with_field(1), TermValue(10))
-    stored = _stored(out)
-    assert stored.attr == "field"
-    assert stored.value == TermValue(11)
-    after = stored.receiver.with_field_store(stored.attr, stored.value)
+    attr, value = _stored(out)
+    assert attr == "field"
+    assert value == TermValue(11)
+    # On the plain store's face (prove's ``python:plain_store``) the
+    # object after it holds that value.
+    after = _obj_with_field(1).with_field_store(attr, value)
     fields = {f.name: f.value for f in after.fields}
     assert fields["field"] == TermValue(11)
 
@@ -225,14 +248,14 @@ def test_production_desugar_object_field_augassign_completes() -> None:
 def test_production_receiver_evaluated_once_for_get_and_set() -> None:
     box = {"get": 0, "set": 0}
 
-    class _CountingObject(ObjectValue):
+    class _CountingObject(_RecordingStore):
         def attribute(self, name, site, ctx):
             box["get"] += 1
             return super().attribute(name, site, ctx)
 
-        def setattr(self, name, value, site, ctx):
+        def field_store_call(self, name, value, site, ctx):
             box["set"] += 1
-            return super().setattr(name, value, site, ctx)
+            return super().field_store_call(name, value, site, ctx)
 
     receiver = _CountingObject(
         "Widget",
@@ -243,10 +266,10 @@ def test_production_receiver_evaluated_once_for_get_and_set() -> None:
         allocation=FRAME_FRESH,
     )
     out = _production_desugar(receiver, TermValue(3))
-    stored = _stored(out)
+    _attr, value = _stored(out)
     assert box["get"] == 1
     assert box["set"] == 1
-    assert stored.value == TermValue(5)
+    assert value == TermValue(5)
 
 
 def test_discrimination_duplicated_get_is_detected() -> None:
@@ -280,9 +303,9 @@ def test_production_getattr_before_rhs_order() -> None:
             order.append("get")
             return super().attribute(name, site_, ctx)
 
-        def setattr(self, name, value, site_, ctx):
+        def field_store_call(self, name, value, site_, ctx):
             order.append("set")
-            return super().setattr(name, value, site_, ctx)
+            return super().field_store_call(name, value, site_, ctx)
 
     @dataclass(frozen=True)
     class _RhsOrder(Sugar):
@@ -313,7 +336,7 @@ def test_production_getattr_before_rhs_order() -> None:
         _RhsOrder(),
         operation=_project_order,
     )
-    assert out.completed_value() is not None
+    assert any(isinstance(face, Completed) for face in out.exits), out
     assert order == ["get", "rhs", "op", "set"]
 
 
@@ -392,9 +415,9 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
                 owner="ObjectValue.attribute",
             )
 
-        def setattr(self, name, value, site_, ctx):
+        def field_store_call(self, name, value, site_, ctx):
             box["set"] += 1
-            return super().setattr(name, value, site_, ctx)
+            return super().field_store_call(name, value, site_, ctx)
 
     # Empty fields; the read only halts.
     receiver = _StoreCounting(
@@ -422,9 +445,9 @@ def test_production_arithmetic_halt_blocks_store() -> None:
     box = {"set": 0}
 
     class _StoreCounting(ObjectValue):
-        def setattr(self, name, value, site, ctx):
+        def field_store_call(self, name, value, site, ctx):
             box["set"] += 1
-            return super().setattr(name, value, site, ctx)
+            return super().field_store_call(name, value, site, ctx)
 
     from sugar_lift_py_tests.floor import NoneValue
 
@@ -450,7 +473,7 @@ def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
     class _RefuseSet(ObjectValue):
-        def setattr(self, name, value, site_, ctx):
+        def field_store_call(self, name, value, site_, ctx):
             return ground_exceptional_exit(
                 exception_name="AttributeError",
                 site=site_,
@@ -523,10 +546,8 @@ def test_decided_receiver_get_iadd_setattr_updates_field() -> None:
     receiver = _obj_with_field(1)
     exits = _production_desugar(receiver, TermValue(10))
     assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
-    stored = _stored(exits)
-    assert stored.value == TermValue(11)
+    assert any(isinstance(face, Completed) for face in exits.exits), exits
+    assert _stored(exits) == ("field", TermValue(11))
 
 
 def test_enum_attribute_augassign_owner_reads_its_undecided_global_as_its_input() -> (
@@ -595,7 +616,7 @@ def test_unrelated_source_attribute_augassign_uses_the_same_projection() -> None
         for face in _own_exits(outcome).halts()
         if face.effect.producer_node_owner == "SymbolicValue.attribute"
     ]
-    receiver = ObjectValue(
+    receiver = _RecordingStore(
         "Renamed",
         (ObjectField("total", TermValue(4)),),
         (),
@@ -607,9 +628,8 @@ def test_unrelated_source_attribute_augassign_uses_the_same_projection() -> None
     result = _production_desugar(receiver, TermValue(3), attr="total")
 
     assert isinstance(result, ExitSet)
-    assert len(result.exits) == 1
-    assert isinstance(result.exits[0], Completed)
-    assert _stored(result).value == TermValue(7)
+    assert any(isinstance(face, Completed) for face in result.exits), result
+    assert _stored(result) == ("total", TermValue(7))
 
 
 def test_formal_operands_mint_no_carrier() -> None:

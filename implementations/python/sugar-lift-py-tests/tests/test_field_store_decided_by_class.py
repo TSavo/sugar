@@ -1,22 +1,21 @@
-"""The one field store decides by the receiver's class (#7757).
+"""The one field store on a source instance is decided at prove (#7757 H1b).
 
-``o.f = v`` is ``type(o).__setattr__(o, 'f', v)``.  The one class lookup on
-the receiver's value decides what that runs
-(``ObjectValue.field_store_route``), and the store, its post-state and what
-the statement exposes all read that one decision:
+``o.f = v`` is ``type(o).__setattr__(o, 'f', v)``.  The lift no longer walks
+the class to decide what that runs (``field_store_route`` is deleted).  It
+states two faces of one partition (``ObjectValue.plain_store_faces``):
 
-- a class that takes ``object``'s ``__setattr__`` and binds no data
-  descriptor for the name: the plain store, which changes the object only;
-- a class whose lookup selects a source ``__setattr__``, or a source
-  descriptor's ``__set__`` for the name: a call of that function, followed
-  like any call;
-- a class whose lookup does not decide: the one unanswered call, and the
-  field is undecided.
+- under ``python:plain_store(<class>, "f")`` (``ObjectValue.
+  plain_store_guard``, over the instance's class term), the plain store:
+  the instance with the field stored (``ReceiverFieldStoreValue``);
+- under its complement, the dispatched ``type(o).__setattr__`` call
+  (``ObjectValue.field_store_call``), whose member and halts prove's one
+  walk of the order decides.
 
-``container_mutation.holder_states`` no longer assumes a field store is the
-plain store of one field: a name that shares something with the object is
-rebound to its value after the store, which the receiver's value decides at
-reduce (``_may_change`` under ``field_store_method``).
+Where no class term is decided (no workspace root, no class statement, an
+instance that is not current), the store is the call alone: the unanswered
+call where no class is named.  What the instance shares is exposed at every
+store (``_may_change`` under ``field_store_method``): the lift never decides
+the store runs no code.
 """
 
 from __future__ import annotations
@@ -27,51 +26,75 @@ from pathlib import Path
 
 from frame_fresh import FRAME_FRESH, fresh
 
+from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
     ListValue,
     NoneValue,
-    ObjectField,
-    ObjectMethodValue,
     ObjectValue,
-    StringValue,
     SymbolicValue,
     TermValue,
 )
+from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.floor.object_identity import contents_current
 from sugar_lift_py_tests.floor.receiver_field_store_value import (
     ReceiverFieldStoreValue,
 )
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
-from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet
+from sugar_lift_py_tests.receiver_dispatch import PLAIN_STORE
 from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _may_change
-from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
     ReceiverFieldStoreSugar,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.container_mutation import (
     field_store_method,
     field_store_rule,
     holder_states,
 )
-from sugar_source_tree.tree import SourceFile
+from sugar_source_tree.nodes import ClassDef
 
 AFTER = "evaluation:store/.x="
 
+_SOURCE = (
+    "class Widget:\n"
+    "    pass\n"
+    "\n"
+    "\n"
+    "def f(obj, value):\n"
+    "    obj.x = value\n"
+)
 
-def _site(tmp_path: Path):
+
+def _setup(tmp_path: Path):
+    """``Widget``'s class value under a workspace root (its class names a
+    join symbol) and the fragment of ``f``'s store."""
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
     path = tmp_path / "field_store.py"
-    path.write_text("def f(obj, value):\n    obj.x = value\n")
-    function = next(
-        SourceFile(
-            workspace_path_source(str(path), root=str(tmp_path)),
-            construction_context=tree_construction_context_for_workspace(tmp_path),
-        ).functions()
+    path.write_text(_SOURCE)
+    tree = open_source_file_for_construction(path, root=tmp_path)
+    statement = next(
+        node for node in tree.root.body if isinstance(node, ClassDef)
     )
-    return function.body[0].fragment
+    span = statement.binding_target.line_col_span()
+    value = ClassDefinitionValue(
+        class_name=statement.name,
+        class_definition_cid=statement.fragment.seal().cid,
+        methods=(),
+        initializer=None,
+        binding_target_occurrence=SourceFragmentCoordinateV1(
+            statement.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        ),
+        class_definition=statement,
+    )
+    function = next(tree.functions())
+    return value, function.body[0].fragment
 
 
 @dataclass(frozen=True)
@@ -87,43 +110,6 @@ class _Read(Sugar):
         return ExitSet.completed(self.value)
 
 
-@dataclass(frozen=True)
-class _Body(Sugar):
-    """A method body the tests never apply (``_Recording.call_member``)."""
-
-    @classmethod
-    def witnesses(cls):
-        return ()
-
-    def desugar(self, ctx=None):
-        raise AssertionError("the recorded member call applies no body")
-
-
-_CALLS: list = []
-
-
-@dataclass(frozen=True)
-class _Recording(ObjectValue):
-    """An instance whose member calls are recorded, not applied: the call
-    the store makes is what these laws read."""
-
-    def call_member(
-        self,
-        name,
-        member,
-        arguments,
-        *,
-        owner,
-        blame,
-        ctx=None,
-        keywords=(),
-        required_frame=None,
-    ):
-        del owner, blame, ctx, keywords, required_frame
-        _CALLS.append((self.class_name, name, member, tuple(arguments)))
-        return ExitSet.completed(NoneValue())
-
-
 def _store(receiver, value, site, after=None):
     return ReceiverFieldStoreSugar(
         receiver=_Read(receiver),
@@ -134,149 +120,55 @@ def _store(receiver, value, site, after=None):
     )
 
 
-def _method(name, *parameters):
-    return ObjectMethodValue(name=name, parameters=parameters)
+def _mentions(formula, name: str) -> bool:
+    return name in repr(formula)
 
 
-# --- the plain store ------------------------------------------------------
+# --- a class term: the plain store under prove's guard, the call else -----
 
 
-def test_object_setattr_and_no_data_descriptor_is_the_plain_store(tmp_path):
+def test_a_store_on_an_instance_of_a_named_class_is_two_faced_on_prove_s_guard(
+    tmp_path,
+):
+    value, site = _setup(tmp_path)
+    receiver = ObjectValue(
+        value.class_name,
+        (),
+        identity="receiver",
+        defining_class=value,
+        allocation=FRAME_FRESH,
+    )
+    guard = receiver.plain_store_guard("x")
+    assert guard is not None and _mentions(guard, PLAIN_STORE)
+    # A dunder name is never a plain store: no namespace row states one.
+    assert receiver.plain_store_guard("__class__") is None
+
+    outcome = _store(receiver, TermValue(7), site, AFTER).desugar()
+
+    completed = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    stored = [
+        arm for arm in completed if isinstance(arm.value, ReceiverFieldStoreValue)
+    ]
+    # The plain store is recorded only under the guard prove decides.
+    assert len(stored) == 1, outcome
+    assert stored[0].value == ReceiverFieldStoreValue(receiver, "x", TermValue(7))
+    assert _mentions(stored[0].guard, PLAIN_STORE)
+    # Under the complement, the dispatched call: another completed face,
+    # and its halt face kept.
+    assert len(completed) > 1, outcome
+    assert outcome.halts(), outcome
+    for halt in outcome.halts():
+        assert getattr(halt.effect, "exception_name", None) != "AttributeError"
+
+
+# --- no class term: the call alone ----------------------------------------
+
+
+def test_a_store_with_no_class_named_is_the_unanswered_call(tmp_path):
+    _value, site = _setup(tmp_path)
     receiver = ObjectValue("R", (), allocation=FRAME_FRESH)
-    assert receiver.field_store_route("x") == ("plain", None)
-    assert receiver.field_store_runs_code("x") is False
+    assert receiver.plain_store_guard("x") is None
 
-    outcome = _store(receiver, TermValue(7), _site(tmp_path)).desugar()
-    assert not outcome.halts()
-    assert outcome.completed_value() == ReceiverFieldStoreValue(
-        receiver, "x", TermValue(7)
-    )
-
-    # The plain store changes the object, and so whatever holds it; it
-    # reaches nothing that merely shares with it, and no operand.
-    method = field_store_method("x")
-    assert _may_change(receiver, method, False, False) is True
-    assert _may_change(receiver, method, False, True) is False
-    operand = field_store_method("x", operand=True)
-    held = fresh(ListValue, (TermValue(1),))
-    assert _may_change(receiver, operand, False, True, held=held) is False
-
-
-def test_a_class_field_that_is_no_data_descriptor_is_the_plain_store():
-    receiver = ObjectValue(
-        "R",
-        (),
-        class_fields=(ObjectField("x", TermValue(0)),),
-        allocation=FRAME_FRESH,
-    )
-    assert receiver.field_store_route("x") == ("plain", None)
-
-
-def test_a_property_with_no_selected_setter_refuses_and_runs_no_code():
-    getter = ObjectMethodValue(
-        name="x", parameters=("self",), descriptor_kind="property"
-    )
-    receiver = ObjectValue("R", (), methods=(getter,), allocation=FRAME_FRESH)
-    assert receiver.field_store_route("x") == ("refused", None)
-    assert receiver.field_store_runs_code("x") is False
-
-
-# --- a source __setattr__ / descriptor __set__: the call ------------------
-
-
-def test_a_source_setattr_is_a_call_of_that_function_on_the_receiver(tmp_path):
-    _CALLS.clear()
-    setter = _method("__setattr__", "self", "name", "value")
-    receiver = _Recording("R", (), methods=(setter,), allocation=FRAME_FRESH)
-    assert receiver.field_store_route("x") == ("setattr", setter)
-    assert receiver.field_store_runs_code("x") is True
-
-    outcome = _store(receiver, TermValue(7), _site(tmp_path), AFTER).desugar()
-
-    # The store is the call ``type(o).__setattr__(o, 'x', 7)``.
-    assert _CALLS == [("R", "__setattr__", setter, (StringValue("x"), TermValue(7)))]
-    assert not outcome.halts()
-    record = outcome.completed_value()
-    assert isinstance(record, _ReducedBlock)
-    # No instance-field store is recorded: the field is not assumed stored.
-    assert not any(
-        isinstance(entry, ReceiverFieldStoreValue) for entry in record.entries
-    )
-    # The call stated nothing of the object: it is the same instance, its
-    # contents no longer this frame's, bound where the post-state reads it.
-    left = record.context.temporal.value_if_bound(AFTER)
-    assert isinstance(left, _Recording)
-    assert left.class_name == "R"
-    assert contents_current(left) is False
-
-    # Such a store reaches what a call reaches.
-    method = field_store_method("x")
-    assert _may_change(receiver, method, False, True) is True
-    operand = field_store_method("x", operand=True)
-    held = fresh(ListValue, (TermValue(1),))
-    assert _may_change(receiver, operand, False, True, held=held) is True
-    # An immutable operand keeps its value whatever the store runs.
-    assert _may_change(receiver, operand, False, True, held=TermValue(1)) is False
-
-
-def test_a_source_descriptor_set_is_a_call_of_that_function_on_the_descriptor(
-    tmp_path,
-):
-    _CALLS.clear()
-    setter = _method("__set__", "self", "instance", "value")
-    descriptor = _Recording("D", (), methods=(setter,), allocation=FRAME_FRESH)
-    receiver = _Recording(
-        "R",
-        (),
-        class_fields=(ObjectField("x", descriptor),),
-        allocation=FRAME_FRESH,
-    )
-    assert receiver.field_store_route("x") == ("descriptor", (descriptor, setter))
-    assert receiver.field_store_runs_code("x") is True
-    # Another name of the same class takes the plain store.
-    assert receiver.field_store_route("y") == ("plain", None)
-
-    outcome = _store(receiver, TermValue(7), _site(tmp_path), AFTER).desugar()
-
-    # The store is the call ``type(d).__set__(d, o, 7)``.
-    assert _CALLS == [("D", "__set__", setter, (receiver, TermValue(7)))]
-    assert not outcome.halts()
-    record = outcome.completed_value()
-    assert isinstance(record, _ReducedBlock)
-    assert not any(
-        isinstance(entry, ReceiverFieldStoreValue) for entry in record.entries
-    )
-
-
-def test_a_setattr_that_is_no_plain_function_is_not_decided():
-    setter = ObjectMethodValue(
-        name="__setattr__",
-        parameters=("name", "value"),
-        descriptor_kind="staticmethod",
-    )
-    receiver = ObjectValue("R", (), methods=(setter,), allocation=FRAME_FRESH)
-    assert receiver.field_store_route("x") == ("undecided", None)
-
-
-# --- an undecided class lookup: the unanswered call -----------------------
-
-
-def test_an_undecided_lookup_is_the_unanswered_call_and_the_field_is_undecided(
-    tmp_path,
-):
-    # A receiver with no class statement that holds ``__setattr__`` both as
-    # a method and as a field: no order of its bindings is read.
-    receiver = ObjectValue(
-        "R",
-        (),
-        methods=(_method("__setattr__", "self", "name", "value"),),
-        class_fields=(ObjectField("__setattr__", TermValue(1)),),
-        allocation=FRAME_FRESH,
-    )
-    assert receiver.field_store_route("x") == ("undecided", None)
-    assert receiver.field_store_runs_code("x") is True
-
-    site = _site(tmp_path)
     outcome = _store(receiver, TermValue(7), site, AFTER).desugar()
 
     # Two faces: nothing is assumed of what ``type(o).__setattr__`` runs.
@@ -284,6 +176,10 @@ def test_an_undecided_lookup_is_the_unanswered_call_and_the_field_is_undecided(
     assert len(outcome.exits) > 1
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
     assert halt.effect.producer_node_owner == "UnknownCallee:R.__setattr__"
+    # No instance-field store is recorded: the field is not assumed stored.
+    for arm in outcome.exits:
+        if isinstance(arm, Completed):
+            assert not isinstance(arm.value, ReceiverFieldStoreValue), arm
 
     # The object after it is the same instance with its contents not
     # current: every field read of it is the undecided read.
@@ -292,8 +188,37 @@ def test_an_undecided_lookup_is_the_unanswered_call_and_the_field_is_undecided(
     assert after.class_name == "R"
     assert contents_current(after) is False
 
-    # It exposes what an unfollowed call exposes.
-    assert _may_change(receiver, field_store_method("x"), False, True) is True
+
+def test_an_instance_that_is_not_current_names_no_guard(tmp_path):
+    from sugar_lift_py_tests.floor.object_identity import arrived
+
+    value, site = _setup(tmp_path)
+    receiver = ObjectValue(
+        value.class_name,
+        (),
+        identity="receiver",
+        defining_class=value,
+        allocation=FRAME_FRESH,
+    )
+    assert receiver.plain_store_guard("x") is not None
+    assert arrived(receiver, site).plain_store_guard("x") is None
+
+
+# --- what a store exposes -------------------------------------------------
+
+
+def test_a_store_on_a_source_instance_may_run_code():
+    receiver = ObjectValue("R", (), allocation=FRAME_FRESH)
+    method = field_store_method("x")
+    # The object itself, and what it shares: the lift never decides the
+    # store is the plain one.
+    assert _may_change(receiver, method, False, False) is True
+    assert _may_change(receiver, method, False, True) is True
+    operand = field_store_method("x", operand=True)
+    held = fresh(ListValue, (TermValue(1),))
+    assert _may_change(receiver, operand, False, True, held=held) is True
+    # An immutable operand keeps its value whatever the store runs.
+    assert _may_change(receiver, operand, False, True, held=TermValue(1)) is False
 
 
 def test_a_receiver_that_is_no_source_instance_decides_by_its_own_value():

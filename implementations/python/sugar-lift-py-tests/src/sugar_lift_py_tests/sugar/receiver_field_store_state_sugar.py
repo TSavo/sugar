@@ -22,16 +22,14 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
     The store itself ran at its statement (``ReceiverFieldStoreSugar``); this
     read of the object after it runs nothing, and the receiver's value
     decides what it reads, as it decided the store: an instance of a source
-    class (``ObjectValue``) whose class takes the plain store
-    (``ObjectValue.field_store_route``) with the field stored -- known on it
-    whether it was made here or arrived (``ObjectValue.stored_fields``), the
-    rest of it as its currency says -- and whose class refuses the store (a
-    property with no setter the lookup selects) the ``AttributeError`` its
-    store raises (``ObjectValue.setattr``); an instance whose store ran code (a
-    ``__setattr__``, a descriptor's ``__set__``, an undecided class lookup)
-    as that call left it, read through the key the statement bound it under
-    (``after``) -- unknown where the statement bound none, never the object
-    with the field assumed stored; a value of another decided runtime type
+    class (``ObjectValue``) on the store's two faces
+    (``ObjectValue.plain_store_faces``, #7757 H1b) -- under
+    ``python:plain_store`` with the field stored, known on it whether it was
+    made here or arrived (``ObjectValue.stored_fields``), the rest of it as
+    its currency says; under its complement as the call left it, read
+    through the key the statement bound it under (``after``), unknown where
+    the statement bound none, never the object with the field assumed
+    stored; a value of another decided runtime type
     as its own floor's store leaves it; and a formal with no actual or an
     undecided value the object it is, whose fields no read here decides."""
 
@@ -75,15 +73,18 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
 
         def update(receiver, value):
             if isinstance(receiver, ObjectValue):
-                if receiver.field_store_runs_code(self.attr):
-                    return self._left(ctx)
-                # The store the one class lookup decides
-                # (``ObjectValue.field_store_route``), answered by the
-                # receiver's own store: the plain store completes with the
-                # field stored, a property with no setter the lookup selects
-                # halts with ``AttributeError`` -- the same answer the store
-                # statement gives (``ReceiverFieldStoreSugar``).
-                return receiver.setattr(self.attr, value, self.site, ctx)
+                # The same two faces the store statement gives
+                # (``ReceiverFieldStoreSugar``, ``ObjectValue.
+                # plain_store_faces``): under ``python:plain_store`` the
+                # instance with the field stored; under its complement the
+                # instance as the call left it (``_left``).  The call is
+                # never run again here.
+                return receiver.plain_store_faces(
+                    self.attr,
+                    ExitSet.completed(receiver.with_field_store(self.attr, value)),
+                    self._left(ctx),
+                    self.site,
+                )
             if (
                 getattr(receiver, "formal_coordinate", None) is None
                 and receiver.runtime_type_is_decided()

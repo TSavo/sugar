@@ -13957,10 +13957,9 @@ def _receiver_field_store(
         # A name that merely shares something with the object is rebound
         # too, to its value after the store, which the receiver's value
         # decides at reduce (``field_store_method``): the store is
-        # ``type(receiver).__setattr__``, which reaches nothing beyond the
-        # object only when the receiver's class takes ``object``'s and binds
-        # no data descriptor for the name
-        # (``ObjectValue.field_store_route``).
+        # ``type(receiver).__setattr__``, which may run code reaching what
+        # the object shares (whether it is the plain store is prove's to
+        # decide, ``ObjectValue.plain_store_faces``).
         holders = holder_states(
             statement,
             scope,
@@ -19705,9 +19704,9 @@ class ReceiverFieldStoreStatement(Statement):
         something with the object is rebound too, to its value after the
         store, which the receiver's value decides at reduce
         (``container_mutation.field_store_method``): the store is
-        ``type(receiver).__setattr__``, which reaches nothing beyond the
-        object only when the receiver's class takes ``object``'s and binds no
-        data descriptor for the name (``ObjectValue.field_store_route``).
+        ``type(receiver).__setattr__``, which may run code reaching what the
+        object shares (whether it is the plain store is prove's to decide,
+        ``ObjectValue.plain_store_faces``).
         The names were decided once, where the statement was built
         (``_receiver_field_store``); the bindings are the states, so every
         later read in the block reads the state, and a live loop reads the

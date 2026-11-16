@@ -44,8 +44,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
 from frame_fresh import FRAME_FRESH
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -326,141 +324,61 @@ def test_undecided_store_names_the_receiver_formal() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_source_defined_writable_field_completes_via_setattr() -> None:
-    """Writable instance field on a source class → Completed store face."""
-    helper, receiver = _source_class_and_helper("    pass\n")
-    # Empty class: no property descriptor; setattr is ordinary field store.
-    assert receiver.methods == ()
-    exits = _stored(helper, receiver, TermValue(7))
+def _the_store_is_never_decided_here(exits, value) -> None:
+    """``receiver.field = value`` on a source instance is
+    ``type(receiver).__setattr__`` (#7757 H1b): the lift never decides that
+    it is the plain store, nor that it raises ``AttributeError``.  The
+    instance with the field stored is a completed face only under
+    ``python:plain_store``, which prove decides; every other face is the
+    call's, its halt kept."""
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+
     assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
-    stored = exits.exits[0].value
-    assert isinstance(stored, ObjectValue)
-    assert stored.fields[-1].name == "field"
-    assert stored.fields[-1].value == TermValue(7)
+    assert exits.halts(), exits
+    for halt in exits.halts():
+        assert getattr(halt.effect, "exception_name", None) != "AttributeError", (
+            halt.effect
+        )
+    for face in exits.exits:
+        if not isinstance(face, Completed) or "python:plain_store" in repr(
+            face.guard
+        ):
+            continue
+        stored = face.value
+        assert not (
+            isinstance(stored, ObjectValue)
+            and contents_current(stored)
+            and any(f.name == "field" and f.value == value for f in stored.fields)
+        ), stored
 
 
-def test_source_defined_writable_field_completes_discrimination() -> None:
-    """Bite: a completed store is not a Halted face."""
+def test_source_defined_writable_field_store_is_decided_at_prove() -> None:
+    """A writable instance field on a source class: the plain store only
+    under prove's ``python:plain_store``, the call otherwise."""
     helper, receiver = _source_class_and_helper("    pass\n")
-    exits = _stored(helper, receiver, TermValue(7))
-    with pytest.raises(AssertionError):
-        assert isinstance(exits.exits[0], Halted), "writable field must complete"
+    assert receiver.methods == ()
+    _the_store_is_never_decided_here(
+        _stored(helper, receiver, TermValue(7)), TermValue(7)
+    )
 
 
-def test_source_defined_property_without_setter_named_attribute_error() -> None:
-    """Property getter without setter → named AttributeError on the store path."""
+def test_source_defined_property_without_setter_is_never_decided_here() -> None:
+    """A getter-only property: Python's store raises ``AttributeError``;
+    the lift decides neither that nor a completed store (the getter never
+    licenses one)."""
     helper, receiver = _source_class_and_helper(
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
     assert any(
         m.name == "field" and m.descriptor_kind == "property" for m in receiver.methods
     )
-    # Floor store path (not the read path) refuses the set.
     site = helper.body[0].fragment
-    from sugar_lift_py_tests.effect import RaiseEffect
-
-    direct = receiver.setattr("field", TermValue(7), site, None)
-    assert direct.halts() == direct.exits
-    (direct_halt,) = direct.halts()
-    assert isinstance(direct_halt.effect, RaiseEffect)
-    assert direct_halt.effect.exception_name == "AttributeError"
-    assert direct_halt.effect.producer_node_owner == "ObjectValue.setattr"
-
-    exits = _stored(helper, receiver, TermValue(7))
-    halted = exits.exits[0]
-    assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity("AttributeError")
-    assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
-    assert halted.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
-
-
-def test_source_defined_property_without_setter_discrimination() -> None:
-    """Bite: the getter must not license a Completed store face."""
-    helper, receiver = _source_class_and_helper(
-        "    @property\n" "    def field(self):\n" "        return 1\n"
+    _the_store_is_never_decided_here(
+        receiver.setattr("field", TermValue(7), site, None), TermValue(7)
     )
-    exits = _stored(helper, receiver, TermValue(99))
-    with pytest.raises(AssertionError):
-        assert isinstance(exits.exits[0], Completed), "read path licensed a store"
-
-
-class _Expected:
-    def __init__(self, name: str):
-        from sugar_lift_py_tests.ir import ctor, str_const
-
-        self.identity = ctor(
-            "python:exception_type_identity",
-            [str_const("builtins"), str_const(name)],
-        )
-
-    def exception_type_identity(self):
-        return self.identity
-
-
-def _routed_past_wrong_boundary(produced):
-    """``produced`` past a boundary that expects ``ValueError``."""
-    from sugar_lift_py_tests.context_manager_contract import (
-        AuthenticatedRaiseMatcher,
-        EffectBoundaryDisposition,
+    _the_store_is_never_decided_here(
+        _stored(helper, receiver, TermValue(99)), TermValue(99)
     )
-    from sugar_lift_py_tests.effect.expectation_not_met_effect import (
-        ExpectationNotMetEffect,
-    )
-
-    return produced.and_exit(
-        ExitSet.completed(object()),
-        disposition=EffectBoundaryDisposition(
-            matcher=AuthenticatedRaiseMatcher(expected=_Expected("ValueError")),
-            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
-        ),
-    )
-
-
-def test_source_defined_wrong_boundary_type_leaves_halt_unconsumed() -> None:
-    """Wrong expected exception type does not consume the store's halt edge."""
-    helper, receiver = _source_class_and_helper(
-        "    @property\n" "    def field(self):\n" "        return 1\n"
-    )
-    produced = _stored(helper, receiver, TermValue(1))
-    original = produced.exits[0]
-    assert isinstance(original, Halted)
-    assert "AttributeError" in repr(original.effect.exception_type_coordinate)
-
-    # Boundary expects ValueError; store produced AttributeError.
-    routed = _routed_past_wrong_boundary(produced)
-    remaining = [
-        face
-        for face in routed.exits
-        if isinstance(face, Halted) and face.effect is original.effect
-    ]
-    assert remaining == [original]
-    assert (
-        isinstance(remaining[0].effect.occurrence_id, str)
-        and ":" in remaining[0].effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {remaining[0].effect.occurrence_id!r}"
-    )
-
-
-def test_source_defined_wrong_boundary_type_discrimination() -> None:
-    """Bite: claiming the wrong boundary consumed the edge must fail."""
-    helper, receiver = _source_class_and_helper(
-        "    @property\n" "    def field(self):\n" "        return 1\n"
-    )
-    produced = _stored(helper, receiver, TermValue(1))
-    original = produced.exits[0]
-    assert isinstance(original, Halted)
-    routed = _routed_past_wrong_boundary(produced)
-    remaining = [
-        face
-        for face in routed.exits
-        if isinstance(face, Halted) and face.effect is original.effect
-    ]
-    with pytest.raises(AssertionError):
-        assert remaining == [], "wrong boundary falsely consumed the store halt"
 
 
 # ---------------------------------------------------------------------------
@@ -468,22 +386,18 @@ def test_source_defined_wrong_boundary_type_discrimination() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_object_receiver_completes_field_store_via_setattr() -> None:
+def test_object_receiver_store_is_the_call_never_decided_here() -> None:
     # Source-level int actuals hit TermValue.setattr → named AttributeError.
-    # Completion: the store on an object the caller built, through the door.
+    # On an object the caller built the store is ``type(o).__setattr__``,
+    # decided at prove (#7757 H1b), through the door.
     function, outcome = _helper_definition()
     _undecided_store(outcome)
     receiver = ObjectValue(
         "R", (ObjectField("field", TermValue(0)),), allocation=FRAME_FRESH
     )
-    exits = _stored(function, receiver, TermValue(7))
-    assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
-    # The stored field is the value the caller supplies.
-    stored = exits.exits[0].value
-    assert isinstance(stored, ObjectValue)
-    assert stored.fields[-1].value == TermValue(7)
+    _the_store_is_never_decided_here(
+        _stored(function, receiver, TermValue(7)), TermValue(7)
+    )
 
 
 def test_positional_caller_halts_with_named_identity_from_setattr() -> None:
@@ -613,31 +527,25 @@ def test_property_without_setter_reads_fine_and_halts_on_store() -> None:
         m.name == "field" and m.descriptor_kind == "property" for m in receiver.methods
     )
 
-    # Store path raises AttributeError — never a completed field write
-    # licensed by the getter.
+    # The store keeps its halt face -- never a completed field write
+    # licensed by the getter, and never an ``AttributeError`` the lift
+    # decides (#7757 H1b).
     function, _ = _helper_definition()
     site = function.body[0].fragment
-    store = receiver.setattr("field", TermValue(7), site, None)
-    from sugar_lift_py_tests.effect import RaiseEffect
-
-    assert store.halts() == store.exits
-    (store_halt,) = store.halts()
-    assert isinstance(store_halt.effect, RaiseEffect)
-    assert store_halt.effect.exception_name == "AttributeError"
-    assert store_halt.effect.producer_node_owner == "ObjectValue.setattr"
-
-    exits = _stored(function, receiver, TermValue(7))
-    halted = exits.exits[0]
-    assert isinstance(halted, Halted)
-    assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
+    _the_store_is_never_decided_here(
+        receiver.setattr("field", TermValue(7), site, None), TermValue(7)
+    )
+    _the_store_is_never_decided_here(
+        _stored(function, receiver, TermValue(7)), TermValue(7)
+    )
 
 
 def test_lying_read_path_does_not_authorize_completed_store() -> None:
     """Borrowing __getattr__ evidence to complete a store must fail."""
     function, _ = _helper_definition()
-    exits = _stored(function, _getter_only_receiver(), TermValue(99))
-    assert isinstance(exits.exits[0], Halted)
-    assert not isinstance(exits.exits[0], Completed)
+    _the_store_is_never_decided_here(
+        _stored(function, _getter_only_receiver(), TermValue(99)), TermValue(99)
+    )
 
 
 # ---------------------------------------------------------------------------
