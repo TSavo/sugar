@@ -29,7 +29,6 @@ from sugar_lift_py_tests.floor import (
     FloorValue,
     ListValue,
     NoneValue,
-    StringValue,
     SymbolicValue,
     TermValue,
 )
@@ -875,11 +874,8 @@ def _item_store(receiver, index, value):
 
 @dataclass(frozen=True)
 class _AttrStoreReceiver(FloorValue):
-    """Minimal Floor receiver that owns ``setattr`` for discharge twins.
-
-    Window 17534 owns production Floor ``setattr`` arms; this test double only
-    authenticates the projector table's ``setattr_named`` unwrap path.
-    """
+    """Minimal decided Floor receiver that owns ``setattr``: the one
+    attribute mutation reaches its own store."""
 
     fields: tuple[tuple[str, FloorValue], ...] = ()
 
@@ -933,33 +929,51 @@ def test_item_store_halts_with_named_exception_identity():
     )
 
 
-def test_setattr_named_unwraps_string_value_and_discharges():
-    """Window 17534: name is StringValue; projector unwraps with ``name.value``."""
-    receiver = _coordinate("receiver", 0)
-    value = _coordinate("value", 1)
-    carrier = NativeOperationExitCarrierV1.mint(
-        site=_setattr_site(),
-        operator="setattr_named",
-        operands=(
-            SymbolicValue(make_var("receiver"), receiver),
-            StringValue("name"),
-            SymbolicValue(make_var("value"), value),
-        ),
-        coordinates=(receiver, None, value),
-    )
+def test_attribute_store_on_a_decided_receiver_is_its_own_setattr():
+    """``receiver.name = value`` on a decided receiver is its own store
+    through the one attribute mutation (``store_effect_sugar.
+    attribute_mutation``, #7757): the name is the static identifier, the
+    value lands under it.  An attribute store mints no carrier."""
+    from sugar_lift_py_tests.sugar.store_effect_sugar import attribute_mutation
 
-    exits = carrier.discharge(
+    exits = attribute_mutation(
+        "__setattr__",
+        _AttrStoreReceiver(),
+        "name",
+        (TermValue(7),),
+        _setattr_site(),
         None,
-        {
-            receiver.coordinate_cid: _AttrStoreReceiver(),
-            value.coordinate_cid: TermValue(7),
-        },
+        unit=None,
     )
 
     assert len(exits.exits) == 1
     completed = exits.exits[0]
     assert isinstance(completed, Completed)
     assert completed.value == _AttrStoreReceiver((("name", TermValue(7)),))
+
+
+def test_attribute_store_on_a_formal_is_no_carrier():
+    """``receiver.name = value`` on a formal waits on no caller's actual: it
+    is the undecided store, its halt kept (#7757)."""
+    from sugar_lift_py_tests.sugar.store_effect_sugar import attribute_mutation
+
+    receiver = _coordinate("receiver", 0)
+    exits = attribute_mutation(
+        "__setattr__",
+        SymbolicValue(make_var("receiver"), receiver),
+        "name",
+        (TermValue(7),),
+        _setattr_site(),
+        None,
+        unit=None,
+    )
+
+    assert isinstance(exits, ExitSet)
+    assert not isinstance(exits, NativeOperationExitCarrierV1)
+    assert [halt.effect.producer_node_owner for halt in exits.halts()] == [
+        "UndecidedSetattr"
+    ]
+    assert exits.completed_value() is None
 
 
 def test_source_evaluation_order_rhs_receiver_index_is_independent_of_the_store():
@@ -1074,15 +1088,19 @@ def test_production_minted_operators_equal_projector_table_exactly():
         "projectors with no production mint path: " f"{sorted(orphan_projectors)}"
     )
     assert "subscript" in projectors
-    assert "setattr_named" in projectors
-    # Store-family delete twins: production set == projector keys (both ways).
-    assert "delattr_named" in projectors
-    assert "delattr_named" in production
     # An item store or delete mints no carrier (``store_effect_sugar.
-    # item_mutation``, #7757): neither set names it.
-    for item_operator in ("setitem", "delitem"):
-        assert item_operator not in projectors
-        assert item_operator not in production
+    # item_mutation``, #7757), nor does an attribute store, delete or read
+    # (``store_effect_sugar.attribute_mutation``,
+    # ``AttributeSugar.project_attribute``): neither set names it.
+    for operator in (
+        "setitem",
+        "delitem",
+        "setattr_named",
+        "delattr_named",
+        "attribute_named",
+    ):
+        assert operator not in projectors
+        assert operator not in production
 
 
 def test_symbolic_formal_subscript_discharges_completed_through_projector():

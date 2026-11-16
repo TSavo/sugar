@@ -49,30 +49,36 @@ class AuthenticatedExceptionTypeValue(FloorValue):
         )
 
     def setattr(self, name, value, site, ctx):
-        """The carried type operand stores through the one attribute store
-        (``store_effect_sugar.project_setattr``), never its own ``setattr``
-        past the door: a formal operand waits as the ``setattr_named``
-        carrier, an undecided one keeps the store's two faces (#7757)."""
-        from sugar_lift_py_tests.receiver_dispatch import stored_class_input
-        from sugar_lift_py_tests.sugar.store_effect_sugar import project_setattr
+        """The carried type operand stores through the one attribute
+        mutation (``store_effect_sugar.attribute_mutation``), never its own
+        ``setattr`` past the door: an operand whose type is not decided
+        keeps the undecided store's halt (#7757 step 7)."""
+        from sugar_lift_py_tests.sugar.store_effect_sugar import attribute_mutation
 
-        return project_setattr(
+        return attribute_mutation(
+            "__setattr__",
             self.value,
             name,
-            value,
+            (value,),
             site,
             ctx,
-            plain_store_input=stored_class_input(
-                self.value, name, getattr(site, "unit", None)
-            ),
+            unit=getattr(site, "unit", None),
         )
 
     def delattr(self, name, site, ctx):
-        """The carried type operand deletes through the one attribute delete
-        (``delete_effect_sugar.project_delattr``)."""
-        from sugar_lift_py_tests.sugar.delete_effect_sugar import project_delattr
+        """The carried type operand deletes through the one attribute
+        mutation."""
+        from sugar_lift_py_tests.sugar.store_effect_sugar import attribute_mutation
 
-        return project_delattr(self.value, name, site, ctx)
+        return attribute_mutation(
+            "__delattr__",
+            self.value,
+            name,
+            (),
+            site,
+            ctx,
+            unit=getattr(site, "unit", None),
+        )
 
     def exception_type_identity(self) -> Term:
         return self.identity

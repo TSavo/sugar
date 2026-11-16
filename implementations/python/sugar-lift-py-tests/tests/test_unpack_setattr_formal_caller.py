@@ -1,4 +1,4 @@
-"""JOIN CHECK: unpack assignment with formal setattr_named through a real caller.
+"""JOIN CHECK: unpack assignment with a field store on a formal.
 
 Concrete program:
 
@@ -6,36 +6,36 @@ Concrete program:
         x, obj.field = p, q
         return x
 
-The unpack admits a Name leaf (``x``) then an attribute store leaf. Formal
-desugar mints undischarged ``setattr_named``; discharge projects Completed
-field stores or named AttributeError, carrying authentic pre-effect state.
+The unpack admits a Name leaf (``x``) then an attribute store leaf.  The store
+is the one attribute mutation (``store_effect_sugar.attribute_mutation``,
+#7757 NEW-1): on the formal ``obj`` it is the undecided store -- completing
+under its own atom (or where prove decides the store plain), raising
+something undetermined under the complement, both faces owed -- never a
+carrier waiting on a caller's actuals (the ``setattr_named`` carrier and its
+projector are deleted).  What a caller supplies is stored through the same
+door: Completed field stores or the named AttributeError.
 
-Operand order (setattr_named owner law):
+Operand order (``type(obj).__setattr__(obj, "field", q)``):
 
   source evaluation (store half): value → receiver   (q, obj)
-  discharge / mint:               receiver, name, value
-                                  (obj, StringValue(\"field\"), q)
+  the store:                      receiver, name, value
+                                  (obj, "field", q)
 
-  Name slot is static — coordinate is None (not a formal).
+  The name is static: never an operand the source evaluates.
 
 Acceptance (each with a discrimination twin):
 
-  1. Helper alone retains setattr_named demand in discharge order.
-  2. Writable source-defined receiver completes x→p and the field store.
-  3. Getter-only property → named AttributeError; x preserved in halt
-     pre-effect state; never fabricated statement completion.
-  4. RHS/receiver evaluation order differs from discharge order.
+  1. Helper alone is the undecided store over ``obj``, its halt kept.
+  2. Writable source-defined receiver completes the field store; ``x``
+     binds ``p``.
+  3. Getter-only property → named AttributeError; never fabricated
+     statement completion.
+  4. RHS/receiver evaluation order differs from the store's operand order.
   5. First-store halt blocks later targets.
-  6. Swapped-coordinate and read-authorizes-write twins fail.
-
-Does not touch carrier/ExitSet, reducer, attribute-store producer/projector,
-assertion-boundary identity, or census.
+  6. Swapped receiver/value and read-authorizes-write twins fail.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
-import inspect
 
 import pytest
 
@@ -50,24 +50,22 @@ from sugar_lift_py_tests.effect import (
 )
 from sugar_lift_py_tests.floor import (
     ObjectField,
-    ObjectMethodValue,
     ObjectValue,
-    StringValue,
     TermValue,
 )
-from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
+from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, true_guard
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar import store_effect_sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 from frame_fresh import FRAME_FRESH
 
-PROGRAM ="def f(obj, p, q):\n    x, obj.field = p, q\n    return x\n"
+PROGRAM = "def f(obj, p, q):\n    x, obj.field = p, q\n    return x\n"
 
 
 def _tree(source: str, name: str = "unpack_setattr_caller.py") -> SourceFile:
@@ -84,7 +82,7 @@ def _helper():
 
 
 def _identity(name: str):
-    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.ir import ctor
 
     return ctor(
         "python:exception_type_identity",
@@ -92,8 +90,77 @@ def _identity(name: str):
     )
 
 
+def _undecided_store(outcome) -> Halted:
+    """The undecided attribute store in ``f``'s own proof: no carrier, one
+    ``UndeterminedRaiseEffect`` halt owned by ``UndecidedSetattr`` kept with
+    the state the store began from, the undecided member owed on every face,
+    never a completion."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedSetattr"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.state is not None
+    owed = unanswered_call(None, halt.effect.site)
+    assert owed in owed_calls(outcome)
+    assert owed in halt.owed
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    assert all(owed in face.owed for face in completed)
+    assert outcome.completed_value() is None
+    return halt
+
+
+def _store_operations(outcome):
+    """Every ``python:setattr(<receiver>, <name>, <occurrence>)`` the
+    completed faces' guards name: the undecided store's completes atom."""
+
+    def walk(node, depth=0):
+        if getattr(node, "name", None) == "python:setattr":
+            yield node
+        if depth > 64:
+            return
+        for child in (
+            *(getattr(node, "args", ()) or ()),
+            *(getattr(node, "operands", ()) or ()),
+        ):
+            yield from walk(child, depth + 1)
+
+    operations = [
+        atom
+        for face in outcome.exits
+        if isinstance(face, Completed)
+        for atom in walk(face.guard)
+    ]
+    assert operations, outcome
+    return operations
+
+
+def _stored(function, receiver, value):
+    """``receiver.field = value`` through the one attribute mutation at the
+    store's site, the receiver a value the lift decides (what a caller
+    supplies)."""
+    return store_effect_sugar.attribute_mutation(
+        "__setattr__",
+        receiver,
+        "field",
+        (value,),
+        function.body[0].fragment,
+        None,
+        unit=None,
+    )
+
+
 def _source_class_receiver(class_body: str):
-    """Build a source-defined class receiver for discharge (ClassDef door)."""
+    """A source-defined class receiver (ClassDef door) beside ``f``, whose
+    own proof is the undecided store."""
     source = f"class Widget:\n{class_body}\n" + PROGRAM
     tree = _tree(source, "source_class_unpack_setattr.py")
     class_def = next(node for node in tree.nodes() if isinstance(node, ClassDef))
@@ -109,95 +176,85 @@ def _source_class_receiver(class_body: str):
         class_value.class_definition_cid, allocation=FRAME_FRESH
     )
     assert isinstance(receiver, ObjectValue)
-    pending = helper.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    return helper, pending, receiver
-
-
-def _completed_universe(pending, actuals) -> UniverseValue:
-    exits = pending.discharge(None, actuals)
-    assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    face = exits.exits[0]
-    assert isinstance(face, Completed)
-    assert isinstance(face.value, UniverseValue)
-    return face.value
+    _undecided_store(helper.sugar().desugar(None))
+    return helper, receiver
 
 
 # ---------------------------------------------------------------------------
-# 1. Helper alone retains setattr_named demand
+# 1. Helper alone is the undecided store
 # ---------------------------------------------------------------------------
 
 
-def test_helper_alone_retains_setattr_named_demand_in_discharge_order() -> None:
-    _, pending = _helper()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setattr_named"
-    assert isinstance(pending.operands[1], StringValue)
-    assert pending.operands[1].value == "field"
-    # Discharge order: receiver, static name, value (q). Name x binds p.
-    assert pending.operands[0].term.name == "obj"
-    assert pending.operands[2].term.name == "q"
-    cids = pending.demand.operand_coordinate_cids
-    assert cids[0] is not None and cids[2] is not None
-    assert cids[1] is None  # static attribute name is not a formal
-    assert cids[0] != cids[2]
-    parameters = tuple(
-        inspect.signature(_NATIVE_OPERATION_PROJECTORS["setattr_named"]).parameters
-    )
-    assert parameters == ("receiver", "name", "value", "site", "ctx")
-    assert pending.pre_effect_state is not None
+def test_helper_alone_is_the_undecided_store_over_obj() -> None:
+    _, outcome = _helper()
+    _undecided_store(outcome)
+    for operation in _store_operations(outcome):
+        receiver, name, _key = operation.args
+        assert getattr(receiver, "name", None) == "obj", receiver
+        assert name == str_const("field")
+    # The carrier, its mint and its projector are deleted.
+    assert "setattr_named" not in _NATIVE_OPERATION_PROJECTORS
+    assert not hasattr(store_effect_sugar, "mint_setattr_named_carrier")
 
 
 def test_helper_alone_is_not_a_completed_face_discrimination() -> None:
-    _, pending = _helper()
+    _, outcome = _helper()
     with pytest.raises(AssertionError):
-        assert isinstance(pending, ExitSet) and pending.completed_value() is not None
+        assert outcome.completed_value() is not None
     with pytest.raises(AssertionError):
-        assert isinstance(pending, Completed)
+        assert not outcome.halts()
+
+
+def test_helper_alone_completed_face_returns_p() -> None:
+    """Where the store completes, ``x`` binds ``p``: the return is ``p``."""
+    _, outcome = _helper()
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for face in completed:
+        assert isinstance(face.value, UniverseValue), face.value
+        returns = [
+            s for s in face.value.record.statements if isinstance(s, ReturnValue)
+        ]
+        assert len(returns) == 1
+        assert returns[0].value.term.name == "p"
 
 
 # ---------------------------------------------------------------------------
-# 2. Writable source-defined receiver completes x and field store
+# 2. Writable source-defined receiver completes the field store
 # ---------------------------------------------------------------------------
 
 
-def test_writable_source_defined_receiver_completes_x_and_field_store() -> None:
-    _, pending, receiver = _source_class_receiver("    pass\n")
+def test_writable_source_defined_receiver_completes_field_store() -> None:
+    helper, receiver = _source_class_receiver("    pass\n")
     assert receiver.methods == ()
-    obj_cid, _, q_cid = pending.demand.operand_coordinate_cids
-    universe = _completed_universe(pending, {obj_cid: receiver, q_cid: TermValue(7)})
-    # Field store completed with discharged value.
-    assert any(
-        isinstance(s, ObjectValue)
-        and s.fields
-        and s.fields[-1].name == "field"
-        and s.fields[-1].value == TermValue(7)
-        for s in universe.record.statements
-    )
-    # Earlier x binding: return is formal p (Name spent by substitute).
-    returns = [s for s in universe.record.statements if isinstance(s, ReturnValue)]
-    assert len(returns) == 1
-    assert returns[0].value.term.name == "p"
-    post = str(universe.post())
-    assert "out" in post and "p" in post
+    exits = _stored(helper, receiver, TermValue(7))
+    assert len(exits.exits) == 1
+    face = exits.exits[0]
+    assert isinstance(face, Completed)
+    assert isinstance(face.value, ObjectValue)
+    assert face.value.fields[-1].name == "field"
+    assert face.value.fields[-1].value == TermValue(7)
 
 
 def test_writable_source_defined_receiver_completes_discrimination() -> None:
-    _, pending, receiver = _source_class_receiver("    pass\n")
-    obj_cid, _, q_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, q_cid: TermValue(7)})
+    helper, receiver = _source_class_receiver("    pass\n")
+    exits = _stored(helper, receiver, TermValue(7))
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Halted), "writable field must complete"
 
 
 # ---------------------------------------------------------------------------
-# 3. Getter-only property → AttributeError; x in pre-effect state
+# 3. Getter-only property → AttributeError
 # ---------------------------------------------------------------------------
 
 
-def test_property_without_setter_named_attribute_error_preserves_x_state() -> None:
-    helper, pending, receiver = _source_class_receiver(
+def test_property_without_setter_named_attribute_error() -> None:
+    """Expected verdict changed (#7757 NEW-1): the carrier's pre-effect state
+    identity (``halted.state is pending.pre_effect_state.state``) has
+    nothing to compare against now -- the carrier is deleted.  The state
+    ``f``'s own store halt keeps is the block's record
+    (``_undecided_store``)."""
+    helper, receiver = _source_class_receiver(
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
     assert any(
@@ -206,6 +263,7 @@ def test_property_without_setter_named_attribute_error_preserves_x_state() -> No
     # Floor store path (not read) refuses.
     site = helper.body[0].fragment
     from sugar_lift_py_tests.effect import RaiseEffect
+
     direct = receiver.setattr("field", TermValue(7), site, None)
     assert direct.halts() == direct.exits
     (direct_halt,) = direct.halts()
@@ -213,127 +271,82 @@ def test_property_without_setter_named_attribute_error_preserves_x_state() -> No
     assert direct_halt.effect.exception_name == "AttributeError"
     assert direct_halt.effect.producer_node_owner == "ObjectValue.setattr"
 
-    assert pending.pre_effect_state is not None
-    obj_cid, _, q_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, q_cid: TermValue(7)})
+    exits = _stored(helper, receiver, TermValue(7))
     assert len(exits.exits) == 1
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert not isinstance(halted, Completed)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
     assert halted.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
-    # Authentic earlier-binding pre-effect state (post-#6640 / #6644).
-    assert halted.state is not None
-    assert pending.pre_effect_state.state is halted.state
     assert not isinstance(getattr(halted, "value", None), UniverseValue)
 
 
 def test_property_without_setter_discrimination_not_completed() -> None:
-    """Bite: getter must not authorize Completed store; state must not be dropped."""
-    _, pending, receiver = _source_class_receiver(
+    """Bite: getter must not authorize a Completed store."""
+    helper, receiver = _source_class_receiver(
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
-    obj_cid, _, q_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, q_cid: TermValue(99)})
+    exits = _stored(helper, receiver, TermValue(99))
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed), "read path licensed a store"
-    with pytest.raises(AssertionError):
-        assert exits.exits[0].state is None, "halt dropped earlier-binding state"
 
 
 def test_read_authorizes_write_twin_fails() -> None:
     """Lying twin: borrowing readable property evidence to complete a store."""
-    _, pending, receiver = _source_class_receiver(
+    helper, receiver = _source_class_receiver(
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
     # Property is readable via the enrollment of the getter.
     assert any(m.descriptor_kind == "property" for m in receiver.methods)
-    obj_cid, _, q_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {obj_cid: receiver, q_cid: TermValue(1)})
+    exits = _stored(helper, receiver, TermValue(1))
     assert isinstance(exits.exits[0], Halted)
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed), "read authorized write"
 
 
 # ---------------------------------------------------------------------------
-# 4. Evaluation order ≠ discharge order
+# 4. Evaluation order ≠ the store's operand order
 # ---------------------------------------------------------------------------
 
 
-def test_eval_order_differs_from_discharge_order() -> None:
-    """Store half: source eval is value→receiver; discharge is receiver,name,value."""
-    _, pending = _helper()
-    discharge_names = (
-        pending.operands[0].term.name,  # obj
-        pending.operands[1].value,  # "field"
-        pending.operands[2].term.name,  # q
-    )
-    # Source eval for the store leaf: value first, then receiver (static name
-    # is not evaluated). Name x binds p before the store runs.
-    source_eval_store = ("q", "obj", "field")
-    assert discharge_names == ("obj", "field", "q")
-    assert discharge_names != source_eval_store
+def test_eval_order_differs_from_store_operand_order() -> None:
+    """Store half: source eval is value→receiver; the store names receiver,
+    then the static name (``type(obj).__setattr__(obj, "field", q)``)."""
+    _, outcome = _helper()
+    (operation, *_rest) = _store_operations(outcome)
+    receiver, name, _key = operation.args
+    assert (receiver.name, name) == ("obj", str_const("field"))
+    # Source evaluation reads ``q`` first; the store's first operand is
+    # ``obj``, never the value evaluated first.
     with pytest.raises(AssertionError):
-        assert discharge_names == source_eval_store
+        assert receiver.name == "q"
 
 
-def test_swapped_receiver_value_coordinates_twin_fails() -> None:
-    """Lying mint with receiver/value slots swapped is distinguishable."""
-    function, truthful = _helper()
-    site = function.body[0].fragment
-    obj_c, name_c, value_c = truthful.coordinates
-    # name_c is None for static field; lying swaps receiver and value formals.
-    lying = NativeOperationExitCarrierV1.mint(
-        site=site,
-        operator="setattr_named",
-        operands=(
-            truthful.operands[2],  # value formal in receiver slot
-            truthful.operands[1],  # static name
-            truthful.operands[0],  # receiver formal in value slot
-        ),
-        coordinates=(value_c, name_c, obj_c),
-    )
+def test_swapped_receiver_value_twin_fails() -> None:
+    """A store with receiver and value swapped is distinguishable: the
+    truthful store completes with the field stored, the swapped one is
+    ``9.field = <object>``, the named AttributeError."""
+    function, outcome = _helper()
     writable = ObjectValue(
         "R", (ObjectField("field", TermValue(0)),), allocation=FRAME_FRESH
     )
-    # Truthful: obj gets ObjectValue, q gets TermValue(9)
-    actuals = {
-        obj_c.coordinate_cid: writable,
-        value_c.coordinate_cid: TermValue(9),
+    truthful = _stored(function, writable, TermValue(9))
+    assert isinstance(truthful.exits[0], Completed)
+    assert truthful.exits[0].value.fields[-1].value == TermValue(9)
+
+    lying = _stored(function, TermValue(9), writable)
+    assert isinstance(lying.exits[0], Halted)
+    assert lying.exits[0].effect.exception_type_coordinate == _identity(
+        "AttributeError"
+    )
+
+    # The helper's own store names ``obj``, never the value ``q``.
+    receivers = {
+        getattr(operation.args[0], "name", None)
+        for operation in _store_operations(outcome)
     }
-    truthful_exits = truthful.discharge(None, actuals)
-    assert isinstance(truthful_exits.exits[0], Completed)
-    t_univ = truthful_exits.exits[0].value
-    t_fields = [
-        s for s in t_univ.record.statements if isinstance(s, ObjectValue) and s.fields
-    ]
-    assert t_fields and t_fields[0].fields[-1].value == TermValue(9)
-
-    # Lying maps value formal to ObjectValue and receiver formal to 9 —
-    # either fails or stores differently.
-    lying_exits = lying.discharge(None, actuals)
-    lying_face = lying_exits.exits[0]
-    if isinstance(lying_face, Completed) and isinstance(
-        lying_face.value, UniverseValue
-    ):
-        l_fields = [
-            s
-            for s in lying_face.value.record.statements
-            if isinstance(s, ObjectValue) and s.fields
-        ]
-        if l_fields:
-            assert l_fields[0].fields[-1].value != TermValue(9) or (
-                l_fields[0] is not t_fields[0]
-            )
-        # At minimum: not identical to the truthful completed face identity.
-        assert lying_face.value != t_univ or lying_face is not truthful_exits.exits[0]
-    else:
-        assert isinstance(lying_face, Halted)
-
     with pytest.raises(AssertionError):
-        assert (
-            truthful.operands[0].term.name == truthful.operands[2].term.name
-        ), "receiver and value formals collapsed"
+        assert "q" in receivers, "receiver and value collapsed"
 
 
 # ---------------------------------------------------------------------------

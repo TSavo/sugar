@@ -604,27 +604,6 @@ class FloorValue:
         )
         construction_panic(info)
 
-    def attribute_named(self, name_value, site, ctx):
-        """Carrier adapter for ``receiver.<static name>`` after discharge.
-
-        ``NativeOperationDemandV1`` records ordered Floor values.  Attribute's
-        second operand is the source-written static identifier, represented as
-        a ground StringValue; it is never runtime spelling authority.  The read
-        applies under ``ctx``, the discharging caller's context.
-        """
-        from sugar_lift_py_tests.floor.string_value import StringValue
-        from sugar_source_tree.panic import SugarNotWritten
-
-        if not isinstance(name_value, StringValue):
-            raise SugarNotWritten(
-                blame=site,
-                owner="FloorValue.attribute_named",
-                observed=type(name_value).__name__,
-                requested="source-written static attribute identifier",
-                fix="preserve the Attribute node's identifier as StringValue",
-            )
-        return self.attribute(name_value.value, site, ctx)
-
     def undecided_attribute(self, name, site, *, owner: str, receiver_term=None):
         """``self.name`` whose behaviour is not decided here: the two faces.
 

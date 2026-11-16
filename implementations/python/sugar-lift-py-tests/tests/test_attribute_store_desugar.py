@@ -13,17 +13,18 @@ Python semantic law made constructible (PARTIAL):
   once. Store halt preserves earlier state. Exception type originates in the
   store dispatch owner.
 
-  Formal ``setattr_named`` carrier mint is pinned as the n-ary discharge
-  contract (operator + operand order) but is not yet the sole formal arm —
-  wiring it into ``_store`` would convert dual-face ExitSet composition into
-  undischarged carriers and red the five named store laws without an
-  individual per-test restatement. That switch is a separate partial step.
+  A store on a formal waits on no caller's actual (#7757): it is the
+  undecided store (``store_effect_sugar.undecided_attribute_mutation_faces``),
+  completing under its own atom -- or where prove decides the plain
+  ``__dict__`` store, for a parameter whose class is a contract input -- and
+  raising something undetermined under the complement.  No carrier is
+  minted.
 
 Named seams (``test_producer_and_consumer_methods_are_the_named_seams``):
 
   producer: the one field store, ``ReceiverFieldStoreSugar.desugar`` /
-  ``_store`` (``store_effect_sugar.project_setattr`` for a receiver that is
-  no source instance)
+  ``_store`` (``store_effect_sugar.attribute_mutation`` for a receiver that
+  is no source instance)
   consumer: ``FloorValue.setattr`` / ``ObjectValue.setattr``
 
 Pinned pandas 3.0.3 (line content verified on installed seat):
@@ -155,7 +156,10 @@ def _formal(site) -> FormalParameterCoordinateV1:
 def test_producer_and_consumer_methods_are_the_named_seams() -> None:
     assert hasattr(ReceiverFieldStoreSugar, "desugar")
     assert hasattr(ReceiverFieldStoreSugar, "_store")
-    assert callable(store_effect_sugar.mint_setattr_named_carrier)
+    assert callable(store_effect_sugar.attribute_mutation)
+    # One attribute door: no carrier mint and no second projection beside it.
+    assert not hasattr(store_effect_sugar, "mint_setattr_named_carrier")
+    assert not hasattr(store_effect_sugar, "project_setattr")
     # One field store: no effect store beside it.
     assert not hasattr(store_effect_sugar, "AttributeStoreEffectSugar")
     # A chain's or an unpack's store target is ``o.x = v``'s own statement:
@@ -349,14 +353,40 @@ def test_undecided_retains_dual_face_runtime_effect(tmp_path):
     assert halt.effect.producer_node_owner == "AttributeStoreRuntimeEffect"
 
 
-def test_formal_parameter_store_mints_setattr_named_carrier(tmp_path):
-    """Formal parameters mint setattr_named (undischarged until caller)."""
+def _undecided_store(outcome):
+    """The undecided store on a formal: no carrier, one
+    ``UndeterminedRaiseEffect`` halt owned by ``UndecidedSetattr``, the
+    undecided member owed on the halt and on every completed face, and no
+    unconditional completion."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedSetattr"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    owed = unanswered_call(None, halt.effect.site)
+    assert owed in owed_calls(outcome)
+    assert owed in halt.owed
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    assert all(owed in face.owed for face in completed)
+    assert outcome.completed_value() is None
+    return halt
+
+
+def test_formal_parameter_store_is_the_undecided_store_not_a_carrier(tmp_path):
+    """A store on a formal waits on no caller's actual (#7757): the function's
+    own proof holds the undecided store, its halt kept, never a
+    ``setattr_named`` carrier."""
     path = tmp_path / "formal_store.py"
     path.write_text("def target(o, p):\n    o.x = p\n    return p\n")
     from sugar_lift_python_source.source_oracle import path_source
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
 
     fn = next(
         SourceFile(
@@ -364,30 +394,51 @@ def test_formal_parameter_store_mints_setattr_named_carrier(tmp_path):
             construction_context=TreeConstructionContextV1.for_test_without_workspace(),
         ).functions()
     )
-    outcome = fn.sugar().desugar(None)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "setattr_named"
+    halt = _undecided_store(fn.sugar().desugar(None))
+    assert halt.state is not None
 
 
 # ---------------------------------------------------------------------------
-# setattr_named mint contract (n-ary worker producer side)
+# The one attribute door on a formal receiver
 # ---------------------------------------------------------------------------
 
 
-def test_setattr_named_carrier_mint_contract(tmp_path):
-    """Operator string and operand order for the n-ary discharge worker."""
+def test_attribute_mutation_on_a_formal_is_the_undecided_store(tmp_path):
+    """The door itself: a formal receiver's store completes under
+    ``python:setattr.completes(python:setattr(<receiver>, "attr", <key>))``
+    -- the receiver named, the static name carried -- and halts under its
+    complement.  No carrier is minted (``mint_setattr_named_carrier`` is
+    gone)."""
     site = _site(tmp_path)
-    formal = _formal(site)
-    receiver = SymbolicValue(make_var("obj"), formal)
-    value = TermValue(7)
-    carrier = store_effect_sugar.mint_setattr_named_carrier(
-        site=site, receiver=receiver, attr="attr", value=value
+    receiver = SymbolicValue(make_var("obj"), _formal(site))
+    outcome = store_effect_sugar.attribute_mutation(
+        "__setattr__", receiver, "attr", (TermValue(7),), site, None, unit=None
     )
-    assert isinstance(carrier, NativeOperationExitCarrierV1)
-    assert carrier.demand.operator == "setattr_named"
-    assert len(carrier.operands) == 3
-    assert carrier.demand.operand_coordinate_cids[0] == formal.coordinate_cid
-    assert carrier.demand.operand_coordinate_cids[1] is None
+    _undecided_store(outcome)
+    (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    atoms = [
+        node
+        for node in _formula_nodes(done.guard)
+        if getattr(node, "name", None) == "python:setattr.completes"
+    ]
+    assert len(atoms) == 1, done.guard
+    (operation,) = atoms[0].args
+    assert operation.name == "python:setattr"
+    assert operation.args[0] == receiver.to_term(owner="test")
+    assert operation.args[1] == str_const("attr")
+
+
+def _formula_nodes(node, depth=0):
+    """Every term and formula node in ``node``, at any depth."""
+    nodes = [node]
+    if depth > 64:
+        return nodes
+    for child in (
+        *(getattr(node, "args", ()) or ()),
+        *(getattr(node, "operands", ()) or ()),
+    ):
+        nodes.extend(_formula_nodes(child, depth + 1))
+    return nodes
 
 
 # ---------------------------------------------------------------------------
@@ -497,14 +548,8 @@ def test_pinned_pandas_name_attr_unpack_coordinate_is_real() -> None:
     assert isinstance(store, KeyedStoreSugar)
     assert isinstance(store.store, ReceiverFieldStoreSugar)
     assert store.store.attr == "name"
-    # Formal ``index`` mints setattr_named (undischarged until caller).
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    outcome = store.desugar(_member_bound(unpack))
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "setattr_named"
+    # Formal ``index``: the undecided store, waiting on no caller (#7757).
+    _undecided_store(store.desugar(_member_bound(unpack)))
 
 
 def _member_bound(unpack):
@@ -526,7 +571,8 @@ def _member_bound(unpack):
 
 
 def _real_pandas_name_store():
-    """Return the exact line-113 store and its undischarged caller demand."""
+    """Return the exact line-113 store and its own outcome on the formal
+    ``index``: the undecided store, waiting on no caller (#7757)."""
     corpus = authenticated_pandas_corpus()
     install_root = corpus.root.parent
     path = install_root / CORPUS_RELATIVE
@@ -546,24 +592,36 @@ def _real_pandas_name_store():
     )
     keyed = unpack.stores[0]
     store = keyed.store
-    pending = keyed.desugar(_member_bound(unpack))
+    outcome = keyed.desugar(_member_bound(unpack))
     assert isinstance(store, ReceiverFieldStoreSugar)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setattr_named"
+    _undecided_store(outcome)
     assert store.site.line_col_span.start_line == CORPUS_LINE
-    return store, pending
+    return store, outcome
+
+
+def _stored(store, receiver):
+    """The line-113 store through the one attribute door on a receiver
+    whose type the lift decides: its floor's own store, every face kept."""
+    return store_effect_sugar.attribute_mutation(
+        "__setattr__",
+        receiver,
+        "name",
+        (StringValue("foo"),),
+        store.site,
+        None,
+        unit=None,
+    )
 
 
 def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
-    """The exact pandas store owns completion, AttributeError, and occurrence."""
-    store, pending = _real_pandas_name_store()
-    receiver_cid = pending.demand.operand_coordinate_cids[0]
-    assert receiver_cid is not None
+    """The exact pandas store owns completion, AttributeError, and
+    occurrence, on each receiver whose type is decided."""
+    store, _outcome = _real_pandas_name_store()
 
     writable = ObjectValue(
         "WritableIndex", (ObjectField("name", NoneValue()),), allocation=FRAME_FRESH
     )
-    completed = pending.discharge(None, {receiver_cid: writable})
+    completed = _stored(store, writable)
     assert len(completed.exits) == 1
     assert isinstance(completed.exits[0], Completed)
 
@@ -593,10 +651,8 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
         ),
         allocation=FRAME_FRESH,
     )
-    getter_halt = pending.discharge(None, {receiver_cid: getter_only}).exits[0]
-    immutable_halt = pending.discharge(
-        None, {receiver_cid: TupleValue((TermValue(1),))}
-    ).exits[0]
+    getter_halt = _stored(store, getter_only).exits[0]
+    immutable_halt = _stored(store, TupleValue((TermValue(1),))).exits[0]
     for halt, owner in (
         (getter_halt, "ObjectValue.setattr"),
         (immutable_halt, "TupleValue.setattr"),
@@ -671,33 +727,12 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
     assert routed.exits[0].effect is getter_halt.effect
 
 
-def test_same_spelled_foreign_provider_cannot_discharge_real_store() -> None:
-    """Provider spelling is not the exact formal-coordinate authority."""
-    _, pending = _real_pandas_name_store()
-    receiver_cid = pending.demand.operand_coordinate_cids[0]
-    assert receiver_cid is not None
-    foreign_path = Path("same-spelled-provider.py")
-    foreign_source = "def test_pickle_preserves_name(index, temp_file):\n    pass\n"
-    foreign_tree = SourceFile(
-        (foreign_source, str(foreign_path), "blake3-512:" + "00" * 64)
-    )
-    foreign = next(foreign_tree.functions())
-    foreign_formal = _formal(foreign.fragment)
-    assert foreign_formal.coordinate_cid != receiver_cid
-
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
-
-    # The foreign actual answers no formal of the store: it stays the cited
-    # unanswered face (#7825), never a store the foreign object performed.
-    exits = pending.discharge(
-        None,
-        {
-            foreign_formal.coordinate_cid: ObjectValue(
-                "ForeignIndex",
-                (ObjectField("name", NoneValue()),),
-                allocation=FRAME_FRESH,
-            )
-        },
-    )
-    assert pending.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
+def test_real_pandas_name_store_waits_on_no_provider() -> None:
+    """The store on the formal ``index`` is the undecided store in its own
+    proof: no actual, a same-spelled foreign provider's included, is ever
+    substituted into it.  It stays owed, its halt kept, never a store some
+    object performed (#7757; prove joins the caller's call at the edge)."""
+    _, outcome = _real_pandas_name_store()
+    halt = _undecided_store(outcome)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert outcome.completed_value() is None

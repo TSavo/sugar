@@ -21,8 +21,13 @@ delete, owed on both faces with its halt kept; on a receiver whose type is
 decided (the caller's ``dict``/``list`` actual) the floor's own ``delitem``.
 The readback laws below read that floor delete off the door over the decided
 actual, and the state a halted delete leaves with off a function whose own
-frame built the receiver.  ``helper2``'s ``del obj.field`` keeps its
-``delattr_named`` carrier.
+frame built the receiver.  An attribute delete mints no carrier either:
+``helper2``'s ``del obj.field`` is the one attribute mutation
+(``store_effect_sugar.attribute_mutation``); ``obj``'s class is no input (an
+attribute delete alone makes none), so it is the undecided delete, owed on
+both faces with its halt kept; on the caller's decided ``ObjectValue`` actual
+it is the floor's own ``delattr``, which the delattr readback laws read off
+the door.
 
 Acceptance:
 
@@ -62,7 +67,10 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+from sugar_lift_py_tests.sugar.store_effect_sugar import (
+    attribute_mutation,
+    item_mutation,
+)
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
@@ -208,13 +216,50 @@ def _frame_keyerror() -> Halted:
     return halted
 
 
-def _delattr_pending():
+def _delattr_function():
     tree = _tree(DELATTR, "delattr_readback.py")
-    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "delattr_named"
-    return function, pending
+    return next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+
+
+def _delattr(receiver):
+    """``del receiver.field`` through the one attribute mutation at
+    ``helper2``'s delete, the receiver the caller's decided actual: its
+    floor's own ``delattr``, every face of it kept."""
+    site = _delattr_function().body[0].fragment
+    return site, attribute_mutation(
+        "__delattr__", receiver, "field", (), site, None, unit=None
+    )
+
+
+def test_delattr_on_a_formal_with_no_class_input_is_the_undecided_delete() -> None:
+    """``DELATTR`` alone: no carrier.  The delete completes only under
+    ``python:delattr.completes(...)`` or raises something undetermined
+    (owner ``UndecidedDelattr``), its halt kept with its state, and both
+    faces owe the undecided member."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    outcome = _delattr_function().sugar().desugar(None)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedDelattr"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
+    assert halt.state is not None, f"{CODEX1}: undecided delete halt dropped state"
+    owed = unanswered_call(None, halt.effect.site)
+    assert owed in owed_calls(outcome)
+    assert owed in halt.owed
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for face in completed:
+        assert "python:delattr.completes" in str(face.guard), face.guard
+        assert owed in face.owed
+    assert outcome.completed_value() is None
 
 
 def _post_dict(completed: Completed) -> DictValue:
@@ -336,16 +381,13 @@ def test_completed_delattr_removes_field_and_read_is_attributeerror_or_named_gap
     None
 ):
     """After ``del obj.field``, field is absent; read is AttributeError."""
-    function, pending = _delattr_pending()
-    delete_site = function.body[0].fragment
-    obj_cid, _ = pending.demand.operand_coordinate_cids
     receiver = ObjectValue(
         class_name="Widget",
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
         allocation=FRAME_FRESH,
     )
-    exits = pending.discharge(None, {obj_cid: receiver})
+    delete_site, exits = _delattr(receiver)
     assert isinstance(exits.exits[0], Completed)
     post = _post_object(exits.exits[0])
     assert not any(f.name == "field" for f in post.fields), post.fields
@@ -375,15 +417,13 @@ def test_completed_delattr_removes_field_and_read_is_attributeerror_or_named_gap
 
 
 def test_discrimination_delattr_does_not_leave_readable_old_value() -> None:
-    function, pending = _delattr_pending()
-    obj_cid, _ = pending.demand.operand_coordinate_cids
     receiver = ObjectValue(
         class_name="Widget",
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
         allocation=FRAME_FRESH,
     )
-    exits = pending.discharge(None, {obj_cid: receiver})
+    _site, exits = _delattr(receiver)
     post = _post_object(exits.exits[0])
     with pytest.raises(AssertionError):
         assert any(f.name == "field" and f.value == TermValue(7) for f in post.fields)
@@ -411,16 +451,13 @@ def test_delete_then_restore_setitem_reads_new_value() -> None:
 
 def test_delete_then_restore_setattr_reads_new_value() -> None:
     """``del obj.field; obj.field=99`` → field is TermValue(99)."""
-    function, pending = _delattr_pending()
-    site = function.body[0].fragment
-    obj_cid, _ = pending.demand.operand_coordinate_cids
     receiver = ObjectValue(
         class_name="Widget",
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
         allocation=FRAME_FRESH,
     )
-    deleted = pending.discharge(None, {obj_cid: receiver})
+    site, deleted = _delattr(receiver)
     post = _post_object(deleted.exits[0])
     restored = post.setattr("field", TermValue(99), site, None)
     assert restored.completed_value() is not None

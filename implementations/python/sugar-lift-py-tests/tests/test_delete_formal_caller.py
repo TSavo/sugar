@@ -1,5 +1,5 @@
-"""Formal ``del obj[key]`` through the one item mutation; ``delattr_named``
-through the n-ary projector family.
+"""Formal ``del obj[key]`` through the one item mutation; ``del obj.field``
+through the one attribute mutation.
 
 Python semantic law made constructible:
 
@@ -34,19 +34,29 @@ the door over the decided actual, and the state a delete halt leaves with off
 a function whose receiver its own frame built (the block's prefix,
 ``halts_at_statement_head``): earlier bindings survive a later delete halt.
 
-``helper2``'s ``del obj.field`` keeps its ``delattr_named`` carrier:
+An attribute delete mints no carrier either (#7757, audit 2 row NEW-1):
+``helper2``'s ``del obj.field`` is the one attribute mutation,
+``store_effect_sugar.attribute_mutation("__delattr__", r, "field", (),
+...)``, ``type(r).__delattr__(r, "field")``:
 
-  operator ``delattr_named``  (~ ``__delattr__(self, name)``)
-  operands ``(receiver, StringValue(name))``
-  coordinates ``(receiver.formal, None)``
-  projector: ``_project_delattr_named(receiver, name, site)``
-  producer: ``AttributeDeleteEffectSugar.mint_delattr_named_carrier``
+  1. ``r`` a formal whose class is an input here (``helper3``'s ``obj``: a
+     method of it is called) -> the dispatched edge
+     ``call:dispatch:__delattr__(obj, "field", ..., py.class("0",
+     class:obj))``, owed with its halt kept;
+  2. ``r`` any other formal (``helper2``'s ``obj``: an attribute delete alone
+     makes no class input) -> the undecided delete
+     (``undecided_attribute_mutation_faces``): it completes only under
+     ``python:delattr.completes(...)`` or raises something undetermined
+     (owner ``UndecidedDelattr``), both faces owing the undecided member;
+  3. ``r``'s type decided by the lift -> its floor's own ``delattr``: a
+     present field completes gone, a missing one or a getter-only property
+     is the named ``AttributeError``.
 
 Equality tooth: production-minted operator set == projector-table keys, and
-neither holds ``setitem`` or ``delitem``.
+neither holds ``setitem``, ``delitem`` or ``delattr_named``.
 
-Out of scope: Name deletion (``del name`` / DeleteNameSugar) -- not delitem,
-not delattr_named.
+Out of scope: Name deletion (``del name`` / DeleteNameSugar) -- neither the
+item nor the attribute mutation.
 """
 
 from __future__ import annotations
@@ -61,7 +71,6 @@ from sugar_lift_py_tests import caller_parameter_contract
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
-    _project_delattr_named,
     production_native_operation_operators,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -89,29 +98,13 @@ from sugar_lift_py_tests.sugar.delete_effect_sugar import (
 from sugar_lift_py_tests.sugar import store_effect_sugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import (
     SubscriptStoreEffectSugar,
+    attribute_mutation,
     item_mutation,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
-
-# ---------------------------------------------------------------------------
-# Exact missing producer method names (valid deliverable when red)
-# ---------------------------------------------------------------------------
-
-MISSING_DELATTR_PRODUCER = (
-    "AttributeDeleteEffectSugar.mint_delattr_named_carrier"
-    " — formal delattr_named producer mirroring "
-    "store_effect_sugar.mint_setattr_named_carrier; "
-    "operator='delattr_named', operands=(receiver, StringValue(name)), "
-    "projector receiver.delattr(name.value, site)"
-)
-
-MISSING_DELATTR_PROJECTOR = (
-    "_NATIVE_OPERATION_PROJECTORS['delattr_named'] "
-    "— lambda receiver, name, site: receiver.delattr(name.value, site)"
-)
 
 # A function whose own frame built the receiver (decided): its delete is the
 # floor's own, and a halt leaves the block with the prefix it reached -- the
@@ -213,14 +206,24 @@ def _class_input(call, receiver: str) -> None:
     assert rides.args[1].name == f"class:{receiver}", rides
 
 
-def _undecided_delete(outcome, *, stated: bool = True) -> Halted:
+def _undecided_delete(
+    outcome,
+    *,
+    stated: bool = True,
+    owner: str = "UndecidedDelitem",
+    noun: str = "delitem",
+) -> Halted:
     """Arm 3 of the one item mutation: ``del r[k]`` where nothing here
     decides ``type(r)`` (``undecided_item_mutation_faces``).  The delete
     completes only under ``python:delitem.completes(...)`` or raises
     something undetermined (owner ``UndecidedDelitem``), and BOTH faces owe
     the undecided member (``unanswered_call(None, <site>)``).  It is no
     carrier and no completion decided here.  ``stated``: the halt is kept
-    with the state the block reached before it (a function's reduction)."""
+    with the state the block reached before it (a function's reduction).
+
+    ``owner="UndecidedDelattr", noun="delattr"``: the same law for ``del
+    p.f`` on a formal whose class is no input
+    (``undecided_attribute_mutation_faces``)."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
 
@@ -229,7 +232,7 @@ def _undecided_delete(outcome, *, stated: bool = True) -> Halted:
     halts = [
         face
         for face in outcome.halts()
-        if face.effect.producer_node_owner == "UndecidedDelitem"
+        if face.effect.producer_node_owner == owner
     ]
     assert len(halts) == 1, outcome
     (halt,) = halts
@@ -242,34 +245,66 @@ def _undecided_delete(outcome, *, stated: bool = True) -> Halted:
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
     assert completed, outcome
     for face in completed:
-        assert "python:delitem.completes" in str(face.guard), face.guard
+        assert f"python:{noun}.completes" in str(face.guard), face.guard
         assert owed in face.owed
     assert outcome.completed_value() is None
     return halt
 
 
 def _delattr_helper():
+    """``helper2`` alone and its own proof's reduction.  An attribute delete
+    alone gives ``obj`` no class input (``nodes._receiver_uses``: it is an
+    attribute receiver, neither received nor blocked), so nothing here
+    decides ``type(obj).__delattr__``: the undecided delete."""
     source = "def helper2(obj):\n    del obj.field\n"
     tree = _tree(source, "delattr_alone.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     return function, function.sugar().desugar(None)
 
 
-def _require_delattr_carrier(pending) -> NativeOperationExitCarrierV1:
-    if not isinstance(pending, NativeOperationExitCarrierV1):
-        raise AssertionError(
-            f"missing producer {MISSING_DELATTR_PRODUCER}: "
-            f"helper2 alone must mint undischarged delattr_named carrier, "
-            f"got {type(pending).__name__} {pending!r:.200}"
-        )
-    if pending.demand.operator != "delattr_named":
-        raise AssertionError(
-            f"missing producer {MISSING_DELATTR_PRODUCER}: "
-            f"expected operator delattr_named, got {pending.demand.operator!r}"
-        )
-    if "delattr_named" not in _NATIVE_OPERATION_PROJECTORS:
-        raise AssertionError(f"missing projector {MISSING_DELATTR_PROJECTOR}")
-    return pending
+def _delattr_dispatched_helper():
+    """``helper3`` alone: a method of ``obj`` is called (after the delete,
+    so the delete reads the formal itself), which makes ``obj``'s class an
+    input of its contract (``nodes._receiver_class_parameters``), so ``del
+    obj.field`` is ``type(obj).__delattr__(obj, "field")``: the dispatched
+    edge, owed as it stands with its halt kept."""
+    source = "def helper3(obj):\n    del obj.field\n    obj.close()\n"
+    tree = _tree(source, "delattr_dispatched_alone.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    return function, function.sugar().desugar(None)
+
+
+def _undecided_attribute_delete(outcome, *, stated: bool = True) -> Halted:
+    """``del p.f`` on a formal whose class is no input: the undecided
+    attribute delete, never a carrier."""
+    return _undecided_delete(
+        outcome, stated=stated, owner="UndecidedDelattr", noun="delattr"
+    )
+
+
+def _receiver_class_rides(call, receiver: str) -> None:
+    """``py.class("0", class:<receiver>)`` rides among the dispatched call's
+    arguments (after the actuals; a decided name actual's own class may ride
+    beside it)."""
+    from sugar_lift_py_tests.ir import str_const
+
+    rides = [
+        arg
+        for arg in call.args
+        if getattr(arg, "name", None) == "py.class" and arg.args[0] == str_const("0")
+    ]
+    assert len(rides) == 1, call
+    assert rides[0].args[1].name == f"class:{receiver}", rides[0]
+
+
+def _attr_door(receiver) -> ExitSet:
+    """``del receiver.field`` through the one attribute mutation at
+    ``helper2``'s delete, the receiver the caller's decided actual: its
+    floor's own ``delattr``, every face of it kept."""
+    function, _ = _delattr_helper()
+    return attribute_mutation(
+        "__delattr__", receiver, "field", (), function.body[0].fragment, None, unit=None
+    )
 
 
 def _door(receiver, key) -> ExitSet:
@@ -363,10 +398,14 @@ def test_item_mutation_mints_no_carrier_producer() -> None:
     assert callable(item_mutation)
 
 
-def test_delattr_producer_method_is_enrolled_or_named_missing() -> None:
-    assert hasattr(store_effect_sugar, "mint_setattr_named_carrier")
-    if not hasattr(AttributeDeleteEffectSugar, "mint_delattr_named_carrier"):
-        raise AssertionError(f"missing producer method {MISSING_DELATTR_PRODUCER}")
+def test_attribute_mutation_mints_no_carrier_producer() -> None:
+    """No attribute store or delete producer mints a carrier: the one
+    attribute mutation is the door (``store_effect_sugar.
+    attribute_mutation``, #7757 audit 2 row NEW-1)."""
+    assert not hasattr(AttributeDeleteEffectSugar, "mint_delattr_named_carrier")
+    assert not hasattr(store_effect_sugar, "mint_setattr_named_carrier")
+    assert not hasattr(store_effect_sugar, "project_setattr")
+    assert callable(attribute_mutation)
 
 
 def test_item_mutation_has_no_projector() -> None:
@@ -377,29 +416,27 @@ def test_item_mutation_has_no_projector() -> None:
     assert not hasattr(caller_parameter_contract, "_project_delitem")
 
 
-def test_delattr_projector_is_enrolled_or_named_missing() -> None:
-    """Explicit ``delattr_named(receiver, name, site)`` projector enrolled."""
-    assert "setattr_named" in _NATIVE_OPERATION_PROJECTORS
-    if "delattr_named" not in _NATIVE_OPERATION_PROJECTORS:
-        raise AssertionError(f"missing projector {MISSING_DELATTR_PROJECTOR}")
-    projector = _NATIVE_OPERATION_PROJECTORS["delattr_named"]
-    assert projector is _project_delattr_named
-    parameters = tuple(inspect.signature(projector).parameters)
-    assert parameters == ("receiver", "name", "site", "ctx")
+def test_attribute_mutation_has_no_projector() -> None:
+    """``setattr_named`` / ``delattr_named`` left the projector table with
+    their carrier: nothing discharges an attribute mutation on a caller's
+    actuals."""
+    assert "setattr_named" not in _NATIVE_OPERATION_PROJECTORS
+    assert "delattr_named" not in _NATIVE_OPERATION_PROJECTORS
+    assert not hasattr(caller_parameter_contract, "_project_delattr_named")
 
 
 def test_production_minted_operators_equal_projector_keys_including_delete() -> None:
-    """Equality tooth: production set == projector keys; ``delattr_named``
-    in both, the item mutation in neither."""
+    """Equality tooth: production set == projector keys; neither the item
+    mutation nor the attribute mutation in either."""
     production = production_native_operation_operators()
     projectors = frozenset(_NATIVE_OPERATION_PROJECTORS)
     assert production == projectors, (
         f"missing_projectors={sorted(production - projectors)} "
         f"orphan_projectors={sorted(projectors - production)}"
     )
-    assert "delattr_named" in production
-    assert "delattr_named" in projectors
-    assert {"setitem", "delitem"}.isdisjoint(production | projectors)
+    assert {"setitem", "delitem", "setattr_named", "delattr_named"}.isdisjoint(
+        production | projectors
+    )
 
 
 def test_ordered_operands_and_formals_match_protocol_signatures() -> None:
@@ -425,24 +462,30 @@ def test_ordered_operands_and_formals_match_protocol_signatures() -> None:
     exits = _door(fresh(ListValue, (TermValue(0), TermValue(1))), TermValue(0))
     assert exits.completed_value() == fresh(ListValue, (TermValue(1),))
 
-    _, delattr_c = _delattr_helper()
-    delattr_c = _require_delattr_carrier(delattr_c)
-    assert delattr_c.demand.operator == "delattr_named"
-    assert delattr_c.demand.operand_coordinate_cids == (
-        delattr_c.demand.operand_coordinate_cids[0],
-        None,
-    )
-    assert isinstance(delattr_c.operands[1], StringValue)
-    assert list(inspect.signature(_project_delattr_named).parameters) == [
+    # The dispatched attribute delete takes ``__delattr__(self, name)``'s
+    # order: the receiver first, then the static name, then the receiver's
+    # class input.
+    _, dispatched_attr = _delattr_dispatched_helper()
+    call = _dispatched_call(dispatched_attr, "__delattr__")
+    assert call.args[0].name == "obj"
+    assert "field" in str(call.args[1]), call.args[1]
+    _receiver_class_rides(call, "obj")
+
+    # The one attribute mutation takes the receiver, then the static name,
+    # then its operands (none for a delete).
+    assert list(inspect.signature(attribute_mutation).parameters) == [
+        "method",
         "receiver",
-        "name",
+        "attr",
+        "operands",
         "site",
         "ctx",
+        "unit",
     ]
 
 
-def test_name_deletion_is_out_of_scope_for_delitem_and_delattr_named() -> None:
-    """``del name`` is DeleteNameSugar territory — not delitem/delattr_named."""
+def test_name_deletion_is_out_of_scope_for_delitem_and_delattr() -> None:
+    """``del name`` is DeleteNameSugar territory — neither mutation."""
     source = "def helper(x):\n    del x\n"
     tree = _tree(source, "name_delete_out_of_scope.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
@@ -451,16 +494,19 @@ def test_name_deletion_is_out_of_scope_for_delitem_and_delattr_named() -> None:
         assert pending.demand.operator not in {
             "delitem",
             "delattr_named",
-        }, "Name deletion must not mint delitem/delattr_named"
+        }, "Name deletion must not mint an item or attribute delete"
     # Positive: a subscript delete is the one item mutation (the dispatched
     # ``__delitem__`` on a class-input formal, the undecided delete on a
-    # formal whose class is no input), an attribute delete its carrier.
+    # formal whose class is no input), an attribute delete the one attribute
+    # mutation (the same two arms).
     _, item = _delitem_undecided_helper()
     _undecided_delete(item)
     _, dispatched = _delitem_helper()
     _dispatched_call(dispatched)
     _, attr = _delattr_helper()
-    assert _require_delattr_carrier(attr).demand.operator == "delattr_named"
+    _undecided_attribute_delete(attr)
+    _, dispatched_attr = _delattr_dispatched_helper()
+    _dispatched_call(dispatched_attr, "__delattr__")
 
 
 # ===========================================================================
@@ -482,16 +528,32 @@ def test_helper_alone_retains_undischarged_delitem_demand() -> None:
     _undecided_delete(undecided)
 
 
-def test_helper2_alone_retains_undischarged_delattr_named_demand() -> None:
-    """``def helper2(obj): del obj.field`` → undischarged delattr_named carrier."""
-    _, pending = _delattr_helper()
-    pending = _require_delattr_carrier(pending)
-    assert len(pending.operands) == 2
-    assert pending.demand.operand_coordinate_cids[0] is not None
-    # Static attribute name slot is null — not a formal (mirrors setattr_named).
-    assert pending.demand.operand_coordinate_cids[1] is None
-    assert isinstance(pending.operands[1], StringValue)
-    assert pending.operands[1].value == "field"
+def test_helper2_alone_is_the_undecided_attribute_delete() -> None:
+    """``def helper2(obj): del obj.field`` → the undecided attribute delete
+    (``obj``'s class is no input): no carrier and no dispatched edge, owed
+    on both faces with its halt and state kept, never a completion."""
+    _, outcome = _delattr_helper()
+    _undecided_attribute_delete(outcome)
+    assert not [
+        face
+        for face in outcome.halts()
+        if str(face.effect.producer_node_owner).startswith("UnknownCallee:dispatch:")
+    ]
+
+
+def test_class_input_formal_attribute_delete_is_the_dispatched_delattr() -> None:
+    """``obj``'s class an input (a method of it is called) → ``del
+    obj.field`` is the dispatched ``__delattr__`` edge, owed with its halt
+    kept; never the undecided delete beside it, never a carrier."""
+    _, outcome = _delattr_dispatched_helper()
+    call = _dispatched_call(outcome, "__delattr__")
+    _receiver_class_rides(call, "obj")
+    assert not [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedDelattr"
+    ]
+    assert outcome.halts()
 
 
 def test_discrimination_helper_alone_is_not_completed_delete() -> None:
@@ -558,16 +620,13 @@ def test_mutable_dict_receiver_completes_delete_with_key_gone() -> None:
 
 def test_writable_field_delete_completes_with_attribute_gone() -> None:
     """``del obj.field`` on writable instance field → field absent."""
-    _, pending = _delattr_helper()
-    pending = _require_delattr_carrier(pending)
-    obj_cid, _name_cid = pending.demand.operand_coordinate_cids
     receiver = ObjectValue(
         class_name="Widget",
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
         allocation=FRAME_FRESH,
     )
-    exits = pending.discharge(None, {obj_cid: receiver})
+    exits = _attr_door(receiver)
     assert isinstance(exits.exits[0], Completed)
     stored = exits.exits[0].value
     record = getattr(stored, "record", None)
@@ -615,19 +674,26 @@ def test_missing_list_index_halts_with_named_indexerror_and_pre_effect_state() -
 
 
 def test_missing_attribute_halts_with_named_attributeerror_and_pre_effect() -> None:
-    _, pending = _delattr_helper()
-    pending = _require_delattr_carrier(pending)
-    testimony = pending.pre_effect_state
-    assert (
-        testimony is not None
-    ), "reducer did not enroll ReducerPreEffectStateV1 on formal delattr_named"
-    obj_cid, _ = pending.demand.operand_coordinate_cids
+    # The floor's own face over the decided actual.
     receiver = ObjectValue(
         class_name="Widget", fields=(), methods=(), allocation=FRAME_FRESH
     )
-    exits = pending.discharge(None, {obj_cid: receiver})
-    halted = _assert_named_halt(exits, "AttributeError")
-    assert halted.state is testimony.state
+    _assert_named_halt(_attr_door(receiver), "AttributeError", stated=False)
+    # In a function's reduction the attribute delete's halt leaves with the
+    # block's record (``halts_at_statement_head``): the earlier store in it.
+    # No carrier enrolls a pre-effect state to compare against any more.
+    source = (
+        "def helper2(obj):\n"
+        "    a = [0]\n"
+        "    a[0] = 9\n"
+        "    del obj.field\n"
+    )
+    function = next(
+        node
+        for node in _tree(source, "delattr_after_store.py").nodes()
+        if isinstance(node, FunctionDef)
+    )
+    _holds_earlier_store(_undecided_attribute_delete(function.sugar().desugar(None)))
 
 
 def test_discrimination_present_key_is_not_keyerror() -> None:
@@ -705,9 +771,6 @@ def test_swapped_receiver_index_coordinates_rejected_against_truthful_delete() -
 
 def test_read_does_not_authorize_delete_on_getter_only_property() -> None:
     """Property is readable but delete must not complete (read ≠ delete authority)."""
-    _, pending = _delattr_helper()
-    pending = _require_delattr_carrier(pending)
-    obj_cid, _ = pending.demand.operand_coordinate_cids
 
     @dataclass(frozen=True)
     class _GetterBody(Sugar):
@@ -737,7 +800,7 @@ def test_read_does_not_authorize_delete_on_getter_only_property() -> None:
     assert any(
         m.name == "field" and m.descriptor_kind == "property" for m in receiver.methods
     )
-    exits = pending.discharge(None, {obj_cid: receiver})
+    exits = _attr_door(receiver)
     halted = exits.exits[0]
     assert isinstance(
         halted, Halted
@@ -746,16 +809,13 @@ def test_read_does_not_authorize_delete_on_getter_only_property() -> None:
 
 
 def test_discrimination_writable_field_is_not_attributeerror_delete() -> None:
-    _, pending = _delattr_helper()
-    pending = _require_delattr_carrier(pending)
-    obj_cid, _ = pending.demand.operand_coordinate_cids
     receiver = ObjectValue(
         class_name="Widget",
         fields=(ObjectField("field", TermValue(1)),),
         methods=(),
         allocation=FRAME_FRESH,
     )
-    exits = pending.discharge(None, {obj_cid: receiver})
+    exits = _attr_door(receiver)
     assert isinstance(exits.exits[0], Completed)
     assert not isinstance(exits.exits[0], Halted)
 

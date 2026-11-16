@@ -154,25 +154,35 @@ def test_reduced_rhs_is_the_unpacked_term(tmp_path: Path) -> None:
 
 
 def test_rhs_expression_is_reduced_not_quoted(tmp_path: Path) -> None:
-    """Formal attribute RHS reduces before unpack (post attribute_named carrier).
+    """Formal attribute RHS reduces before unpack.
 
-    ``a, b = o.shape`` desugars the attribute first; when ``o`` is a formal the
-    reduced face is an undischarged ``attribute_named`` demand that names the
-    attribute.  A different attribute is a different demand.  The unpack
-    obligation rides after discharge — never a quoted spelling of the source.
+    ``a, b = o.shape`` desugars the attribute first; when ``o`` is a formal
+    the read is the one two-faced undecided read (``SymbolicValue.
+    attribute``, its halt kept), never an ``attribute_named`` carrier waiting
+    on a caller's actual (#7757 audit 2 row NEW-1).  Its completed face, the
+    member coordinate naming the attribute, is what the unpack obligation
+    names: a different attribute is a different obligation -- never a quoted
+    spelling of the source.
     """
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
 
-    shape_out = _outcome(tmp_path, ATTRIBUTE_RHS, "attr_rhs")
-    size_out = _outcome(tmp_path, OTHER_ATTRIBUTE_RHS, "attr_rhs_other")
-    assert isinstance(shape_out, NativeOperationExitCarrierV1)
-    assert isinstance(size_out, NativeOperationExitCarrierV1)
-    assert shape_out.demand.operator == "attribute_named"
-    assert size_out.demand.operator == "attribute_named"
-    shape_term = str(shape_out.demand.candidate)
-    size_term = str(size_out.demand.candidate)
+    def unpack_guard(source: str, stem: str) -> str:
+        outcome = _outcome(tmp_path, source, stem)
+        assert not isinstance(outcome, NativeOperationExitCarrierV1)
+        owners = [face.effect.producer_node_owner for face in outcome.halts()]
+        assert "SymbolicValue.attribute" in owners, owners
+        (unpack,) = [
+            face
+            for face in outcome.halts()
+            if "python:unpack.completes" in str(face.guard)
+        ]
+        assert isinstance(unpack.effect, UndeterminedRaiseEffect)
+        return str(unpack.guard)
+
+    shape_term = unpack_guard(ATTRIBUTE_RHS, "attr_rhs")
+    size_term = unpack_guard(OTHER_ATTRIBUTE_RHS, "attr_rhs_other")
     assert "shape" in shape_term
     assert shape_term != size_term
     assert "shape" not in size_term

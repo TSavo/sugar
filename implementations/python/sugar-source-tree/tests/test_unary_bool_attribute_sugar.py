@@ -3,7 +3,8 @@
 Each mirrors an existing dispatch: UnaryOp routes to the operand value's floor
 method (`not` composes truth+negate); BoolOp combines the operands' truthiness
 via and_/or_; Attribute asks the receiver for `.name` and a symbolic receiver
-refuses because source testimony decides neither lookup edge.
+is the two-faced undecided read because source testimony decides neither
+lookup edge.
 """
 
 import tempfile
@@ -88,23 +89,52 @@ def test_bare_operands_refuse_undecided_truth():
 # ---- Attribute ---------------------------------------------------------------
 
 
-def _attribute_refusal(source):
-    # Deleted expectation: formal attribute lookup panicked before caller binding.
-    return _carrier(source, "attribute_named")
+def _attribute_operations(node, found, depth=0):
+    """Every ``python:attribute(<receiver>, "<name>", <key>)`` in ``node``:
+    ``(receiver name, attribute name)``."""
+    if depth > 64:
+        return found
+    if getattr(node, "name", None) == "python:attribute":
+        receiver, name = node.args[0], node.args[1]
+        found.append((getattr(receiver, "name", None), name.value))
+    for child in (
+        *(getattr(node, "args", ()) or ()),
+        *(getattr(node, "operands", ()) or ()),
+    ):
+        _attribute_operations(child, found, depth + 1)
+    return found
+
+
+def _undecided_read(source):
+    """A formal's attribute read in the function's own proof: the one
+    two-faced undecided read (``SymbolicValue.attribute``), never an
+    ``attribute_named`` carrier waiting on a caller's actual (#7757 audit 2
+    row NEW-1): its halt kept, never one completed value.  Returns the
+    ``(receiver, name)`` the read's halt names."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    outcome = _fn(source).sugar().desugar()
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), outcome
+    assert isinstance(outcome, ExitSet), outcome
+    assert outcome.completed_value() is None
+    (halt,) = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "SymbolicValue.attribute"
+    ]
+    (operation,) = _attribute_operations(halt.guard, [])
+    return operation
 
 
 def test_attribute_is_named_undecided():
-    carrier = _attribute_refusal("def A(z):\n    return z.numerator\n")
-    receiver, name = carrier.operands
-    assert receiver.to_term(owner="attribute carrier tooth").name == "z"
-    assert name.value == "numerator"
+    assert _undecided_read("def A(z):\n    return z.numerator\n") == ("z", "numerator")
 
 
 def test_attribute_chain_refuses_at_the_first_unowned_lookup():
-    carrier = _attribute_refusal("def A(z):\n    return z.a.b\n")
-    receiver, name = carrier.operands
-    assert receiver.to_term(owner="attribute chain carrier tooth").name == "z"
-    assert name.value == "a"
+    assert _undecided_read("def A(z):\n    return z.a.b\n") == ("z", "a")
 
 
 if __name__ == "__main__":

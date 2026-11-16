@@ -1,7 +1,7 @@
 """DELETE × CONTEXT JOINS — state-survival matrix extended into formal delete.
 
-Extends the seam-3 state-survival matrix into delitem / delattr_named after
-#6699. Temporal state (earlier bindings / pre-delete testimony) must survive
+Extends the seam-3 state-survival matrix into the item and attribute deletes
+after #6699. Temporal state (earlier bindings / pre-delete testimony) must survive
 a sole exceptional delete edge in each context below.
 
 Seed programs:

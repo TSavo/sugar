@@ -73,35 +73,55 @@ def _formal(node: Attribute) -> FormalParameterCoordinateV1:
     )
 
 
-def _carrier() -> tuple[NativeOperationExitCarrierV1, FormalParameterCoordinateV1]:
+def _formal_read():
+    """``receiver.value`` on the formal ``receiver``: the one two-faced
+    undecided read (``SymbolicValue.attribute``), never an
+    ``attribute_named`` carrier waiting on a caller's actual (#7757 audit 2
+    row NEW-1: a read is ``__getattribute__`` then ``__getattr__``, a
+    protocol no one dispatched method states)."""
     node = _attribute_node()
     formal = _formal(node)
-    outcome = AttributeSugar(
+    return AttributeSugar(
         _ValueSugar(SymbolicValue(make_var("receiver"), formal)),
         "value",
         node.fragment,
     ).desugar(None)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    return outcome, formal
+
+
+def _read(actual):
+    """The read the carrier's discharge applied, on the decided actual:
+    its own ``attribute`` at the read's site, every face kept."""
+    return actual.attribute("value", _attribute_node().fragment, None)
+
+
+def _receiver():
+    return ObjectValue(
+        "Receiver",
+        (ObjectField("value", TermValue(7)),),
+        allocation=FRAME_FRESH,
+    )
+
+
+def test_formal_attribute_read_mints_no_carrier() -> None:
+    outcome = _formal_read()
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        _NATIVE_OPERATION_PROJECTORS,
+        production_native_operation_operators,
+    )
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+    assert "attribute_named" not in _NATIVE_OPERATION_PROJECTORS
+    assert "attribute_named" not in production_native_operation_operators()
+    assert not hasattr(FloorValue, "attribute_named")
 
 
 def test_formal_attribute_completes_or_halts_from_authenticated_actual() -> None:
-    carrier, formal = _carrier()
-    completed = carrier.discharge(
-        None,
-        {
-            formal.coordinate_cid: ObjectValue(
-                "Receiver",
-                (ObjectField("value", TermValue(7)),),
-                allocation=FRAME_FRESH,
-            )
-        },
-    )
-    halted = carrier.discharge(None, {formal.coordinate_cid: NoneValue()})
+    completed = _read(_receiver())
+    halted = _read(NoneValue())
 
     from sugar_lift_py_tests.ir import ctor, str_const
 
-    assert carrier.demand.operator == "attribute_named"
     assert len(completed.exits) == 1
     assert isinstance(completed.exits[0], Completed)
     assert completed.exits[0].value == TermValue(7)
@@ -123,16 +143,12 @@ def test_formal_attribute_completes_or_halts_from_authenticated_actual() -> None
     )
 
 
-def test_undecidable_attribute_actual_is_the_two_faced_unanswered_read() -> None:
+def test_formal_attribute_read_is_the_two_faced_unanswered_read() -> None:
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
-    carrier, formal = _carrier()
-
-    outcome = carrier.discharge(
-        None,
-        {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))},
-    )
+    outcome = _formal_read()
+    assert outcome.completed_value() is None
     (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     assert type(halt.effect) is UndeterminedRaiseEffect
@@ -156,8 +172,7 @@ def test_lying_exception_type_cannot_consume_attribute_halt() -> None:
                 [str_const("builtins"), str_const("ValueError")],
             )
 
-    carrier, formal = _carrier()
-    exits = carrier.discharge(None, {formal.coordinate_cid: NoneValue()})
+    exits = _read(NoneValue())
     routed = exits.and_exit(
         ExitSet.completed(object()),
         disposition=EffectBoundaryDisposition(
@@ -175,17 +190,7 @@ def test_lying_exception_type_cannot_consume_attribute_halt() -> None:
 
 
 def test_total_attribute_actual_never_acquires_exceptional_edge() -> None:
-    carrier, formal = _carrier()
-    exits = carrier.discharge(
-        None,
-        {
-            formal.coordinate_cid: ObjectValue(
-                "Receiver",
-                (ObjectField("value", TermValue(7)),),
-                allocation=FRAME_FRESH,
-            )
-        },
-    )
+    exits = _read(_receiver())
 
     assert all(isinstance(face, Completed) for face in exits.exits)
 
