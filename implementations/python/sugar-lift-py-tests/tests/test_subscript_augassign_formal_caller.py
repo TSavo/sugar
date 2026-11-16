@@ -76,18 +76,6 @@ def _post(out):
     return pair.elements[0]
 
 
-def _post_list(completed: Completed) -> ListValue:
-    value = completed.value
-    if isinstance(value, ListValue):
-        return value
-    record = getattr(value, "record", None)
-    if record is not None:
-        lists = [s for s in record.statements if isinstance(s, ListValue)]
-        assert lists, record.statements
-        return lists[-1]
-    raise AssertionError(f"no ListValue post-state: {type(value).__name__}")
-
-
 @dataclass(frozen=True)
 class _FloorSugar(Sugar):
     value: object
@@ -689,7 +677,31 @@ def test_formal_subscript_get_carrier_missing_actuals_undischarged() -> None:
     assert exits.completed_value() is None
 
 
-def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> None:
+def _store_on_the_formal(exits) -> None:
+    """The store of ``obj[key] += rhs`` after the get carrier discharged:
+    the one item mutation on the formal ``obj`` (#8960,
+    ``store_effect_sugar.item_mutation``), never on the caller's actual.  No
+    item store waits on a caller's actual any more, and the formal's class
+    is no input here, so the store is the undecided mutation (arm 3): it
+    completes only under its own ``python:setitem.completes`` atom and halts
+    under the complement with the undetermined raise -- the halt kept,
+    nothing completed alone."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    assert isinstance(exits, ExitSet)
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    halted = [face for face in exits.exits if isinstance(face, Halted)]
+    assert len(completed) == 1 and len(halted) == 1, exits
+    assert "python:setitem.completes" in repr(completed[0].guard), completed[0]
+    assert isinstance(halted[0].effect, UndeterminedRaiseEffect), halted[0].effect
+    assert exits.completed_value() is None
+
+
+def test_authenticated_caller_discharges_get_iadd_and_stores_on_the_formal() -> None:
+    """The get carrier discharges with the caller's list: the read and the
+    in-place add are decided on it (an ``IndexError`` there blocks the store,
+    ``test_authenticated_get_halt_blocks_store_on_formal_discharge``).  The
+    store is the formal's one item mutation (``_store_on_the_formal``)."""
     function, pending = _helper_definition()
     coords = {
         c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
@@ -702,12 +714,7 @@ def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> N
             coords["rhs"]: TermValue(10),
         },
     )
-    assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
-    assert _post_list(exits.exits[0]) == fresh(
-        ListValue, (TermValue(11), TermValue(2))
-    )
+    _store_on_the_formal(exits)
 
 
 def test_authenticated_get_halt_blocks_store_on_formal_discharge() -> None:
@@ -764,8 +771,10 @@ def test_augassign_read_answers_through_the_one_subscript_door() -> None:
 
 def test_formal_augassign_discharges_an_object_actual_through_the_door() -> None:
     """The helper defers its read to the caller; the caller's ``ObjectValue``
-    actual answers the read through its ``subscript_with`` edge, then the
-    in-place add and the store run on it."""
+    actual answers the read through its ``subscript_with`` edge.  The store
+    is the formal's one item mutation, never the actual's own ``setitem``
+    (#8960: no item store waits on a caller's actual), so the object records
+    nothing."""
     function, pending = _helper_definition()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "subscript"
@@ -783,10 +792,8 @@ def test_formal_augassign_discharges_an_object_actual_through_the_door() -> None
         },
     )
 
-    assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
-    assert stored == [(TermValue(0), TermValue(15))]
+    _store_on_the_formal(exits)
+    assert stored == []
 
 
 def test_attribute_augassign_is_attribute_path_not_subscript_path() -> None:

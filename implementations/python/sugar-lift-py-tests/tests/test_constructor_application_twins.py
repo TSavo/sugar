@@ -276,17 +276,23 @@ def test_box():
 """
 
 
-def test_a_field_stored_before_code_that_reaches_no_object_is_joined_at_prove(
+def test_a_field_stored_before_a_same_file_call_is_not_stated(
     tmp_path: Path,
 ) -> None:
     """``fill(box, 7)``: ``b.n = held`` comes after an early ``return`` and
-    before ``note()``, a source function that runs no code, and its value
-    is a local -- none of it in a quiet tail.  The store is the last of
-    ``n`` at the top level and nothing after it may change it, so the arm
-    that ran to the end states the value it stored, read through the
-    store's key in the context it left (``v``, bound to the caller's ``7``),
-    under the plain-store guard (#7757 step 7).  Truthful ``sat``, lying
-    ``unsat``."""
+    before ``note()``, a same-file call.  Whether ``note()`` may change
+    ``b.n`` is ``note``'s contract's to state, never the caller's to read off
+    ``note``'s body (#8955: a caller never reads a same-file callee's body
+    for what the call may reach), so the store is not the last ``fill``
+    knows of ``n``, and ``fill``'s contract states no field ``n``: a field
+    store followed by a same-file call is no longer stated (#8955, precision
+    given up, never a lie).  The truth reads ``open``, never ``unsat``; the
+    lie is never ``sat``.
+
+    Open by name until a caller's field read after a same-file call is
+    decided by what that call's contract states it leaves in the object
+    (``python:after`` keyed on the call, joined at prove); nothing states it
+    for an object the call is not handed today."""
     t = run_source_through_real_solver(
         tmp_path / "before-code-truthful", _STORED_BEFORE_CODE.format(expected=7)
     )
@@ -296,8 +302,9 @@ def test_a_field_stored_before_code_that_reaches_no_object_is_joined_at_prove(
     print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
     test_line = _STORED_BEFORE_CODE.splitlines().index("def test_box():") + 1
     assert t.verdict != "unsat"
-    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
-    assert lie.verdict == "unsat"
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "open"
+    assert lie.verdict != "sat"
+    assert claim_verdict(lie.prove_doc, claims_from_line=test_line) != "sat"
 
 
 _TOUCHED_AFTER = """\

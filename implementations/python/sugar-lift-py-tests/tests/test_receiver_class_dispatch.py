@@ -545,19 +545,14 @@ def _stated_fields(source: str, name: str = "fill") -> list:
     ]
 
 
-def test_a_field_stored_before_code_that_reaches_no_object_is_read_per_arm() -> None:
+def test_a_field_stored_before_a_same_file_call_is_not_stated() -> None:
     """``b.n = held`` after an early ``return`` and before ``note()``, a
-    source function that runs no code: the store is the last of ``n`` at
-    the top level and nothing after it may change it, so each arm that ran
-    to the end reads what the store put there, through its key, in the
-    context it left (#7757 step 7).  The arm the early ``return`` ended
-    states nothing.  The quiet tail stated nothing here (a call follows the
-    store, and ``held`` is a local, no parameter)."""
-    stated = _stated_fields(_STORED_BEFORE_CODE)
-    assert stated
-    for plain_stores, fields in stated:
-        assert plain_stores == (("b", "n"),)
-        assert [(param, attr) for param, attr, _value in fields] == [("b", "n")]
+    same-file call.  The caller never reads ``note``'s body for what the call
+    may reach (#8955): a same-file call after the store is a call like any
+    other and may change the field (``_stores_after_the_field``), so no arm
+    states ``n``.  Precision given up, never a lie: what ``note()`` leaves in
+    an object is ``note``'s contract's to state, joined at prove."""
+    assert _stated_fields(_STORED_BEFORE_CODE) == []
 
 
 @pytest.mark.parametrize(

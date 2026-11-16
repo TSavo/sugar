@@ -1211,13 +1211,42 @@ def test_default():
     assert _raises(raising, "ZeroDivisionError") != []
 
 
+def _dispatched_off_the_local_class(tmp_path, source: str, method: str) -> None:
+    """Each half's ``C.m()`` over the function-local ``class C``: the one
+    dispatched call looked up on ``C``'s class object (#7757 entry 6,
+    ``ClassDefinitionValue._dispatched_on_class``), naming ``C``'s join
+    symbol (``py.lookup("<C>", "")``) and no function.  Which function runs,
+    and how its descriptor and its defaults bind, are prove's
+    (``consistency::dispatched_target``): the lift supplies no default, and
+    never reads ``x`` again at the call (no ``2`` in the term).  The value
+    the ``def`` statement bound stays with the class value its statement
+    built (``test_the_class_statement_evaluates_its_methods_defaults``).
+
+    Open by name until prove's one binder binds a formal a dispatched call
+    omits to the default its class statement evaluated: a dispatched call's
+    ``default:<p>`` is unbound today (#8956), so the truth is not decided,
+    and the lie never ``sat``."""
+    from sugar_lift_py_tests.ir import num
+
+    for module, expected in (("truthful", 1), ("lying", 2)):
+        outcome = _rooted_outcome(tmp_path, source.format(expected=expected), module)
+        term = _edge_term(outcome, f"dispatch:{method}")
+        on, after = _lookup(term)
+        assert on.startswith(f"python:{module}.test_default.<locals>.C@"), term
+        assert after == "", term
+        assert _positional(term) == (), term
+        assert _supplied_defaults(term) == {}, term
+        assert num(2) not in term.args, term
+
+
 def test_a_staticmethod_default_is_the_binding_at_its_class_statement(
     tmp_path,
 ) -> None:
     """``@staticmethod def m(a=x)``: the class body runs the ``def``
     statement, which evaluates the default before the descriptor applies;
-    ``C.m()`` binds that value."""
-    _binds_the_statements_value(
+    ``C.m()`` is the dispatched call on ``C`` and never reads ``x`` again
+    (``_dispatched_off_the_local_class``)."""
+    _dispatched_off_the_local_class(
         tmp_path,
         """\
 def test_default():
@@ -1231,14 +1260,17 @@ def test_default():
     x = 2
     assert C.m() == {expected}
 """,
-        "test_default.<locals>.C.m@",
+        "m",
     )
 
 
 def test_a_classmethod_default_is_the_binding_at_its_class_statement(
     tmp_path,
 ) -> None:
-    _binds_the_statements_value(
+    """``@classmethod def m(cls, a=x)``: the same.  The class a
+    ``classmethod`` binds first is prove's to bind, by the kind ``C``'s
+    namespace row states, never an actual of the lift's."""
+    _dispatched_off_the_local_class(
         tmp_path,
         """\
 def test_default():
@@ -1252,7 +1284,7 @@ def test_default():
     x = 2
     assert C.m() == {expected}
 """,
-        "test_default.<locals>.C.m@",
+        "m",
     )
 
 
@@ -1265,17 +1297,15 @@ def test_a_local_class_descriptor_called_off_its_class_runs_its_body(
     tmp_path,
 ) -> None:
     """``C.m()`` where ``class C`` stands in the function: ``C`` is the
-    class its statement builds, ``m`` the member the one class-namespace
-    lookup selects, and the call is ``m``'s edge (#7757 step 6, #8738) over
-    what its descriptor binds (a ``staticmethod`` nothing, a ``classmethod``
-    the class).  Before, ``C`` read as a free name and the call was the
-    unanswered call of ``m`` with no definition; then (before step 6) the
-    body ran and its raise was the one face.  The raise is now ``m``'s
-    contract's halt, joined at prove."""
-    for decorator, formals, implicit in (
-        ("staticmethod", "", 0),
-        ("classmethod", "cls", 1),
-    ):
+    class its statement builds, and the call is the one dispatched call
+    looked up on ``C``'s class object (#7757 entry 6, #8956), with no
+    actual: what the descriptor binds (a ``staticmethod`` nothing, a
+    ``classmethod`` the class) is prove's, by the kind ``C``'s namespace row
+    states, never an actual the lift supplies.  Before, ``C`` read as a free
+    name and the call was the unanswered call of ``m`` with no definition;
+    then (before step 6) the body ran and its raise was the one face.  The
+    raise is the selected method's contract's halt, joined at prove."""
+    for decorator, formals in (("staticmethod", ""), ("classmethod", "cls")):
         outcome = _rooted_outcome(
             tmp_path,
             "def test_local():\n"
@@ -1287,15 +1317,19 @@ def test_a_local_class_descriptor_called_off_its_class_runs_its_body(
             "    C.m()\n",
             decorator,
         )
-        term = _edge_term(outcome, f"{decorator}.test_local.<locals>.C.m@")
-        assert len(_positional(term)) == implicit, decorator
+        term = _edge_term(outcome, "dispatch:m")
+        on, after = _lookup(term)
+        assert on.startswith(f"python:{decorator}.test_local.<locals>.C@"), term
+        assert after == "", term
+        assert _positional(term) == (), decorator
         assert _raises(outcome, "ValueError") == [], decorator
 
 
 def test_a_local_class_plain_function_takes_its_actuals(tmp_path) -> None:
-    """A plain function read off its local class is unbound: ``C.m(5)``
-    binds ``n`` to ``5``: ``m``'s edge with that one actual (#7757 step 6),
-    whose return prove reads off ``m``'s contract."""
+    """A plain function read off its local class is unbound: ``C.m(5)`` is
+    the one dispatched call looked up on ``C``'s class object with that one
+    actual as written (#7757 entry 6, #8956); prove binds ``n`` to ``5``
+    and reads the return off the contract of the function it looks up."""
     from sugar_lift_py_tests.ir import num
 
     source = """\
@@ -1308,7 +1342,9 @@ def test_local():
 """
     for module, expected in (("truthful", 5), ("lying", 6)):
         outcome = _rooted_outcome(tmp_path, source.format(expected=expected), module)
-        term = _edge_term(outcome, f"{module}.test_local.<locals>.C.m@")
+        term = _edge_term(outcome, "dispatch:m")
+        on, _after = _lookup(term)
+        assert on.startswith(f"python:{module}.test_local.<locals>.C@"), term
         assert _positional(term) == (num(5),), term
 
 
@@ -1762,18 +1798,21 @@ def test_a_classmethod_frame_takes_its_class_as_a_formal() -> None:
 
 
 def test_a_classmethod_called_off_its_class_runs_its_body(tmp_path) -> None:
-    """``Box.make(3)`` is ``make``'s edge (#7757 step 6, #8738), the class
-    then ``3``: its ``ValueError`` is ``make``'s contract's halt, joined at
-    prove (#8690), no longer a face of this reduction."""
+    """``Box.make(3)`` is the one dispatched call looked up on ``Box``
+    (#7757 entry 6, #8956), owed as ``python:dispatch:make``, carrying the
+    written ``3`` alone: the class a ``classmethod`` binds first is prove's
+    to bind, by the kind ``Box``'s namespace row states
+    (``DispatchReceiver::Prepend``).  Its ``ValueError`` is the selected
+    method's contract's halt, joined at prove, no face of this reduction."""
     from sugar_lift_py_tests.ir import num
 
     outcome = _rooted_outcome(
         tmp_path, _CLASSMETHOD.format(body="raise ValueError('ran')")
     )
-    assert "python:subject.Box.make" in _owed_symbols(outcome), outcome
-    implicit, written = _positional(_edge_term(outcome, "subject.Box.make"))
-    assert written == num(3)
-    assert implicit != num(3)
+    assert "python:dispatch:make" in _owed_symbols(outcome), outcome
+    term = _edge_term(outcome, "dispatch:make")
+    assert _positional(term) == (num(3),), term
+    assert _lookup(term) == ("python:subject.Box", ""), term
     assert _raises(outcome, "ValueError") == []
 
 

@@ -151,16 +151,20 @@ def test_super_is_looked_up_after_the_cell_at_prove(tmp_path) -> None:
     )
 
     assert call.target_name == "dispatch:__init__", call.target_name
-    (lookup,) = (
-        arg for arg in call.term.args if getattr(arg, "name", None) == "py.lookup"
-    )
+    # The completion is stated over ``python:call_result(<call term>,
+    # <occurrence>)`` (#8828): the dispatched call's own term is its first
+    # argument.
+    term = call.term
+    if getattr(term, "name", None) == "python:call_result":
+        term = term.args[0]
+    (lookup,) = (arg for arg in term.args if getattr(arg, "name", None) == "py.lookup")
     assert [part.value for part in lookup.args] == [
         "",
         "python:super_dispatch.Derived",
     ]
     (receiver_class,) = (
         arg.args[1]
-        for arg in call.term.args
+        for arg in term.args
         if getattr(arg, "name", None) == "py.class" and arg.args[0].value == "0"
     )
     assert receiver_class.args[0].value == "python:super_dispatch.Derived"
