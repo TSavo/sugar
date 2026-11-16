@@ -250,8 +250,9 @@ class ImportMemberValue(FloorValue):
         A builtin decorator called on one positional operand (``final(f)``
         is ``@final`` spelled as a call) is the one decorator application's
         (``builtin_decorator_application``, #7757): applied where it answers
-        (``typing.final`` and ``abc.abstractmethod`` return their operand),
-        else the ordinary boundary.
+        (``typing.final`` and ``abc.abstractmethod`` return their operand;
+        ``staticmethod``, ``classmethod`` and ``property`` the descriptor
+        wrapping it), else the ordinary boundary.
         """
         from sugar_source_tree.nodes import builtin_decorator_application
 
@@ -264,7 +265,7 @@ class ImportMemberValue(FloorValue):
             step = builtin_decorator_application(
                 language_callee, operation.site, self.qualified_name
             )
-            if step.kind == "identity":
+            if step.kind in ("identity", "descriptor"):
                 return step.applied(None, operation.arguments[0], ctx)
         operation_name = self.c_floor_semantic_operation(language_callee)
         del ctx

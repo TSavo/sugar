@@ -2,8 +2,7 @@
 
 Python evaluates a ``def``'s decorator expressions when the statement runs,
 whatever applies their values afterwards.  A class-body method's decorators
-(then applied by the one decorator application, or read by the class body's
-descriptor table for a builtin descriptor) and a ``contextmanager``
+(then applied by the one decorator application) and a ``contextmanager``
 generator's (its call applies its own frame) were built by nothing, so
 their nodes never answered the roll (the board's ``Call`` first absentees
 after #8349: ``tests/arrays/categorical/test_analytics.py:23:5``'s
