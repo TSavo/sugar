@@ -6,8 +6,6 @@ These twins pin the finite-fold and symbolic-obligation arms so the mechanism
 cannot regress to the default FloorValue.contains panic.
 """
 
-import pytest
-
 from frame_fresh import fresh
 
 
@@ -55,39 +53,47 @@ def test_finite_tuple_membership_is_decided_from_constructed_members():
     )
 
 
-def test_symbolic_list_membership_emits_typed_obligation():
+def test_symbolic_list_membership_is_the_undecided_membership():
+    """``x in [1]`` runs ``x == 1``: ``type(x).__eq__``, which may raise.
+    The undecided membership, two-faced -- never a bare predicate (#7757
+    H10)."""
     from sugar_lift_py_tests.floor import ListValue, SymbolicValue, TermValue
-    from sugar_lift_py_tests.ir import _Atomic, make_var
-
-    result = (
-        fresh(ListValue, (TermValue(1),))
-        .contains(SymbolicValue(make_var("member")), "site")
-        .completed_value()
+    from sugar_lift_py_tests.ir import make_var
+    from test_membership_undecided_and_identity_twins_7757 import (
+        assert_undecided_membership,
     )
-    assert isinstance(result.formula, _Atomic)
-    assert result.formula.name == "python.list.contains"
+
+    assert_undecided_membership(
+        fresh(ListValue, (TermValue(1),)).contains(
+            SymbolicValue(make_var("member")), "site"
+        )
+    )
 
 
-def test_symbolic_tuple_membership_emits_typed_obligation():
+def test_symbolic_tuple_membership_is_the_undecided_membership():
     from sugar_lift_py_tests.floor import SymbolicValue, TermValue, TupleValue
-    from sugar_lift_py_tests.ir import _Atomic, make_var
-
-    result = (
-        TupleValue((TermValue(1),))
-        .contains(SymbolicValue(make_var("member")), "site")
-        .completed_value()
+    from sugar_lift_py_tests.ir import make_var
+    from test_membership_undecided_and_identity_twins_7757 import (
+        assert_undecided_membership,
     )
-    assert isinstance(result.formula, _Atomic)
-    assert result.formula.name == "python.tuple.contains"
+
+    assert_undecided_membership(
+        TupleValue((TermValue(1),)).contains(SymbolicValue(make_var("member")), "site")
+    )
 
 
-def test_opaque_list_member_stays_loud():
+def test_a_function_needle_is_a_member_like_any_object():
+    """A function is a member: ``f in [1]`` is ``f is 1 or f == 1``.  The
+    floor has no value equality for it, and identity does not decide this
+    pair here, so it is the undecided membership -- never a construction
+    panic (#7757 H11)."""
     from sugar_lift_py_tests.floor import LambdaCallable
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from test_membership_undecided_and_identity_twins_7757 import (
+        assert_undecided_membership,
+    )
 
     opaque = LambdaCallable(parameters=(), body=None, construction_identity="opaque")
-    with pytest.raises(ConstructionPanic):
-        _list(1).contains(opaque, "site")
+    assert_undecided_membership(_list(1).contains(opaque, "site"))
 
 
 def test_nested_list_membership_is_decided_from_constructed_members():

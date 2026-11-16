@@ -136,26 +136,13 @@ class DictValue(GuardStableValue):
             return distributed
         from sugar_lift_py_tests.floor.membership import membership
 
-        decided = membership(
+        return membership(
             self,
             item,
             tuple(key for key, _value in self.entries),
             kind="dict",
-            member_role="key",
-            container_role="dict",
             hashed=True,
             site=site,
-        )
-        if decided is not None:
-            return decided
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        construction_panic_gap(
-            owner="DictValue.contains",
-            blame=str(site),
-            observed=type(item).__name__,
-            requested="constructed finite key or typed symbolic membership operand",
-            fix="construct key equality on the Python floor or keep it loud",
         )
 
     def bitwise_or(self, other, site, ctx):

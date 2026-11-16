@@ -92,7 +92,7 @@ def test_closed_operation_witness_rejects_each_lying_coordinate():
             operands,
             result,
         ),
-        (runtime, "python.set.contains", operands, result),
+        (runtime, "python.set.union", operands, result),
         (runtime, "python.issubclass", tuple(reversed(operands)), result),
         (runtime, "python.issubclass", operands, bool_const(False)),
     )

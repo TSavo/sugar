@@ -14,11 +14,24 @@ mutating methods (``floor/builtin_container_method``):
   members are undecided, never False.
 - **Hash.** ``set``/``dict`` hash the needle first: a decided unhashable needle
   (a list, dict, set, or a tuple holding one) raises ``TypeError`` before any
-  comparison. Equal decided builtin values hash equal, so equality then
-  decides.
-- **Undecided.** A member whose equality the floor does not decide makes the
-  test undecided unless another member already matched: the typed
-  ``python.<kind>.contains`` obligation, never False.
+  comparison, and a needle whose hash the floor does not decide may raise
+  there. Equal decided builtin values hash equal, so equality then decides.
+- **Classes and functions.** A class or a function is a member like any
+  object: ``type(x) in (int, float)``, ``cls in (A, B)``,
+  ``handler in handlers``. Where the floor has no value equality for a pair
+  (``member_equal`` is ``NotImplemented``), ``==`` is answered by identity
+  where Python answers it so (``object_identity.equality_by_identity``: a
+  class whose metaclass is decided to be ``type``), else it is undecided.
+  Never a construction panic.
+- **Undecided.** A list or tuple compares its members in order, so it
+  matches at the first decided match and is undecided at the first member
+  whose equality is not decided before that; a set or dict probes by hash,
+  so any undecided member (or needle hash) leaves it undecided. Undecided
+  membership is the floor's one undecided form
+  (``FloorValue.undecided_contains``): it completes with the keyed
+  ``py.in`` only under its completes atom and halts undetermined under the
+  complement, owed either way -- never a bare predicate, never False
+  (#7757 H10).
 """
 
 from __future__ import annotations
@@ -92,16 +105,13 @@ def member_equal(left, right):
         # are all False.
         return False
     # Only a decided builtin on BOTH sides decides inequality: ``None`` or a
-    # list against a call's result is undecided, never False.
-    # A residual pair measured on the installed pandas tree lands here:
-    # `{List,Tuple,Set}Value.contains x CallSiteValue`. A call's result IS a
-    # value of undecided identity, so the honest answer is ``None`` (emit the
-    # typed python.*.contains obligation), not NotImplemented (a gap). What it
-    # is NOT is "any value carrying a term": LambdaCallable carries one and is
-    # a callable, never a member -- two tests pin that refusal deliberately. So
-    # the discriminator is ``FloorValue.denotes_a_value``, testimony each floor
-    # states about ITSELF and which defaults to no, never a property a caller
-    # reads off the carrier's shape.
+    # list against a call's result is undecided, never False.  A call's
+    # result IS a value of undecided identity, so the answer is ``None``.
+    # A side that testifies to no value (``FloorValue.denotes_a_value``,
+    # testimony each floor states about ITSELF and which defaults to no: a
+    # class, a function, a bound method) has no value equality here:
+    # ``NotImplemented``.  Membership then asks identity
+    # (``membership``'s ``_member_decision``), never refuses.
     if _denotes_a_value(left, supported) and _denotes_a_value(right, supported):
         return None
     return NotImplemented
@@ -162,58 +172,83 @@ def position(needle, members):
     return -1
 
 
-def membership(container, item, members, *, kind, member_role, container_role, hashed, site):
-    """``item in container`` over its ``members``: the ExitSet, or None when a
-    pair has no floor equality (the caller keeps its own loud refusal).
+def membership(container, item, members, *, kind, hashed, site):
+    """``item in container`` over its ``members``: the ExitSet.
 
-    A container whose contents are not current
-    (``object_identity.contents_stale``) is not read: the test is its
-    undecided membership (``FloorValue.undecided_contains``), two-faced."""
+    Decided True or False where every comparison it makes is decided; else
+    the container's undecided membership (``FloorValue.undecided_contains``),
+    two-faced and owed.  A list or tuple (``hashed`` False) compares in
+    order: it matches at the first decided match, and is undecided at the
+    first undecided member before one.  A set or dict (``hashed``) hashes the
+    needle and probes by hash, so a needle whose hash is not decided, or any
+    undecided member, leaves it undecided.  A container whose contents are
+    not current (``object_identity.contents_stale``) is not read: the test is
+    its undecided membership."""
     from sugar_lift_py_tests.floor.object_identity import contents_stale
     from sugar_lift_py_tests.floor.set_value import _bool_result
 
+    owner = f"python.{kind}.contains"
     if hashed and decided_unhashable(item):
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="TypeError",
             site=site,
-            owner=f"python.{kind}.contains",
+            owner=owner,
         )
     if contents_stale(container):
-        return container.undecided_contains(item, site, owner=f"python.{kind}.contains")
-    decisions = tuple(member_equal(item, member) for member in members)
-    if any(decision is True for decision in decisions):
-        return _bool_result(True, site)
-    if all(decision is False for decision in decisions):
-        return _bool_result(False, site)
-    if any(decision is None for decision in decisions):
-        from sugar_lift_py_tests.floor.object_identity import identity_term
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import ExitSet
+        return container.undecided_contains(item, site, owner=owner)
+    if hashed:
+        if not _needle_hash_decided(item):
+            return container.undecided_contains(item, site, owner=owner)
+        decisions = tuple(_member_decision(item, member, site) for member in members)
+        if any(decision is None for decision in decisions):
+            return container.undecided_contains(item, site, owner=owner)
+        return _bool_result(any(decisions), site)
+    for member in members:
+        decision = _member_decision(item, member, site)
+        if decision is None:
+            return container.undecided_contains(item, site, owner=owner)
+        if decision:
+            return _bool_result(True, site)
+    return _bool_result(False, site)
 
-        return ExitSet.completed(
-            PredicateValue(
-                atomic(
-                    f"python.{kind}.contains",
-                    [
-                        identity_term(
-                            item,
-                            site,
-                            "item",
-                            owner=f"python.{kind}.contains {member_role}",
-                        ),
-                        identity_term(
-                            container,
-                            site,
-                            "container",
-                            owner=f"python.{kind}.contains {container_role}",
-                        ),
-                    ],
-                ),
-                site,
-                operand_callsites=(*item.callsites(), *container.callsites()),
-            )
-        )
+
+def _member_decision(item, member, site):
+    """``item is member or item == member``: True, False, or None
+    (undecided).  Where the floor has no value equality for the pair
+    (``member_equal`` is ``NotImplemented``: a class, a function, a bound
+    method), ``==`` is identity where Python answers it so -- the one rule
+    ``==`` already uses (``object_identity.equality_by_identity``) -- else
+    undecided."""
+    decision = member_equal(item, member)
+    if decision is not NotImplemented:
+        return decision
+    from sugar_lift_py_tests.floor.object_identity import equality_by_identity
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    answered = equality_by_identity(item, member, site)
+    if answered is None:
+        return None
+    value = plain_completed_value(answered)
+    if type(value) is TrueBoolLiteralSugar:
+        return True
+    if type(value) is FalseBoolLiteralSugar:
+        return False
     return None
+
+
+def _needle_hash_decided(item) -> bool:
+    """``hash(item)`` is CPython's own and never raises: a decided hashable
+    builtin (``builtin_container_method._hash_decided``, or ``bytes``) or a
+    class whose metaclass is decided to be ``type`` (``type.__hash__`` is its
+    identity)."""
+    from sugar_lift_py_tests.floor.builtin_container_method import _hash_decided
+    from sugar_lift_py_tests.floor.bytes_value import BytesValue
+    from sugar_lift_py_tests.floor.object_identity import _type_class
+
+    return type(item) is BytesValue or _hash_decided(item) or _type_class(item)

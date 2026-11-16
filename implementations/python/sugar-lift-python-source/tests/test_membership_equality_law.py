@@ -10,8 +10,9 @@ the cited mutating methods (``floor/membership.py``): a member matches when
 ``x is e or x == e``; ``bool`` compares as its ``int`` and ``1.0 == 1``; two
 NaNs are undecided (identity, which the floor does not carry, decides); a
 set/dict hashes first, so a decided unhashable needle is ``TypeError``; an
-undecided member comparison stays the typed ``python.<kind>.contains``
-obligation, never False.
+undecided member comparison is the container's undecided membership
+(``FloorValue.undecided_contains``): two faces, the halt kept, owed -- never
+False and never a bare predicate (#7757 H10).
 """
 
 from __future__ import annotations
@@ -54,10 +55,12 @@ def test_an_unequal_member_is_absent(tmp_path, expression):
     assert type(_value(tmp_path, expression)) is FalseBoolLiteralSugar
 
 
-def test_an_undecided_member_is_an_obligation_not_false(tmp_path):
-    value = _value(tmp_path, "1 in [x]")
+def test_an_undecided_member_is_the_undecided_membership_with_its_halt(tmp_path):
+    # ``1 in [x]`` runs ``1 == x``, which reflects to ``type(x).__eq__``:
+    # user code that may raise.  The decided display does not decide it.
+    (value,), halts = _returns(tmp_path, "def f(x):\n    return 1 in [x]\n")
     assert type(value) is PredicateValue
-    assert value.formula.name == "python.list.contains"
+    assert [halt.producer_node_owner for halt in halts] == ["UndecidedCompare:In"]
 
 
 def test_a_decided_unequal_tuple_element_decides_even_beside_an_unknown(tmp_path):
@@ -73,10 +76,12 @@ def test_an_unhashable_needle_in_a_set_or_dict_is_type_error(tmp_path, expressio
 
 
 def test_nan_membership_is_undecided_by_identity_and_false_by_value(tmp_path):
-    value = _only_return(
+    (value,), halts = _returns(
         tmp_path,
         "def f():\n    n = 1e999 - 1e999\n    return (n in [n], n in [1.0])\n",
     )
+    # The undecided identity is the undecided membership: its halt is kept.
+    assert [halt.producer_node_owner for halt in halts] == ["UndecidedCompare:In"]
     same, other = value.elements
     assert type(same) is PredicateValue
     assert type(other) is FalseBoolLiteralSugar
@@ -120,7 +125,11 @@ def test_none_or_a_display_against_a_call_result_is_never_false(tmp_path, expres
     # ``h`` is unbound, so ``g()`` may raise too: its one halt is that call's.
     source = f"def g():\n    return h()\ndef f():\n    return {expression}\n"
     (value,), halts = _returns(tmp_path, source)
-    assert [halt.producer_node_owner for halt in halts] == ["UnknownCallee:h"]
+    # The membership's own ``__eq__`` dispatch may raise as well (#7757 H10).
+    assert sorted(halt.producer_node_owner for halt in halts) == [
+        "UndecidedCompare:In",
+        "UnknownCallee:h",
+    ]
     assert type(value) is not FalseBoolLiteralSugar
     assert type(value) is not TrueBoolLiteralSugar
 
