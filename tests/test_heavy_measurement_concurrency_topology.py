@@ -50,11 +50,20 @@ def test_lease_tools_are_deleted():
     assert not (ROOT / "tools/heavy_measurement_lease_record.py").exists()
 
 
+# The main scorecard's workflows realize the ruling per commit (#8964,
+# #8416): a concurrency group per commit, and a ``supersede`` job that
+# cancels the older runs on other commits (tools/main_scorecard_supersede.sh).
+SCORECARD_WORKFLOWS = ("main-scorecard.yml", "main-scorecard-board.yml")
+SUPERSEDE = "tools/main_scorecard_supersede.sh"
+
+
 def test_a_newer_push_cancels_the_superseded_run():
     """Owner ruling 2026-11-14, overrules #7118.
 
     On main a running run finishes first and the newest push replaces the
-    queued run; on other refs a newer push cancels the running run.
+    queued run; on other refs a newer push cancels the running run.  The
+    scorecard workflows are read by
+    ``test_a_newer_scorecard_push_cancels_runs_on_older_commits``.
     """
     block = (
         "concurrency:\n"
@@ -62,9 +71,39 @@ def test_a_newer_push_cancels_the_superseded_run():
         "  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n"
     )
     for path in sorted(WORKFLOWS.glob("*.yml")):
-        if path.name == "issue-claim-labels.yml":
+        if path.name == "issue-claim-labels.yml" or path.name in SCORECARD_WORKFLOWS:
             continue
         assert block in path.read_text(), path.name
+
+
+@pytest.mark.parametrize("workflow", SCORECARD_WORKFLOWS)
+def test_a_newer_scorecard_push_cancels_runs_on_older_commits(workflow):
+    """The ruling for the scorecard (#8964): a newer push cancels every run on
+    an older commit, waiting or measuring, through the ``supersede`` job; a
+    run is never cancelled by a run on its own commit.
+
+    The concurrency group is the commit's, so no run waits behind, or is
+    cancelled by, a run on another commit (``cancel-in-progress: false``: a
+    second run on the same commit waits).  Every run's ``supersede`` job
+    cancels, through the one script, this workflow's older runs on main
+    whose commit is not its own."""
+    text = _text(workflow)
+    concurrency = text[text.index("\nconcurrency:\n") :].split("\n\n", 1)[0]
+    assert "${{ github.sha }}" in concurrency, concurrency
+    assert "cancel-in-progress: false" in concurrency, concurrency
+    assert "${{ github.ref }}" not in concurrency, concurrency
+
+    supersede = text[text.index("\n  supersede:\n") :].split("\n\n", 1)[0]
+    assert "actions: write" in supersede, supersede
+    runs = [line.strip() for line in supersede.splitlines()]
+    assert f"run: bash {SUPERSEDE} {workflow}" in runs, supersede
+
+    script = (ROOT / SUPERSEDE).read_text()
+    # Older runs only (run ids only grow), on another commit only.
+    assert ".databaseId < $me" in script
+    assert '.headSha != \\"$sha\\"' in script
+    assert "--branch main" in script
+    assert 'gh run cancel "$id"' in script
 
 
 def test_the_authoritative_scoreboard_is_the_sole_seal_door():
