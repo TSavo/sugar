@@ -170,15 +170,39 @@ def test_range_over_a_formal_keeps_its_own_halt_only(name: str) -> None:
 # (scorecard at d95c22a49: the test row discharged beside the fold's and the
 # member's owed rows).  A loop that reads neither its item nor a carried name
 # owes nothing, so the twin asks only about ``range``'s halts.
-_SOLVER_TRUTH = _DECIDED["loop"]
-_SOLVER_ZERO_STEP = (
+#
+# Its claim is a same-file call prove decides (``three() == 3``, joined to
+# ``three``'s contract), never ``assert True``: the live loop states its
+# target's recurrence (``python:loop.recurrence = python:loop.step(...)``,
+# ``LoopRecurrenceSugar._recurrence``) in the row, a decided ``True`` folds
+# away, and the row was that one opaque equation alone, which the vacuity
+# guard refuses (scorecard at d707d3fb5: the truthful row ``refused``,
+# "single constraint has no sibling to contradict", nothing owed).  The
+# claim prove decides is the row's sibling.  The three sources differ only
+# in the ``range`` they iterate.
+_SOLVER_HELPER = "def three():\n    return 3\n\n\n"
+# The test function's ``def`` follows the helper.
+_SOLVER_TEST_LINE = _SOLVER_HELPER.count("\n") + 1
+_SOLVER_TRUTH = _SOLVER_HELPER + (
+    "def test_it():\n"
+    "    n = len([1, 2, 3])\n"
+    "    for i in range(n):\n"
+    "        pass\n"
+    "    assert three() == 3\n"
+)
+_SOLVER_ZERO_STEP = _SOLVER_HELPER + (
     "def test_it():\n"
     "    n = len([1, 2, 3])\n"
     "    for i in range(0, n, 0):\n"
     "        pass\n"
-    "    assert True\n"
+    "    assert three() == 3\n"
 )
-_SOLVER_FORMAL = _FORMAL["loop"]
+_SOLVER_FORMAL = _SOLVER_HELPER + (
+    "def test_it(n):\n"
+    "    for i in range(n):\n"
+    "        pass\n"
+    "    assert three() == 3\n"
+)
 
 
 def test_a_dropped_range_halt_would_read_sat(tmp_path: Path) -> None:
@@ -194,8 +218,12 @@ def test_a_dropped_range_halt_would_read_sat(tmp_path: Path) -> None:
     zero_step = run_source_through_real_solver(tmp_path / "z", _SOLVER_ZERO_STEP)
     formal = run_source_through_real_solver(tmp_path / "f", _SOLVER_FORMAL)
 
-    assert truthful.verdict == "sat"
+    assert (
+        claim_verdict(truthful.prove_doc, claims_from_line=_SOLVER_TEST_LINE) == "sat"
+    )
     assert zero_step.verdict != "sat"
-    assert claim_verdict(zero_step.prove_doc, claims_from_line=1) != "sat"
+    assert (
+        claim_verdict(zero_step.prove_doc, claims_from_line=_SOLVER_TEST_LINE) != "sat"
+    )
     assert formal.verdict != "sat"
-    assert claim_verdict(formal.prove_doc, claims_from_line=1) != "sat"
+    assert claim_verdict(formal.prove_doc, claims_from_line=_SOLVER_TEST_LINE) != "sat"
