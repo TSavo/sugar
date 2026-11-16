@@ -112,6 +112,64 @@ class ObjectValue(FloorValue):
         """A constructed receiver denotes a runtime object, not a pure slot."""
         return True
 
+    def truth(self, site):
+        """``bool(o)`` / ``if o``: the one truth rule's two faces, as for a
+        formal (``SymbolicValue.truth``).
+
+        Which ``__bool__`` / ``__len__`` Python runs is the class order's,
+        and no dispatched answerer of it exists: prove's walk does not carry
+        the truth protocol, so the read is the one undecided member
+        (``bool_op_sugar._unanswered_truth``): it completes with
+        ``python:truth_result(<term>, <key>)`` under ``python:truth.completes``
+        and halts undetermined under the complement, owed either way.  The
+        instance is named by ``object_identity.identity_term`` (#7757 S4)."""
+        from sugar_lift_py_tests.sugar.bool_op_sugar import _unanswered_truth
+
+        return _unanswered_truth(self, site, owner="ObjectValue.truth")
+
+    def length(self, site):
+        """``len(o)``: the builtin's one unanswered call over an operand that
+        is not a decided builtin (``builtin_dunder_call``: ``len(c)`` runs
+        ``type(c).__len__``, which is not CPython's own), so the same
+        ``UnknownCalleeCallV1("len")`` faces as ``len`` over any undecided
+        operand: it completes with ``python:call_result(call:len(<o>),
+        <occurrence>)`` under ``python:unknown_callee_call.completes`` and
+        halts undetermined under the complement, owed either way.  No
+        ``__len__`` is dispatched here (#7757 S4).  The instance is named by
+        ``object_identity.identity_term``; a siteless read is the lifter's
+        own gap and refuses by name."""
+        if site is None:
+            from .floor_value import _siteless_undecided_read
+
+            _siteless_undecided_read("ObjectValue.length", "len(object)", "Call")
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.object_identity import identity_term
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+        from sugar_source_tree.nodes import LanguageCallee
+
+        callsite = CallSiteValue(
+            target_name="len",
+            arg_values=(self,),
+            parameters=(),
+            term=ctor(
+                call_symbol("len"),
+                [identity_term(self, site, "argument0", owner="ObjectValue.length")],
+                symbol_kind="builtin",
+            ),
+            body=None,
+            site=site,
+            language_callee=LanguageCallee.BUILTIN_LEN,
+        )
+        return UnknownCalleeCallV1("len").faces(callsite, site)
+
+    def contains(self, item, site):
+        """``k in o``: membership whose container dispatch (``__contains__``,
+        else ``__iter__``, else ``__getitem__``) is the class order's, which
+        no dispatched answerer carries, so the two faces a formal's
+        membership has (``FloorValue.undecided_contains``, #7757 S4)."""
+        return self.undecided_contains(item, site, owner="ObjectValue.contains")
+
     def format_data_model(self, spec, site, ctx):
         return self.call_method_value(
             "__format__",
