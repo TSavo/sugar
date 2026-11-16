@@ -9,11 +9,12 @@ import pytest
 
 from sugar_lift_py_tests.corpus_pin import pin_corpus
 from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-from sugar_lift_py_tests.outcome import Halted
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithReducedManagerSugar
 from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
@@ -115,16 +116,23 @@ def test_inherited_source_constructor_constructs(tmp_path) -> None:
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    completed = func.sugar().desugar().completed_value()
-    assert isinstance(completed, UniverseValue)
-    returns = [
-        statement
-        for statement in completed.record.statements
-        if isinstance(statement, ReturnValue)
-    ]
-    assert len(returns) == 1
-    assert isinstance(returns[0].value, TermValue)
-    assert returns[0].value.value == 1
+    # ``Named(1)``, ``__enter__`` and ``__exit__`` are each a coordinate and
+    # an edge joined at prove (#7757 steps 6 and 9; #8744, #8980), so ``f``
+    # also halts where any of them raises.  Every completed face is the
+    # body's own ``return 1``.
+    outcome = func.sugar().desugar()
+    completed = [face.value for face in outcome.exits if isinstance(face, Completed)]
+    assert completed
+    for value in completed:
+        assert isinstance(value, UniverseValue)
+        returns = [
+            statement
+            for statement in value.record.statements
+            if isinstance(statement, ReturnValue)
+        ]
+        assert len(returns) == 1
+        assert isinstance(returns[0].value, TermValue)
+        assert returns[0].value.value == 1
 
 
 def test_inherited_source_constructor_does_not_suppress_a_body_raise(tmp_path) -> None:
@@ -134,22 +142,31 @@ def test_inherited_source_constructor_does_not_suppress_a_body_raise(tmp_path) -
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
     raised = func.sugar().desugar()
-    halted = [face for face in raised.exits if isinstance(face, Halted)]
-    assert len(halted) == 1
-    assert isinstance(halted[0].effect, RaiseEffect)
-    assert halted[0].effect.exception_name == "RuntimeError"
+    halted = [face.effect for face in raised.exits if isinstance(face, Halted)]
+    # The body's ``RuntimeError`` leaves ``f`` once: whether ``__exit__``
+    # suppresses it is that edge's to decide at prove, so the lift never
+    # drops it.  Every other halt is an owed edge's undetermined raise (the
+    # class call, ``__enter__``, ``__exit__``), none named by the lift.
+    named = [effect for effect in halted if isinstance(effect, RaiseEffect)]
+    assert [effect.exception_name for effect in named] == ["RuntimeError"]
+    assert all(
+        isinstance(effect, UndeterminedRaiseEffect)
+        for effect in halted
+        if not isinstance(effect, RaiseEffect)
+    )
 
 
 def test_own_initializer_does_not_inherit_the_base_formals(tmp_path) -> None:
     """``Named`` defines its own ``__init__()``, so ``Named(1)`` has an actual
     no formal consumes.  The open reads no body; the head's own construction
-    says so by name (#7757)."""
-    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+    says so by name (#7757): the class value's application refuses the
+    binding (``ClassDefinitionValue.callable_application_with``)."""
+    from sugar_source_tree.panic import SugarNotWritten
 
     root = _corpus(tmp_path, **{"e.py": OWN_INIT})
     source_file = _open(root, "e.py", session=_session())
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    with pytest.raises(SourceCallBindingGap, match="unconsumed call actual"):
+    with pytest.raises(SugarNotWritten, match="unconsumed call actual"):
         func.sugar().desugar()

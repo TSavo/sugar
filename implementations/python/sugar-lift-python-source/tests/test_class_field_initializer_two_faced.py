@@ -7,42 +7,43 @@ initializer completes with one value under its completion atoms and halts
 with an ``UndeterminedRaiseEffect`` otherwise.  ``ClassDefinitionSugar``
 demanded one complete field value and refused.  Executing the class body now
 halts with each initializer halt, sequenced in source order, and the class
-exists on the one completed face.  Several distinct completed values still
-refuse.
+exists on the one completed face.
+
+The class statement runs where it stands: here, in ``f``'s own body.  (It
+was once reached through a same-file manager's ``__init__`` building an
+instance, a body no caller follows at lift any more, #7757 steps 6 and 9.)
 """
 
 from __future__ import annotations
 
-from test_contextmanager_generator_protocol import _function_rows, _imported
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+from sugar_lift_py_tests.floor import TermValue
+
+from test_builtin_container_mutation import _returns
 
 
-def _rows(tmp_path, field: str):
-    impl = (
+def _faces(tmp_path, field: str):
+    source = (
         "import re\n"
-        "class V:\n"
-        f"    r = {field}\n"
-        "    def __init__(self):\n"
-        "        pass\n"
-        "class cm:\n"
-        "    def __init__(self):\n"
-        "        self.v = V()\n"
-        "    def __enter__(self):\n"
-        "        return 1\n"
-        "    def __exit__(self, *exc):\n"
-        "        return False\n"
+        "def f():\n"
+        "    class V:\n"
+        f"        r = {field}\n"
+        "        def __init__(self):\n"
+        "            pass\n"
+        "    return 7\n"
     )
-    return _function_rows(
-        *_imported(tmp_path, impl, "pass", contextlib_enrolled=False)
-    )[1]
+    return _returns(tmp_path, source)
 
 
 def test_two_faced_field_initializer_halts_or_constructs(tmp_path):
-    rows = _rows(tmp_path, 're.compile("a", re.VERBOSE | re.IGNORECASE)')
-    assert ("return", 7) in rows
-    assert ("halt", None) in rows
-    assert set(rows) == {("halt", None), ("return", 7)}
+    returns, halts = _faces(tmp_path, 're.compile("a", re.VERBOSE | re.IGNORECASE)')
+    assert returns == [TermValue(7)]
+    assert halts
+    assert all(isinstance(halt, UndeterminedRaiseEffect) for halt in halts)
 
 
 def test_total_field_initializer_adds_no_halt(tmp_path):
     # The lying twin: a decided initializer cannot raise.
-    assert _rows(tmp_path, "1 + 2") == [("return", 7)]
+    returns, halts = _faces(tmp_path, "1 + 2")
+    assert returns == [TermValue(7)]
+    assert halts == []

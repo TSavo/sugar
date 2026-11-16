@@ -15,6 +15,14 @@ invokes is CPython's own), or one of ``id``/``type``/``isinstance``/
 and any f-string field over a non-builtin value, leaves every object it may
 reach unknown afterwards: the object reads as an unknown minted at the call,
 never as its pre-call contents.
+
+A call of a same-file definition is its coordinate and edge (#7757 steps 6
+and 9): ``C()`` is the class call nothing here answers, and a call handed
+``c`` leaves it as ``python:after(<call result>, <label>)``, the one spelling
+of an object's state after a call that the callee's contract states its post
+over (``source_call_resolution.object_after_call``).  An operation nothing
+decides leaves it as ``python:receiver_after_call``.  Either is unknown here:
+never the pre-call object.
 """
 
 from __future__ import annotations
@@ -53,10 +61,10 @@ CLS = (
 
 
 def _unknown_after_call(value):
-    return (
-        type(value) is SymbolicValue
-        and value.term.name == "python:receiver_after_call"
-    )
+    return type(value) is SymbolicValue and value.term.name in {
+        "python:receiver_after_call",
+        "python:after",
+    }
 
 
 @pytest.mark.parametrize(
@@ -94,7 +102,8 @@ def test_an_object_a_call_may_change_is_unknown_after_it(tmp_path, call):
 def test_a_builtin_running_a_user_dunder_may_raise(tmp_path, call, name):
     # ``C.__str__``/``__len__``/... raise ValueError: the builtin is not
     # total, so the handler is reachable.  The dunder is not CPython's own,
-    # so the call is the one unanswered call (#7757).
+    # so the call is the one unanswered call (#7757).  ``C()`` before the
+    # ``try`` is the class call, owed: its own halt leaves ``f`` too.
     source = (
         "class C:\n"
         "    def __str__(self):\n"
@@ -104,9 +113,10 @@ def test_a_builtin_running_a_user_dunder_may_raise(tmp_path, call, name):
     )
     returns, halts = _returns(tmp_path, source)
     assert sorted(value.value for value in returns) == ["caught", "no"]
-    (halt,) = halts
-    assert type(halt) is UndeterminedRaiseEffect
-    assert halt.producer_node_owner == f"UnknownCallee:{name}"
+    assert all(type(halt) is UndeterminedRaiseEffect for halt in halts)
+    assert sorted({halt.producer_node_owner for halt in halts}) == sorted(
+        {"UnknownCallee:e.C", f"UnknownCallee:{name}"}
+    )
 
 
 @pytest.mark.parametrize(
@@ -135,5 +145,24 @@ def test_a_builtin_over_builtin_operands_stays_total(tmp_path, call):
     ],
 )
 def test_a_builtin_over_builtin_operands_changes_nothing(tmp_path, call):
-    source = CLS + f"def f():\n    c = C()\n    {call}\n    return c.items\n"
+    # ``c`` is a list the frame built: the class call's instance is the
+    # constructor contract's to state at prove, never a field read off
+    # ``__init__`` here (#7757), so the object the builtins must leave alone
+    # is one the lift decides.
+    source = CLS + f"def f():\n    c = [5]\n    {call}\n    return c\n"
     assert _only_return(tmp_path, source) == fresh(ListValue, (TermValue(5),))
+
+
+@pytest.mark.parametrize("call", ["x = type(c)", "x = id(c)"])
+def test_type_and_id_run_no_dunder_of_a_class_calls_instance(tmp_path, call):
+    # ``type``/``id`` invoke no operand dunder: the instance is the class
+    # call's own result after them, never an object a call may have changed.
+    source = CLS + f"def f():\n    c = C()\n    {call}\n    return c\n"
+    returns, halts = _returns(tmp_path, source)
+    (value,) = returns
+    assert not _unknown_after_call(value)
+    assert value.term.name == "python:call_result"
+    assert value.term.args[0].name == "call:e.C"
+    assert sorted({halt.producer_node_owner for halt in halts}) == [
+        "UnknownCallee:e.C"
+    ]

@@ -577,9 +577,12 @@ def test_a_siteless_undecided_truth_refuses_by_name():
     ],
 )
 def test_a_helper_never_tests_the_truth_its_list_arrived_with(tmp_path, test):
-    # ``xs`` reaches ``g`` by binding: its truth is not the emptiness of the
-    # contents the caller built, so both faces stand.
-    source = "def g(xs):\n    " + test + "def f():\n    return g([1, 2])\n"
+    # ``xs`` reaches the function by binding: its truth is not the emptiness
+    # of any contents a caller built, so both faces stand.  The function's
+    # own reduction is read: a caller's ``g([1, 2])`` is the coordinate and
+    # edge joined at prove, never ``g``'s body reduced on that actual
+    # (#7757 steps 6 and 9).
+    source = "def f(xs):\n    " + test
     returns, _halts = _returns(tmp_path, source)
     assert TermValue(1) in returns
     assert TermValue(0) in returns
@@ -628,6 +631,19 @@ def test_a_stale_list_on_the_right_of_a_slice_assignment_has_no_members():
     assert stored == fresh(ListValue, (TermValue(1), TermValue(2)))
 
 
+def _fragment_site(source: str, kind_name: str):
+    """A source fragment of the first ``kind_name`` node of ``source``: a
+    ground exit cites source it can re-read, so its site is a fragment
+    (``ground_exit.ground_raise_effect``), never a bare string."""
+    from test_decorator_and_annotation_known_by_binding import _unit
+
+    unit = _unit(source)
+    node = next(
+        node for node in unit.typed_module.walk() if type(node).__name__ == kind_name
+    )
+    return node.fragment
+
+
 def test_a_store_or_delete_outside_the_door_never_reads_stale_contents():
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor.slice_value import SliceValue
@@ -635,7 +651,8 @@ def test_a_store_or_delete_outside_the_door_never_reads_stale_contents():
     made, stale = _made_and_arrived()
     # Current contents decide the bound: index 5 of ``[1, 2]`` is IndexError,
     # the store's one decided halt.
-    decided = made.setitem(TermValue(5), TermValue(0), "store-site", None)
+    store_site = _fragment_site("r = [1, 2]\nr[5] = 0\n", "Subscript")
+    decided = made.setitem(TermValue(5), TermValue(0), store_site, None)
     assert decided.halts() and not _completed_values(decided)
     assert all(
         type(halt.effect) is not UndeterminedRaiseEffect for halt in decided.halts()
@@ -683,27 +700,6 @@ def test_a_sequence_pattern_over_a_stale_list_splits_on_its_length():
         assert any("len" in str(name) for name in names)
         assert "python:object_read" in names
         assert "array" not in names
-
-
-@pytest.mark.parametrize("pattern", ["[a, b]", "[a, *rest]", "[*rest, b]"])
-def test_a_helper_matches_the_list_it_arrived_with_on_both_lengths(
-    tmp_path, pattern
-):
-    # ``xs`` reaches ``g`` by binding: whether it has the pattern's length is
-    # not read from the contents the caller built, so both cases stand.
-    source = (
-        "def g(xs):\n"
-        + "    match xs:\n"
-        + f"        case {pattern}:\n"
-        + "            return 1\n"
-        + "        case _:\n"
-        + "            return 0\n"
-        + "def f():\n"
-        + "    return g([1, 2])\n"
-    )
-    returns, _halts = _returns(tmp_path, source)
-    assert TermValue(1) in returns
-    assert TermValue(0) in returns
 
 
 # The residue of #8129: an undecided read's term names a stale container by
@@ -989,18 +985,26 @@ def test_a_str_method_over_an_opaque_argument_keeps_its_marker():
     from sugar_lift_py_tests.ir import make_var
     from sugar_source_tree.nodes import LanguageCallee
 
+    # ``join`` iterates its operand and checks each member is a ``str``
+    # (``string_value._joined``): those faces cite their site, so the
+    # operation carries a source fragment.  Every face that completes is the
+    # coordinate with its marker.
     for name, marker in (
         ("join", LanguageCallee.STR_JOIN),
         ("split", LanguageCallee.STR_SPLIT),
     ):
-        minted = _fold_string_method(
+        site = _fragment_site(f"r = ','.{name}(xs)\n", "Call")
+        outcome = _fold_string_method(
             StringValue(","),
             SimpleNamespace(
-                name=name, arguments=(SymbolicValue(make_var("xs")),), blame=name
+                name=name, arguments=(SymbolicValue(make_var("xs")),), blame=site
             ),
-        ).completed_value()
-        assert type(minted) is OpaqueOpCallsite
-        assert minted.language_callee is marker
+        )
+        completed = _completed_values(outcome)
+        assert completed
+        for minted in completed:
+            assert type(minted) is OpaqueOpCallsite
+            assert minted.language_callee is marker
 
 
 # An instance of a source class (``ObjectValue``) carries currency by the one
@@ -1063,7 +1067,14 @@ def test_a_stale_instances_field_read_is_the_undecided_read_never_its_value():
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
     made, stale = _instance_made_and_arrived()
-    assert made.attribute("x", "read-site", None).completed_value() == TermValue(1)
+    # A field read on a current instance holds its field only under prove's
+    # ``plain_read`` (#9051: the lift's ``reads_plain_field`` is deleted): it
+    # is the same one undecided read, never the recorded ``1`` here.
+    made_read = _completed_values(made.attribute("x", "read-site", None))
+    assert made_read and TermValue(1) not in made_read
+    for value in made_read:
+        assert type(value) is SymbolicValue
+        assert value.term.name == "python:attribute_result"
     outcome = stale.attribute("x", "read-site", None)
     completed = _completed_values(outcome)
     assert completed and TermValue(1) not in completed
@@ -1133,12 +1144,22 @@ def test_a_helper_never_reads_the_fields_its_object_arrived_with(tmp_path):
     assert TermValue(5) not in returns
 
 
-def test_an_instance_this_frame_built_still_answers_its_field(tmp_path):
+def test_an_instance_this_frame_built_is_read_through_its_class_call(tmp_path):
+    # ``C(5)`` is the class call, its coordinate and edge (#7757 steps 6 and
+    # 9): ``o.x`` reads the instance as the call left it, and the ``5`` its
+    # ``__init__`` stores is the constructor contract's to state at prove,
+    # never a value the lift reads off the body.
     returns, halts = _returns(
         tmp_path, _C + "def f():\n    o = C(5)\n    return o.x\n"
     )
-    assert returns == [TermValue(5)]
-    assert halts == []
+    (value,) = returns
+    assert value != TermValue(5)
+    assert value.term.name == "python:attribute_result"
+    assert value.term.args[0].value == "x"
+    assert value.term.args[1].name == "python:after"
+    assert "UnknownCallee:e.C" in [
+        getattr(halt, "producer_node_owner", None) for halt in halts
+    ]
 
 
 # The residue #8151 named (#7757): on an instance that arrived by binding,
@@ -1185,29 +1206,29 @@ def test_an_instances_delete_is_the_undecided_delete_current_or_not():
 
 
 def test_a_stale_instances_unknown_name_is_the_undecided_read():
-    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
     _made, stale = _instance_made_and_arrived()
-    # Another alias may have added it: never the construction panic.
+    # Another alias may have added it: never the construction panic.  The
+    # one keyed undecided read (``floor_value.undecided_attribute_result``,
+    # #9034), naming the object, never a field it arrived with.
     outcome = stale.attribute("zz", "read-site", None)
     completed = _completed_values(outcome)
-    assert completed and all(type(value) is CallSiteValue for value in completed)
+    assert completed and all(type(value) is SymbolicValue for value in completed)
+    for value in completed:
+        assert value.term.name == "python:attribute_result"
+        assert value.term.args[0].value == "zz"
+        assert _object_reads(value.term)
     assert outcome.halts()
 
 
 def test_a_helper_never_decides_the_delete_of_a_field_its_object_lacked(
     tmp_path,
 ):
-    # ``o`` arrived without ``y``; another alias may have stored it since, so
-    # ``del o.y`` may complete.
-    source = (
-        _C
-        + "def g(o):\n"
-        + "    del o.y\n"
-        + "    return 1\n"
-        + "def f():\n"
-        + "    return g(C(5))\n"
-    )
+    # ``o`` arrives by binding, without ``y`` or with it: ``del o.y`` may
+    # complete.  The function's own reduction is read; a caller's
+    # ``g(C(5))`` is the coordinate and edge joined at prove (#7757).
+    source = _C + "def f(o):\n" + "    del o.y\n" + "    return 1\n"
     returns, halts = _returns(tmp_path, source)
     assert TermValue(1) in returns
     assert "AttributeError" not in _halt_names(halts)
@@ -1249,23 +1270,27 @@ def test_a_helper_reads_a_name_nothing_records_as_undecided(tmp_path):
     assert returns and halts
 
 
-def test_a_property_wins_over_any_alias_store(tmp_path):
-    # A property is a data descriptor: the instance ``__dict__`` never
-    # shadows it, so its getter answers on an instance that arrived.
-    source = _K + "def g(o):\n    return o.v\ndef f():\n    return g(K(5))\n"
-    returns, _halts = _returns(tmp_path, source)
-    assert TermValue(4) in returns
-
-
 # The residue #8153 named (#7757): ``o.m()`` selected the class's method
 # beside the one attribute lookup, so an instance field that shadows the
 # method was never called, and an instance that arrived by binding still ran
 # the class's method although another alias may have stored a field ``m``.
-# A method call is ``o.m`` read through ``ObjectValue.attribute``, then that
-# value called.
+# A method call on the instance a class call made is now the one dispatched
+# edge, ``call:dispatch:m`` over that instance (#7757 step 8, #9043): which
+# ``m`` runs -- an instance field that shadows the method, or the class's
+# own -- is the receiver's class contract's to decide at prove, never a body
+# the lift runs.
 
 
-def test_an_instance_field_that_shadows_a_method_is_what_the_call_calls(tmp_path):
+def _dispatched_m(returns):
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    assert returns
+    for value in returns:
+        assert type(value) is CallSiteValue
+        assert value.target_name == "dispatch:m"
+
+
+def test_an_instance_field_that_shadows_a_method_is_never_the_classs_body(tmp_path):
     source = (
         "class S:\n"
         "    def __init__(self):\n"
@@ -1277,15 +1302,16 @@ def test_an_instance_field_that_shadows_a_method_is_what_the_call_calls(tmp_path
         "    return o.m()\n"
     )
     returns, halts = _returns(tmp_path, source)
-    assert returns == [TermValue(1)]
-    assert halts == []
+    _dispatched_m(returns)
+    assert TermValue(2) not in returns
+    assert halts
 
 
-def test_an_instance_this_frame_built_still_calls_its_classs_method(tmp_path):
+def test_an_instance_this_frame_built_calls_the_dispatched_method(tmp_path):
     source = _K + "def f():\n    o = K(5)\n    return o.m()\n"
     returns, halts = _returns(tmp_path, source)
-    assert returns == [TermValue(1)]
-    assert halts == []
+    _dispatched_m(returns)
+    assert halts
 
 
 def test_a_helper_never_calls_a_method_its_object_may_shadow(tmp_path):
@@ -1295,25 +1321,6 @@ def test_a_helper_never_calls_a_method_its_object_may_shadow(tmp_path):
     returns, halts = _returns(tmp_path, source)
     assert returns and TermValue(1) not in returns
     assert halts
-
-
-def test_a_helper_calls_what_a_property_answers(tmp_path):
-    # A property is a data descriptor: no instance field shadows it, so on
-    # an instance that arrived its getter answers, and the call calls that.
-    source = (
-        "class P:\n"
-        "    def __init__(self, x):\n"
-        "        self.x = x\n"
-        "    @property\n"
-        "    def m(self):\n"
-        "        return lambda: 3\n"
-        "def g(o):\n"
-        "    return o.m()\n"
-        "def f():\n"
-        "    return g(P(5))\n"
-    )
-    returns, _halts = _returns(tmp_path, source)
-    assert TermValue(3) in returns
 
 
 @pytest.mark.parametrize(

@@ -17,7 +17,8 @@ caught face under ``adt.is_python_type(<that exception>, T)`` and the original
 halt under the complement. ``except BaseException`` and bare ``except`` catch
 it totally; ``except Exception`` does not (a C call or a Python callee can
 leave with ``KeyboardInterrupt``/``SystemExit``). ``as e`` binds that same
-value, whose reads stay refusals, and ``raise e`` re-raises the same object.
+value, whose reads are the one undecided read (never invented), and ``raise
+e`` re-raises the same object.
 """
 
 from __future__ import annotations
@@ -30,7 +31,6 @@ from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.undetermined_exception_value import (
     UndeterminedExceptionValue,
 )
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_source_tree.nodes import FunctionDef
 
@@ -218,9 +218,24 @@ def test_as_binds_the_same_exception_value(tmp_path) -> None:
 
 
 def test_reads_on_the_bound_exception_are_not_invented(tmp_path) -> None:
+    # ``e.args`` on the exception nothing testified to is the one undecided
+    # read (``UndeterminedExceptionValue.attribute``, #7757 NEW-3): it
+    # completes as ``python:attribute_result("args", <e>, <key>)`` or halts,
+    # owed -- never a tuple the lift invents, never a construction panic.
     prelude, operation, _ = C_CALL
-    with pytest.raises(ConstructionPanic):
-        _exits(tmp_path, _try(prelude, operation, ("ValueError as e", "return e.args")))
+    exits = _exits(
+        tmp_path, _try(prelude, operation, ("ValueError as e", "return e.args"))
+    )
+    reads = [
+        row[1]
+        for row in _entries(exits)
+        if row[0] == "return"
+        and getattr(getattr(row[1], "term", None), "name", None)
+        == "python:attribute_result"
+    ]
+    assert reads
+    assert all(read.term.args[0].value == "args" for read in reads)
+    assert _undetermined_halts(exits, "UndeterminedExceptionValue.attribute")
 
 
 def test_raise_e_reraises_the_same_exception(tmp_path) -> None:

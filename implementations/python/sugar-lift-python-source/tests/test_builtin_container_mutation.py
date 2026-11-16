@@ -62,6 +62,37 @@ def _is_unknown_after_call(value, label):
     )
 
 
+def _is_after_call(value, label, callee=None):
+    """``python:after(<call result>, <label>)``: the object a call is handed,
+    as that call left it (``source_call_resolution.object_after_call``).
+
+    A call of a same-file definition is its coordinate and edge, joined at
+    prove (#7757 steps 6 and 9): the caller never follows the callee's body,
+    so what the callee's contract states about ``label`` is read here only as
+    this term, never as the pre-call contents and never as a value the lift
+    worked out from the body.  ``callee``, when given, is the call's target
+    (``e.g``, ``dispatch:add``)."""
+    if type(value) is not SymbolicValue or value.term.name != "python:after":
+        return False
+    result, named = value.term.args
+    if named.value != label:
+        return False
+    if callee is None:
+        return True
+    return (
+        result.name == "python:call_result" and result.args[0].name == f"call:{callee}"
+    )
+
+
+def _call_owners(halts):
+    """The owners of the undetermined halts: each owed call keeps its face."""
+    return sorted(
+        halt.producer_node_owner
+        for halt in halts
+        if isinstance(halt, UndeterminedRaiseEffect)
+    )
+
+
 def _halt_names(halts):
     return sorted(getattr(halt, "exception_name", None) or "" for halt in halts)
 
@@ -162,36 +193,52 @@ def test_unrolled_loop_appends_one_distinct_unknown_per_iteration(tmp_path):
         "        r.append(textwrap.dedent(s[i]))\n"
         "    return r\n"
     )
+    # ``s[i]`` on the formal is the one undecided read (#7757 NEW-1), so the
+    # function leaves by more rows than the call's; every completed row holds
+    # the list the two iterations built.
     returns, halts = _returns(tmp_path, source)
-    (value,) = returns
-    assert type(value) is ListValue and len(value.elements) == 2
-    first, second = value.elements
-    assert first != second
-    # Each member names its evaluation by `python:occurrence(<site coordinate
-    # CID>, <path segment>...)` (#7808): its loop segment is its iteration.
-    iterations = []
-    for member in (first, second):
-        occurrence = member.term.args[1]
-        assert occurrence.name == "python:occurrence"
-        iterations.append(
-            sorted(
-                {
-                    match.group(1)
-                    for segment in occurrence.args[1:]
-                    if (match := re.fullmatch(r"loop\[\d+,\d+\)#(\d)", segment.value))
-                }
+    assert returns
+    for value in returns:
+        assert type(value) is ListValue and len(value.elements) == 2
+        first, second = value.elements
+        assert first != second
+        # Each member names its evaluation by `python:occurrence(<site
+        # coordinate CID>, <path segment>...)` (#7808): its loop segment is
+        # its iteration.
+        iterations = []
+        for member in (first, second):
+            occurrence = member.term.args[1]
+            assert occurrence.name == "python:occurrence"
+            iterations.append(
+                sorted(
+                    {
+                        match.group(1)
+                        for segment in occurrence.args[1:]
+                        if (
+                            match := re.fullmatch(
+                                r"loop\[\d+,\d+\)#(\d)", segment.value
+                            )
+                        )
+                    }
+                )
             )
-        )
-    assert iterations == [["0"], ["1"]]
-    # Each iteration's call halts once, at its own occurrence.
-    assert len(halts) == 2
+        assert iterations == [["0"], ["1"]]
+    # Each iteration's call halts, at its own occurrence; every halt is
+    # undetermined, none named by the lift.
     assert all(isinstance(halt, UndeterminedRaiseEffect) for halt in halts)
-    assert len({halt.occurrence for halt in halts}) == 2
+    dedent = [
+        halt
+        for halt in halts
+        if halt.producer_node_owner == "UnknownCallee:textwrap.dedent"
+    ]
+    assert len({halt.occurrence for halt in dedent}) == 2
 
 
-def test_a_list_passed_to_a_helper_is_what_its_body_leaves(tmp_path):
-    # The helper's body is projected: its append is a store on ``r``'s object
-    # (tests/test_source_helper_applies_actual_stores.py), never ``[]``.
+def test_a_list_passed_to_a_helper_is_the_calls_after_state(tmp_path):
+    # The helper's body is never followed at lift (#8705): the call is its
+    # coordinate and edge, and ``r`` is the object as the call left it, the
+    # term ``g``'s contract states its post over -- never ``[]``
+    # (tests/test_source_helper_applies_actual_stores.py).
     source = (
         "def g(x):\n"
         "    x.append(1)\n"
@@ -201,7 +248,10 @@ def test_a_list_passed_to_a_helper_is_what_its_body_leaves(tmp_path):
         "    v = g(r)\n"
         "    return r\n"
     )
-    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
+    returns, halts = _returns(tmp_path, source)
+    (value,) = returns
+    assert _is_after_call(value, "x", callee="e.g")
+    assert _call_owners(halts) == ["UnknownCallee:e.g"]
 
 
 def test_a_list_passed_to_unprojected_code_is_unknown_after_the_call(tmp_path):
@@ -280,12 +330,22 @@ def test_a_value_that_holds_the_list_is_unknown_after_its_mutation(tmp_path):
 
 
 def test_a_symbolic_loop_leaves_the_list_unknown(tmp_path):
+    # ``iter``/``next`` over the formal are the one undecided read (#7757
+    # NEW-1), and in the live loop ``r`` is no decided list, so its
+    # ``append`` is the unanswered call: each keeps its halt.
     source = (
         "def f(xs):\n    r = []\n    for x in xs:\n        r.append(x)\n    return r\n"
     )
-    value = _only_return(tmp_path, source)
-    assert value != fresh(ListValue, ())
-    assert _is_unknown_after_call(value, "r")
+    returns, halts = _returns(tmp_path, source)
+    assert returns
+    for value in returns:
+        assert value != fresh(ListValue, ())
+        assert type(value) is SymbolicValue
+    assert sorted(set(_call_owners(halts))) == [
+        "SymbolicValue.iter",
+        "SymbolicValue.next",
+        "UnknownCallee:append",
+    ]
 
 
 def test_remove_of_a_symbolic_member_is_two_faced_and_unknown_after(tmp_path):
