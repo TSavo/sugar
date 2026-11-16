@@ -730,6 +730,29 @@ def test_a_plain_function_read_off_its_class_takes_no_implicit_argument(
         assert "ValueError" not in _halt_names(outcome)
 
 
+def test_a_lambda_class_field_read_off_its_class_is_the_dispatched_call(
+    tmp_path,
+) -> None:
+    """``Box.f(3)`` of ``f = lambda n: ...``: the same one dispatched call a
+    ``def`` read off the class is, looked up on ``Box`` at prove and bound
+    there by the ``field`` kind the namespace row states (#7757 entry 6).
+    The lambda is never applied here: the written actual stands alone, and
+    its body's raise is its contract's halt, joined at prove."""
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.ir import num
+
+    box, ctx = _rooted_class_value(
+        tmp_path, "class Box:\n    f = lambda n: n // 0\n", "field_on_class"
+    )
+    outcome = box.call_method_value(
+        "f", (TermValue(3),), owner="test", blame="f-site", ctx=ctx
+    )
+    term = _edge_term(outcome, "dispatch:f")
+    assert _positional(term) == (num(3),)
+    assert _lookup(term) == ("python:field_on_class.Box", "")
+    assert "ZeroDivisionError" not in _halt_names(outcome)
+
+
 def test_a_plain_function_read_off_its_class_takes_its_receiver_as_written(
     tmp_path,
 ) -> None:

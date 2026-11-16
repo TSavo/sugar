@@ -4,8 +4,9 @@
    (``BuiltinSuperValue``) read the one resolution
    (``ClassDefinitionValue.namespace_member``: ``namespace_owner``, then the
    binding the holding class's body left last), never a method of the roster
-   found by its name.  A function class field is unbound read off its class
-   and bound to the receiver through ``super()``.
+   found by its name.  A function class field read off its class or through
+   ``super()`` is the one dispatched call, as a ``def`` is: prove binds it
+   (unbound off the class, to the receiver through ``super()``).
 2. A store through any name whose value may be a class -- a call's result, a
    ``for``/``with`` target, a lambda's or a comprehension's own variable --
    makes the name undecided on every class the module hands on.
@@ -165,8 +166,10 @@ def test_cls_m_of_a_lambda_class_field_is_the_function_unbound() -> None:
         "f", (TermValue(3),), owner="test", blame="cls-f", ctx=context
     )
 
-    # No receiver is bound: the one written actual is ``n``.  The lambda's
-    # call is the edge; its ``ZeroDivisionError`` is joined at prove.
+    # The one dispatched call looked up on ``Box`` (#7757 entry 6); with no
+    # workspace root ``Box`` names no join symbol, so it is the unanswered
+    # call of ``Box.f``.  Prove binds the field unbound: the one written
+    # actual is ``n``.  Its ``ZeroDivisionError`` is joined at prove.
     _the_edge(outcome)
 
 
@@ -204,9 +207,10 @@ def test_super_m_is_the_last_binding_a_lambda_bound_to_the_receiver() -> None:
         "m", (TermValue(3),), owner="test", blame="super-m", ctx=context
     )
 
-    # Base's namespace holds the lambda, bound to the receiver: ``n`` is 3.
-    # The lambda's call is the edge; its ``ZeroDivisionError`` is joined at
-    # prove, never the earlier ``def``'s ``ValueError``.
+    # Base's namespace holds the lambda: the one dispatched call after ``A``
+    # (#7757 entry 6), bound to the receiver at prove; with no workspace root
+    # it is the unanswered call of ``super.m``.  Its ``ZeroDivisionError`` is
+    # joined at prove, never the earlier ``def``'s ``ValueError``.
     _the_edge(outcome)
 
 
