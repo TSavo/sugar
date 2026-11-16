@@ -126,6 +126,13 @@ class LiveForRuntimeV1:
     coordinate_names: tuple[str, ...] = ()
     # The name of each ``published_evaluations`` entry, in its order.
     published_names: tuple[str, ...] = ()
+    # The names an item leaves changed that the loop does not carry
+    # (``nodes._uncarried_item_changes``): a name a call in the body may
+    # rebind, a ``match`` capture, a ``del``.  No item hands them on, so the
+    # loop runs its items in hand only where there is none
+    # (``LoopRecurrenceSugar._desugar_with_iterable``); otherwise it runs as
+    # its recurrence.
+    uncarried_item_changes: tuple[str, ...] = ()
 
 
 def loop_post_writes(loop, coordinate_names, scope) -> dict:
@@ -1170,6 +1177,11 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     post_writes = loop_post_writes(loop, coordinate_names, scope)
     published_names = tuple(sorted(post_writes))
     published_evaluations = tuple(post_writes[name] for name in published_names)
+    # What an item leaves changed that the loop does not carry, as the
+    # loop's substitution found it (``nodes._with_item_carry``).
+    uncarried_item_changes = tuple(
+        getattr(loop, "uncarried_item_changes", None) or ()
+    )
     if isinstance(loop, For):
         pattern = loop.unit.require_target_pattern(loop, loop.target)
         construction = replace(
@@ -1189,15 +1201,21 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                 published_evaluations,
                 coordinate_names=coordinate_names,
                 published_names=published_names,
+                uncarried_item_changes=uncarried_item_changes,
             ),
         )
-    elif set(For._stmts_bound_names((*loop.body, *loop.orelse))) <= set(carried_names):
+    elif (
+        set(For._stmts_bound_names((*loop.body, *loop.orelse))) <= set(carried_names)
+        and not uncarried_item_changes
+    ):
         # A live ``while`` runs its items once every name its body and its
         # ``else`` write is carried, so each item hands the next all it
         # wrote; one that writes a name the loop cannot carry
         # (``_loop_header_start``: a builtin with no module binding, an
-        # undecided module binding, a name a function frame does not bind)
-        # stays its recurrence.
+        # undecided module binding, a name a function frame does not bind),
+        # or whose item leaves changed a name it does not carry at all
+        # (``nodes._uncarried_item_changes``: a name a call may rebind), stays
+        # its recurrence.
         construction = replace(
             construction,
             loop_runtime=LiveWhileRuntimeV1(
