@@ -30,7 +30,7 @@ from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.floor.object_value import ObjectValue
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import ClassDef, SourceUnit
+from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 
 from frame_fresh import FRAME_FRESH
@@ -220,13 +220,10 @@ def test_the_initializer_is_the_one_lookups() -> None:
 
     # A store to ``A.__init__``: neither A's ``def`` nor ``object``'s.
     assert classes["A"].initializer_entry() is None
-    assert not SourceUnit.source_class_admits_source_constructor_frame(classes["A"])
     # E inherits D's generated ``__init__``: never ``object``'s zero formals.
     assert classes["E"].initializer_entry() is None
-    assert not SourceUnit.source_class_admits_source_constructor_frame(classes["E"])
     plain = classes["Plain"].initializer_entry()
     assert isinstance(plain, ClassDef) and plain.name == "Plain"
-    assert SourceUnit.source_class_admits_source_constructor_frame(classes["Plain"])
 
 
 # --- 2. the class body's own control flow ----------------------------------------

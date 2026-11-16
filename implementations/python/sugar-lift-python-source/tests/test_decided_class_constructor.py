@@ -11,8 +11,9 @@ instance carries its positional actuals as ``args``.  Only a base the lifter
 cannot read leaves the call the one unanswered call.
 
 Every reader of a class's bases reads one walk, the MRO by binding
-(``ClassDef.method_resolution_order``): the admission, the ``__init__`` the
-call runs (the first of that order, ``ClassDef.initializer_entry``) and the
+(``ClassDef.method_resolution_order``): ``ClassDef.constructor_is_read``,
+the ``__init__`` the call runs (the first of that order,
+``ClassDef.initializer_entry``) and the
 constructor defaults the class value binds.  So a source ``__init__`` in a
 chain ending in a builtin exception is just the first ``__init__`` found: its
 frame applies, and ``super().__init__(...)`` reaches BaseException's.
@@ -23,7 +24,7 @@ from __future__ import annotations
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import StringValue, TupleValue
 from sugar_lift_py_tests.unanswered_calls import owed_calls
-from sugar_source_tree.nodes import ClassDef, SourceUnit
+from sugar_source_tree.nodes import ClassDef
 
 from test_assignment_evaluates_rhs import _rows
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
@@ -53,12 +54,6 @@ def _definition(tmp_path, source, name):
         if isinstance(node, ClassDef) and node.name == name
     ]
     return definition
-
-
-def _admitted(tmp_path, source, name):
-    return SourceUnit.source_class_admits_source_constructor_frame(
-        _definition(tmp_path, source, name)
-    )
 
 
 def _names(order):
@@ -124,36 +119,6 @@ def test_a_base_the_lifter_cannot_read_stays_the_unanswered_call(tmp_path):
     assert len(returns) == 1
     assert len(owed_calls(exits)) == 1
     assert _owners(halts) == ["UnknownCallee:E"]
-
-
-def test_bases_are_read_by_binding_never_spelling(tmp_path):
-    shadowed = "Exception = make()\nclass E(Exception):\n    pass\n"
-    assert _admitted(_seat(tmp_path, "shadowed"), shadowed, "E") is False
-    builtin = "class E(KeyError):\n    pass\n"
-    assert _admitted(_seat(tmp_path, "builtin"), builtin, "E") is True
-    plain = "class P(object):\n    pass\n"
-    assert _admitted(_seat(tmp_path, "object"), plain, "P") is True
-    chained = "class A(Exception):\n    pass\nclass B(A):\n    pass\n"
-    assert _admitted(_seat(tmp_path, "chained"), chained, "B") is True
-
-
-def test_a_builtin_exception_with_its_own_signature_is_not_admitted(tmp_path):
-    # ``UnicodeDecodeError()`` raises TypeError: its constructor is not
-    # BaseException's ``(*args)``, so the subclass's call is not decided here.
-    source = "class E(UnicodeDecodeError):\n    pass\n"
-    assert _admitted(tmp_path, source, "E") is False
-
-
-def test_an_assigned_constructor_is_not_admitted(tmp_path):
-    source = "def make(self):\n    pass\nclass E(Exception):\n    __init__ = make\n"
-    assert _admitted(tmp_path, source, "E") is False
-
-
-def test_an_os_error_subclass_is_not_admitted(tmp_path):
-    # ``OSError(2, 'x', 'f').args == (2, 'x')``: OSError's constructor drops
-    # the filename actuals from ``args``, so it is not BaseException's law.
-    source = "class E(FileNotFoundError):\n    pass\n"
-    assert _admitted(tmp_path, source, "E") is False
 
 
 # -- the one base walk (``ClassDef.method_resolution_order``) ---------------
@@ -256,10 +221,6 @@ EXCEPTION_WITH_INITIALIZER = (
     "    def __init__(self, msg):\n"
     "        super().__init__('wrapped', msg)\n"
 )
-
-
-def test_a_source_initializer_before_a_builtin_exception_is_admitted(tmp_path):
-    assert _admitted(tmp_path, EXCEPTION_WITH_INITIALIZER, "E") is True
 
 
 def test_an_exception_class_with_a_source_initializer_raises_its_instance(tmp_path):

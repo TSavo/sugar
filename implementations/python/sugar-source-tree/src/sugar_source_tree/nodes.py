@@ -885,8 +885,7 @@ def _class_constant_if_branch(statement):
     branch the constant selects (its ``orelse``, maybe empty, when the
     constant is falsy).  None for any other statement.  The class body runs
     only that branch, and every reader of the body reads it here: the
-    namespace a body leaves (``_class_statement_binding``) and the
-    constructor-frame admission (``SourceUnit.source_class_has_plain_source_body``)."""
+    namespace a body leaves (``_class_statement_binding``)."""
     if isinstance(statement, If) and isinstance(statement.test, Constant):
         return statement.body if statement.test.value else statement.orelse
     return None
@@ -4924,141 +4923,6 @@ class SourceUnit:
         if self.module_execution_site(read) is not None:
             return None
         return definition
-
-    @staticmethod
-    def _is_simple_class_field_statement(member: "Node") -> bool:
-        """A class-body name assignment, not a hook or a computed target."""
-        if isinstance(member, Assign):
-            return all(isinstance(target, Name) for target in member.targets)
-        if isinstance(member, AnnAssign):
-            return isinstance(member.target, Name)
-        return False
-
-    @staticmethod
-    def source_class_has_plain_source_body(definition: "ClassDef") -> bool:
-        """Methods and simple class-body fields only, over the class's one
-        base walk.
-
-        The classes are the class's MRO read by binding, when it constructs
-        by the laws the lifter reads (``ClassDef.construction_order``, #7757:
-        ``object`` and builtin exception classes whose constructor is
-        BaseException's ``(*args)`` law): every source class of it has a
-        plain body.  The class call
-        then runs the first ``__init__`` of that order
-        (``ClassDef.initializer_entry``): a source ``def __init__`` is its
-        frame, whose ``super().__init__(...)`` reaches the builtin
-        exception's ``__init__``
-        (``BuiltinExceptionClassValue.initialize_instance``); a builtin
-        exception's is the inherited-exception frame of
-        ``source_visible_constructor_frame``, whose instance carries its
-        ``args``.  ``__new__`` is refused in every body, by ``def`` or by
-        assignment, but the called class's own ``def __new__`` whose result
-        the call returns as it is (``ClassDef.returned_new``: its frame runs
-        that ``__new__``), and an assigned ``__init__`` is refused (the frame
-        reads only a ``def``).  An ``if`` whose test is a constant is the
-        branch it runs (``_class_constant_if_branch``), read as the class
-        body's run reads a conditional (fields and ``pass`` only, its ``def``
-        refused there).  Constructor hooks, decorators, keywords, type
-        parameters, and a walk that cannot be read -- a base the lifter
-        cannot read, or a builtin exception constructing by its own law
-        (``OSError``) -- stay outside this door: that call is the unanswered
-        call.
-        """
-        if not isinstance(definition, ClassDef):
-            return False
-        order = definition.construction_order()
-        if order is None:
-            return False
-        returned_new = definition.returned_new()
-        forbidden_methods = {
-            "__new__",
-            "__getattr__",
-            "__getattribute__",
-            "__setattr__",
-            "__delattr__",
-            "__getitem__",
-            "__setitem__",
-            "__delitem__",
-        }
-
-        def field_names(member) -> tuple[str, ...]:
-            if isinstance(member, Assign):
-                return tuple(target.id for target in member.targets)
-            return (member.target.id,)
-
-        def plain(cls) -> bool:
-            if cls.keywords or cls.decorators or cls.type_params:
-                return False
-            return plain_members(cls, cls.body, top=True)
-
-        def plain_members(cls, members, *, top: bool) -> bool:
-            for index, member in enumerate(members):
-                if isinstance(member, Pass) or (
-                    top
-                    and index == 0
-                    and isinstance(member, Expr)
-                    and isinstance(member.value, Constant)
-                    and isinstance(member.value.value, str)
-                ):
-                    continue
-                if top and isinstance(member, FunctionDef):
-                    if (
-                        member.name in forbidden_methods and member is not returned_new
-                    ) or (
-                        member.decorators
-                        and cls._method_descriptor_kind(member) is None
-                    ):
-                        return False
-                    continue
-                if SourceUnit._is_simple_class_field_statement(member):
-                    if any(
-                        name in forbidden_methods or name == "__init__"
-                        for name in field_names(member)
-                    ):
-                        return False
-                    continue
-                taken = _class_constant_if_branch(member)
-                if taken is not None:
-                    if not plain_members(cls, taken, top=False):
-                        return False
-                    continue
-                return False
-            return True
-
-        return all(plain(entry) for entry in order if isinstance(entry, ClassDef))
-
-    @staticmethod
-    def source_class_admits_source_constructor_frame(
-        definition: "ClassDef",
-    ) -> bool:
-        """Whether this class call may carry its source constructor frame.
-
-        One body rule (``source_class_has_plain_source_body``): a class whose
-        body is only methods and simple name assignments, and
-        whose MRO, read by binding, is the same kind of authenticated local
-        class, ``object``, or a builtin exception class whose constructor is
-        BaseException's, carries the frame (a class with no base is one: its
-        order is the class and ``object``): its constructor is the first ``__init__`` of that order, so
-        the call constructs.  Unauthenticated or computed bases stay outside
-        this door.  A
-        decorated class binds its name to the decorators' result: a call of
-        it calls that value (``DecoratedDefinitionRef``), never this frame.
-        A class whose ``__init__`` the one class-namespace lookup does not
-        decide as a source ``def`` or a builtin's
-        (``ClassDef.initializer_entry`` is None: a store to it, a
-        conditional ``def``, a base's ``__init_subclass__``) carries no frame
-        either: that call is the unanswered call.  So is a class whose
-        ``__new__`` the lookup does not decide as its own ``def`` or a
-        builtin's (``ClassDef.new_entry``: a store to it, a base's ``def
-        __new__``).
-        """
-        if definition.decorators:
-            return False
-        if isinstance(definition, ClassDef) and not definition.new_entry()[0]:
-            return False
-        if isinstance(definition, ClassDef) and definition.initializer_entry() is None:
-            return False
-        return SourceUnit.source_class_has_plain_source_body(definition)
 
     @staticmethod
     def _module_statement_bound_names(statement: "Node") -> set[str]:
@@ -12227,8 +12091,8 @@ class ClassDef(Statement):
         attributed base, a class local to a function, a cycle of class
         statements: which classes follow it, and in what order, is not read.
 
-        Every reader of a class's bases reads this walk: the constructor
-        frame's admission (``SourceUnit.source_class_has_plain_source_body``),
+        Every reader of a class's bases reads this walk: whether the class
+        statement decides its call (``constructor_is_read``),
         the ``__init__`` a call of the class runs (``initializer_entry``),
         the class a name read on its type resolves to (``namespace_owner``),
         the class a zero-argument ``super()`` reaches and its instance check
@@ -12387,8 +12251,8 @@ class ClassDef(Statement):
         the order its ``__new__`` runs, so what the call stores is not given
         by the one rule: the call is the one unanswered call.
 
-        The constructor-frame admission
-        (``SourceUnit.source_class_has_plain_source_body``), the
+        Whether the class statement decides its call
+        (``constructor_is_read``), the
         inherited-exception frame (``_inherits_default_exception_constructor``)
         and a call of the class reached as a value
         (``ClassDefinitionValue.callable_application_with``) read this.
@@ -13191,7 +13055,7 @@ class ClassDef(Statement):
         # The ``__new__`` the call runs, through the one class-namespace
         # lookup (``new_entry``).  A class whose ``__new__`` is not decided,
         # or is a base's, has no frame here: its call is the unanswered call
-        # (``SourceUnit.source_class_admits_source_constructor_frame``,
+        # (``ClassDef.constructor_is_read``,
         # ``ClassDefinitionValue.callable_application_with``).
         _new_decided, new_definition = self.new_entry()
         if new_definition is not None:
