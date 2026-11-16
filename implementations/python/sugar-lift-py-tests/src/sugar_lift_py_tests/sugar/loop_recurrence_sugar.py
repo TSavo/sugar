@@ -564,11 +564,24 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         )
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.floor.generator_value import GeneratorValue
+        from sugar_lift_py_tests.operations.iterator_operation import (
+            in_hand_iterable,
+            within_unroll_budget,
+        )
 
+        # The loop's one mechanism (#7757 new 6): its items run one by one
+        # here where the reduction holds the iterable's members -- a
+        # container in hand, or the ints a ground ``range(...)`` yields
+        # (``in_hand_iterable``) -- within the one unroll budget
+        # (``within_unroll_budget``); anything else runs as the recurrence
+        # below.  No rewrite unrolls the loop before it gets here.
+        if runtime is not None:
+            iterable = in_hand_iterable(iterable)
         if (
             runtime is not None
             and not isinstance(iterable, (SymbolicValue, CallSiteValue, GeneratorValue))
             and not contents_stale(iterable)
+            and within_unroll_budget(iterable)
         ):
             def first(runtime_ctx, carried):
                 return halts_recorded(
@@ -1125,6 +1138,27 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         if not isinstance(next_result, NextResult) or outcome.owed_items():
             raise TypeError(
                 "NextOperation must produce NextResult or a named exception"
+            )
+        from sugar_source_tree.nodes import LOOP_UNROLL_BUDGET
+
+        if index >= LOOP_UNROLL_BUDGET:
+            # An iterator whose count was not in hand before the first item
+            # (``within_unroll_budget``) yielded a member past the one unroll
+            # budget: refused by name, never cut short or guessed exhausted.
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="LoopRecurrenceSugar.for",
+                blame=self.site,
+                observed=(
+                    f"a live for yielded item {index} past the unroll budget "
+                    f"of {LOOP_UNROLL_BUDGET}"
+                ),
+                requested="an iterable whose members the budget holds",
+                fix=(
+                    "run the loop as its recurrence over an iterable whose "
+                    "count is not in hand; never cut the loop short"
+                ),
             )
 
         from sugar_lift_py_tests.outcome import Halted

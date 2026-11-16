@@ -311,7 +311,20 @@ class ComprehensionSugar(ConstructedTermSugar):
         faces they go on by.  Where iterating the iterable is decided never
         to raise (``iterator_operation.iteration_total``) there is no such
         face to carry.
+
+        This is the comprehension's one loop mechanism (#7757 new 6): no
+        rewrite dissolves a comprehension into a display.  Its members are
+        projected here where the reduction holds them -- a container in hand,
+        or the ints a ground ``range(...)`` yields
+        (``iterator_operation.in_hand_iterable``) -- within the one unroll
+        budget a loop's items run by (``LOOP_UNROLL_BUDGET``); anything else
+        is the symbolic fold over the same iterator path a loop's recurrence
+        takes.
         """
+        from sugar_lift_py_tests.operations.iterator_operation import (
+            in_hand_iterable,
+        )
+
         if index == 0 and (
             len(self.generators) == 1 or self._running_coordinates(finite=True)
         ):
@@ -324,7 +337,7 @@ class ComprehensionSugar(ConstructedTermSugar):
             )
 
             decision = require_finite_projection_decision(
-                self._finite_map(generator, iterable, ctx),
+                self._finite_map(generator, in_hand_iterable(iterable), ctx),
                 owner="ComprehensionSugar._finite_map",
             )
             # EXHAUSTIVE. Only the two LAWFUL non-application reasons may fall
@@ -556,8 +569,12 @@ class ComprehensionSugar(ConstructedTermSugar):
         )
         from sugar_source_tree.nodes import TargetPatternEnrolledV1
 
+        from sugar_source_tree.nodes import LOOP_UNROLL_BUDGET
+
         members = _finite_members(iterable)
-        if members is None:
+        if members is None or len(members) > LOOP_UNROLL_BUDGET:
+            # Past the one unroll budget the comprehension is its symbolic
+            # fold, as a loop past it is its recurrence (#7757 new 6).
             return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
         # ``generator`` first, then each nested generator, outermost first.
         levels = (generator, *self.generators[1:])
