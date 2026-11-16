@@ -33,6 +33,7 @@ from frame_fresh import fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
+from sugar_lift_py_tests.floor.branch_result_coordinate import BranchResultDecision
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.ir import atomic, ctor, make_var, not_, num, str_const
@@ -61,6 +62,7 @@ from sugar_lift_py_tests.temporal.temporal_context import (
     projection_key,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_source_tree.binding_state import loop_exit_slot
 from sugar_source_tree.live_loop_construction import LiveWhileRuntimeV1
 from sugar_source_tree.nodes import (
     Assign,
@@ -303,9 +305,14 @@ def test_the_publication_writes_the_loops_own_key_never_the_coordinate() -> None
         ReduceContext.root(owner="live-publication"),
         entries=(),
         carried=(TermValue(4),),
+        exhausted=True,
     )
     block = published.completed_value()
-    assert block.statements == (ScopeRebind(POST, TermValue(4)),)
+    # Last, the exit it left by (exhaustion), decided on this path.
+    assert block.statements == (
+        ScopeRebind(POST, TermValue(4)),
+        BranchResultDecision(loop_exit_slot(LOOP), True),
+    )
 
 
 # -- a read inside a nested live loop's item ----------------------------------
@@ -2167,12 +2174,14 @@ def test_a_halt_leaving_the_else_carries_the_loops_publication() -> None:
         items=1,
         else_ran=True,
         halt=_outer_break(record),
+        exhausted=True,
     ).exits
     assert isinstance(left, Halted)
     assert left.state.entries == (
         TermValue(0),
         TermValue(1),
         ScopeRebind(POST, TermValue(4)),
+        BranchResultDecision(loop_exit_slot(LOOP), True),
     )
     assert left.state.context.temporal.value_if_bound(POST) == TermValue(4)
 

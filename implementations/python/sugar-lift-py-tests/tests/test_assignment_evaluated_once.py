@@ -544,3 +544,98 @@ def test_the_solver_holds_the_value_python_computes(name: str, tmp_path: Path) -
     test_line = head.count("\n")
     assert claim_verdict(truthful_run.prove_doc, claims_from_line=test_line) == "sat"
     assert lying_run.verdict == "unsat"
+
+
+# ---------------------------------------------------------------------------
+# The helper's own contract, which the solver programs join at prove.
+# ---------------------------------------------------------------------------
+
+
+def _helper(name: str):
+    """The helper ``name`` of ``_HELPERS``, in a file of the helpers alone,
+    opened as ``_function`` opens the test function's file."""
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_source_tree import nodes
+    from sugar_source_tree.reporter import CollectingReporter
+    from sugar_source_tree.tree import SourceFile
+
+    tree = SourceFile(
+        (_HELPERS, "test_witness.py", blake3_512_of(_HELPERS.encode())),
+        reporter=CollectingReporter(),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    (function,) = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, nodes.FunctionDef) and node.name == name
+    )
+    return function
+
+
+def _ir_nodes(root) -> list:
+    """Every term and formula node under ``root``: its ``args`` (a ctor, an
+    atom) and ``operands`` (a connective), depth first."""
+    found = []
+    pending = [root]
+    while pending:
+        node = pending.pop()
+        found.append(node)
+        pending.extend(getattr(node, "args", ()) or ())
+        pending.extend(getattr(node, "operands", ()) or ())
+    return found
+
+
+def _ir_names(root) -> set:
+    return {
+        node.name
+        for node in _ir_nodes(root)
+        if isinstance(getattr(node, "name", None), str)
+    }
+
+
+def test_tri_returns_its_sum_on_the_path_its_own_loop_ran() -> None:
+    """``tri``'s own contract, the post ``loop-calls-a-function-with-a-loop``
+    joins at prove (``test_the_solver_holds_the_value_python_computes``).
+
+    ``tri``'s loop is over the ground ``(1, 2, 3)``, so the reduction runs
+    its three items one by one (#8957: no rewrite unrolls it) and ``s`` after
+    the loop is the last item's latch, ``((0 + 1*n) + 2*n) + 3*n`` over the
+    formal ``n``.  The loop ran on this path and left by exhaustion
+    (``LoopRecurrenceSugar._exit_decision``), so ``return s`` reads that
+    face's binding whole (``decided_loop_exit``): the one completed arm is
+    under its operations' completes guards alone.  Read under the
+    recurrence's own ``python.loop.exhausted`` guard, which no input decides,
+    the post bound ``out`` only where that atom held, and a caller's join
+    could not read it: the twin's truthful half was ``open`` from #8957 (CI
+    bisect run 43811330316).  The return is the three products over ``n``,
+    never a recurrence head nor a post-binding term of the loop."""
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    outcome = function_universe_outcome(_helper("tri"))
+    completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    assert len(completed) == 1, outcome
+    (arm,) = completed
+    assert not any(
+        name.startswith("python.loop") for name in _ir_names(arm.guard)
+    ), arm.guard
+
+    record = getattr(arm.value, "record", arm.value)
+    (returned,) = [
+        entry.value
+        for entry in getattr(record, "statements", ())
+        if isinstance(entry, ReturnValue)
+    ]
+    term = returned.to_term(owner="tri's return")
+    assert not any(name.startswith("python:loop") for name in _ir_names(term)), term
+    products = {
+        getattr(node.args[1], "value", None)
+        for node in _ir_nodes(term)
+        if getattr(node, "name", None) == "python:binary_result"
+        and getattr(node.args[0], "value", None) == "*"
+    }
+    assert products == {1, 2, 3}, term

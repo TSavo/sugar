@@ -655,7 +655,13 @@ def _item_wrote(ctx, index: int, value):
 
 def _after_the_loop(ctx, items: int, *, else_ran: bool = False):
     left = _module_recurrence()._publish_runtime_bindings(
-        _PUBLISHING, ctx, entries=(), carried=(), items=items, else_ran=else_ran
+        _PUBLISHING,
+        ctx,
+        entries=(),
+        carried=(),
+        items=items,
+        else_ran=else_ran,
+        exhausted=True,
     )
     return left.completed_value().extend_scope(ctx)
 
@@ -711,7 +717,7 @@ def _publishing(post_key: str):
 
 def _left(runtime, ctx, items: int):
     left = _module_recurrence()._publish_runtime_bindings(
-        runtime, ctx, entries=(), carried=(), items=items
+        runtime, ctx, entries=(), carried=(), items=items, exhausted=True
     )
     return left.completed_value().extend_scope(ctx)
 

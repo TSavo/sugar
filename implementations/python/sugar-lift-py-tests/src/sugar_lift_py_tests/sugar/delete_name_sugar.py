@@ -16,6 +16,7 @@ from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import (
     _guarded_projection_faces,
     _loop_exit_faces,
     _projection_guard,
+    decided_loop_exit,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
@@ -56,7 +57,12 @@ def delete_binding(state, *, name: str, site, ctx) -> ExitSet:
         # under that face's guard. `read_binding` already reads the same union;
         # `del` is the other verb over the SAME projection, and it simply had no
         # arm for this constructor -- which is what
-        # `TypeError: LoopGuardedProjection` was.
+        # `TypeError: LoopGuardedProjection` was.  Where the loop ran in hand
+        # on this path, it left by one face, which is the one deleted
+        # (``decided_loop_exit``), as the read takes it.
+        left_by = decided_loop_exit(state, ctx)
+        if left_by is not None:
+            return delete_binding(left_by.state, name=name, site=site, ctx=ctx)
         partition_faces = _loop_exit_faces(state)
         exits = ExitSet(())
         for face in state.completed_faces:
