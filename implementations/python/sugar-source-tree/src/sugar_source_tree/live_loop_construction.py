@@ -1056,42 +1056,17 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     else_body_cid = None
     else_obligation_cid = None
     if loop.orelse:
-        exhaustion_scope = dict(scope)
-        exhaustion_runtime = face_snapshots["NormalExhaustion"][2]
-        for name, entry in zip(coordinate_names, exhaustion_runtime, strict=True):
-            exhaustion_scope[name] = entry
-        _else_statements, _changed, else_net = loop._substitute_body_tracked(
-            loop.orelse, exhaustion_scope
-        )
-        else_runtime = tuple(
-            # `else_net` holds only the names the else body REBOUND. A carried
-            # name the else clause never touches keeps its loop-exhaustion value
-            # (the state entering the else, already in `exhaustion_scope`), not a
-            # KeyError.
-            replace(
-                else_net.get(name, exhaustion_scope[name]),
-                coordinate=pre_entry.coordinate,
-            )
-            for name, pre_entry in zip(coordinate_names, pre_entries, strict=True)
-        )
-        else_state, else_runtime = _sealed_state(else_runtime)
-        if all(prior["stateCid"] != else_state["stateCid"] for prior in state_records):
-            state_records.append(else_state)
-            records.append(else_state)
-        runtime_states[else_state["stateCid"]] = else_runtime
-        else_output = _record(
-            {
-                "kind": "loop-completed-face",
-                "schemaVersion": "1",
-                "targetCid": target_cid,
-                "completionKind": "NormalExhaustion",
-                "guardFormulaCid": _formula_cid(exhaustion_guard),
-                "stateCid": else_state["stateCid"],
-            },
-            "completedFaceCid",
-        )
-        records.append(else_output)
-        face_records.append(else_output)
+        # The ``else`` suite leaves by the loop's own exhaustion face, whose
+        # state is the loop's ``LoopBindingRef`` of each carried name, as on
+        # every exit: the reduction runs the suite where the loop is
+        # exhausted and publishes the latest of its writes under the loop's
+        # own key (``LoopRecurrenceSugar._finish_iterator`` /
+        # ``_after_else`` for items run in hand, ``_symbolic_else`` /
+        # ``_after_symbolic_else`` for the recurrence).  The suite's own
+        # statement keys are bound only where the suite ran, never after the
+        # loop, so a face reading them there was a second read of what the
+        # suite wrote, and one no read after the loop could resolve (#7757).
+        else_output = exhaustion_face
         else_body = _record(
             {
                 "kind": "loop-body-transform",
@@ -1119,7 +1094,6 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             "elseExhaustionObligationCid",
         )
         records.append(else_obligation)
-        post_exhaustion_face = (else_output, else_state, else_runtime)
         else_body_cid = else_body["bodyTransformCid"]
         else_obligation_cid = else_obligation["elseExhaustionObligationCid"]
 

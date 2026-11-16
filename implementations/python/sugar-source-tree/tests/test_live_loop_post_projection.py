@@ -1,17 +1,28 @@
 from __future__ import annotations
 
-import tempfile
+from pathlib import Path
+from tempfile import mkdtemp
 
-from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
 
 def _function(source: str):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
-        handle.write(source)
-        path = handle.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+    # The one door a file is opened by: seated in its own workspace, so every
+    # locus it cites is workspace-relative (a ground exit's included).
+    directory = Path(mkdtemp())
+    path = directory / "live_loop_post_projection.py"
+    path.write_text(source)
+    return next(open_source_file_for_construction(path, root=directory).functions())
+
+
+def _returned(function):
+    """What a function whose loop ran in hand returns: its one completed arm."""
+    outcome = function.sugar().desugar()
+    assert isinstance(outcome, ExitSet), outcome
+    value = outcome.completed_value()
+    assert value is not None, outcome.exits
+    return value.post().args[1].value
 
 
 def test_live_for_projects_break_and_exhaustion_before_tail_substitution():
@@ -28,18 +39,34 @@ def arbitrary(items, stop):
     constructed = function.sugar()
 
     assert type(constructed.statements[1]).__name__ == "LoopRecurrenceSugar"
-    recurrence = constructed.statements[1].desugar().completed_value()
-    invs = recurrence.inv_contribution()
+    # The loop is reduced where it runs, in its function's block: ``carried``
+    # is bound before it there, and nowhere when the loop statement is
+    # desugared alone.  ``iter(items)``, ``renamed == stop`` and
+    # ``carried + renamed`` each keep their halt beside the completion.
+    outcome = function.sugar().desugar()
+    assert isinstance(outcome, ExitSet), outcome
+    assert outcome.halts(), outcome.exits
+    completed = [
+        face for face in outcome.normalize().exits if isinstance(face, Completed)
+    ]
+    assert completed, outcome.exits
     # One step equation per name the loop writes: ``carried`` under its
-    # binding coordinate, ``renamed`` under its post-loop key; and the
-    # authentication of ``renamed``'s write slot as the guard that some item
-    # wrote it.
-    equations = [inv for inv in invs if getattr(inv, "name", None) == "="]
-    assert len(equations) == 2
-    assert len(invs) == 3
-    for equation in equations:
-        assert equation.args[1].name == "python:loop.step"
-        assert equation.args[1].args[0] == equation.args[0]
+    # binding coordinate, ``renamed`` under its post-loop key.
+    stated = []
+    for arm in completed:
+        equations = [
+            inv
+            for inv in arm.value.invs()
+            if getattr(inv, "name", None) == "="
+            and getattr(inv.args[1], "name", None) == "python:loop.step"
+        ]
+        if equations:
+            stated.append(equations)
+    assert stated, completed
+    for equations in stated:
+        assert len(equations) == 2
+        for equation in equations:
+            assert equation.args[1].args[0] == equation.args[0]
     post_read = constructed.statements[2].value
     assert type(post_read).__name__ == "GuardedBindingReadSugar"
     assert type(post_read.state).__name__ == "LoopGuardedProjection"
@@ -112,10 +139,35 @@ def arbitrary(items, stop):
     post = constructed.statements[2].value.state
     by_kind = {face.completion_kind: face for face in post.completed_faces}
     assert set(by_kind) == {"BreakExit", "NormalExhaustion"}
-    exhaustion = by_kind["NormalExhaustion"].state
-    assert type(exhaustion).__name__ == "IntLiteralSugar"
-    assert exhaustion.value == 42
-    assert type(by_kind["BreakExit"].state).__name__ == "LoopBindingRefSugar"
+    # Every face reads what the loop publishes under its own key as it
+    # leaves by that face (``LoopRecurrenceSugar._publication``); the
+    # exhaustion face's publication is what the ``else`` suite left, the
+    # break face's is what the breaking item left.  Neither reads the else
+    # suite's statement keys, which are bound only where the suite ran.
+    for kind, face in by_kind.items():
+        assert type(face.state).__name__ == "LoopBindingRefSugar"
+        assert face.state.completion_kind == kind
+        assert face.state.name == "carried"
+
+
+def test_live_for_else_runs_the_else_only_when_the_loop_is_exhausted():
+    # Run in hand: the reduction decides the exit, and the read after the
+    # loop takes that face's publication (``decided_loop_exit``).
+    source = """
+def arbitrary():
+    carried = 0
+    for renamed in [1, 2, 3]:
+        if renamed == STOP:
+            break
+        carried = renamed
+    else:
+        carried = 42
+    return carried
+"""
+    # Never broken: every item ran, then the else.
+    assert _returned(_function(source.replace("STOP", "7"))) == 42
+    # Broken at 2: the else never ran, ``carried`` is what item 1 left.
+    assert _returned(_function(source.replace("STOP", "2"))) == 1
 
 
 def test_renamed_else_lying_twin_cannot_run_else_on_break_face():
@@ -132,8 +184,27 @@ def arbitrary(items, gate):
 
     post = constructed.statements[2].value.state
     by_kind = {face.completion_kind: face for face in post.completed_faces}
-    assert by_kind["NormalExhaustion"].state.value == 9
-    assert type(by_kind["BreakExit"].state).__name__ == "LoopBindingRefSugar"
+    assert set(by_kind) == {"BreakExit", "NormalExhaustion"}
+    for kind, face in by_kind.items():
+        assert type(face.state).__name__ == "LoopBindingRefSugar"
+        assert face.state.completion_kind == kind
+
+
+def test_renamed_else_lying_twin_never_publishes_the_else_on_a_break() -> None:
+    # The twin whose items break: the else's ``result = 9`` never runs, so
+    # the read after the loop is the pre-loop 0, never the else's 9.
+    source = """
+def arbitrary():
+    result = 0
+    for renamed in [1, 2, 3]:
+        if renamed == GATE:
+            break
+    else:
+        result = 9
+    return result
+"""
+    assert _returned(_function(source.replace("GATE", "2"))) == 0
+    assert _returned(_function(source.replace("GATE", "5"))) == 9
 
 
 def test_live_while_else_uses_false_test_face_before_tail_substitution():
@@ -153,7 +224,25 @@ def arbitrary(limit):
     post = constructed.statements[2].value.state
     assert len(post.completed_faces) == 1
     assert post.completed_faces[0].completion_kind == "NormalExhaustion"
-    assert post.completed_faces[0].state.value == 17
+    exhaustion = post.completed_faces[0].state
+    assert type(exhaustion).__name__ == "LoopBindingRefSugar"
+    assert exhaustion.completion_kind == "NormalExhaustion"
+
+
+def test_live_while_else_publishes_the_elses_write() -> None:
+    # Run in hand (the test decides at every item): after the test is false
+    # the else runs, and the read after the loop is its 17, never the 3 the
+    # last item left.
+    function = _function("""
+def arbitrary():
+    carried = 0
+    while carried < 3:
+        carried = carried + 1
+    else:
+        carried = 17
+    return carried
+""")
+    assert _returned(function) == 17
 
 
 def test_guarded_return_in_live_loop_is_an_outward_halted_face():
@@ -187,7 +276,7 @@ def arbitrary(items, stop):
 
 
 def test_guarded_raise_in_live_while_is_an_outward_halted_face():
-    constructed = _function("""
+    function = _function("""
 def arbitrary(limit, stop):
     carried = 0
     while carried < limit:
@@ -195,14 +284,19 @@ def arbitrary(limit, stop):
             raise ValueError(carried)
         carried = carried + 1
     return carried
-""").sugar()
+""")
+    constructed = function.sugar()
 
     loop = constructed.statements[1]
     root = loop.construction.wire_graph()["root"]
     assert len(root["outwardHaltedFaceCids"]) == 1
-    exits = loop.desugar()
-    assert type(exits).__name__ == "ExitSet"
+    # Reduced where it runs, in the function's block, after ``carried = 0``:
+    # the loop statement desugared alone reads ``carried`` with nothing bound.
+    exits = function.sugar().desugar()
+    assert isinstance(exits, ExitSet)
     assert any(
-        type(face).__name__ == "Halted" and type(face.effect).__name__ == "RaiseEffect"
+        isinstance(face, Halted)
+        and type(face.effect).__name__ == "RaiseEffect"
+        and face.effect.exception_name == "ValueError"
         for face in exits.exits
     )

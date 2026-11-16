@@ -78,3 +78,14 @@ class GeneratorValue(FloorValue):
         return self.pull(
             lambda: self.undecided_next(operation.blame, owner="GeneratorValue.next")
         )
+
+    def project_sequence_with(self, operation, ctx):
+        """``a, b = g``: ``UNPACK_SEQUENCE`` iterates the generator, so the
+        pull runs here (``pull``): its halts and what it owes are the
+        unpack's.  On each face it completes on, how many members it yields
+        is not decided here, so the unpack is the runtime unpack's two faces
+        over the generator's own coordinate (``project_symbolic``): each name
+        its position's projection under the unpack's completes atom, the
+        undetermined raise under its complement.  Never a member made up,
+        never the count assumed."""
+        return self.pull(lambda: operation.project_symbolic(self, ctx))

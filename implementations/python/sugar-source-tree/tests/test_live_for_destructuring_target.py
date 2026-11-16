@@ -189,10 +189,15 @@ def test_live_pair_target_arity_halt_retains_exact_pre_assignment_state() -> Non
     assert len(halted) == 1
     assert isinstance(halted[0].effect, RaiseEffect)
     assert halted[0].effect.exception_name == "ValueError"
-    assert halted[0].state is ctx
-    assert halted[0].state.temporal.value_if_bound("result") is result
-    assert halted[0].state.temporal.value_if_bound("left") is None
-    assert halted[0].state.temporal.value_if_bound("right") is None
+    # A halt carries its record (``halt_record``): nothing of the item ran
+    # before its unpack halted, and it halted in exactly the context the
+    # item was handed (#7826).
+    record = halted[0].state
+    assert record.entries == ()
+    assert record.context is ctx
+    assert record.context.temporal.value_if_bound("result") is result
+    assert record.context.temporal.value_if_bound("left") is None
+    assert record.context.temporal.value_if_bound("right") is None
 
 
 _RUNNING_LOOP = (
@@ -246,10 +251,15 @@ def test_live_item_reads_what_it_carries_with_the_name_unbound() -> None:
     assert isinstance(outcome, ExitSet)
     block = outcome.completed_value()
     assert block is not None, outcome.exits
-    [published] = [
-        entry for entry in block.statements if isinstance(entry, ScopeRebind)
+    # The block holds what the item left (its write of ``total`` under that
+    # write's key) and the loop's publication under its own key; the name
+    # itself is never written.
+    rebinds = [entry for entry in block.statements if isinstance(entry, ScopeRebind)]
+    assert all(entry.name != "total" for entry in rebinds), rebinds
+    published = [
+        entry for entry in rebinds if entry.name == recurrence.post_binding_keys[0]
     ]
-    assert published.name == recurrence.post_binding_keys[0]
+    assert len(published) == 1, rebinds
 
 
 def test_live_item_handed_nothing_it_carries_is_refused_by_name() -> None:

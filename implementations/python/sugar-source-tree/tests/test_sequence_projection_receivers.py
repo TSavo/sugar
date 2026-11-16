@@ -24,26 +24,38 @@ Every twin states its arity exactly. None asserts `!= 1`.
 
 from __future__ import annotations
 
-import tempfile
 from dataclasses import dataclass
+from pathlib import Path
+from tempfile import mkdtemp
 
-import pytest
-
-from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.ir import _Atomic, _Connective, _Var
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
+
+
+def _source_file(source: str):
+    # The one door a file is opened by, seated in its own workspace: every
+    # locus it cites is a re-readable, workspace-relative fragment.
+    directory = Path(mkdtemp())
+    path = directory / "twin.py"
+    path.write_text(source)
+    return open_source_file_for_construction(path, root=directory)
 
 
 def _out(source: str):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(source)
-        path = f.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()).sugar().desugar()
+    return next(_source_file(source).functions()).sugar().desugar()
+
+
+def _assign_fragment():
+    """A real unpack site: the fragment of ``a, b = p`` in a seated file,
+    the blame production hands a decided unpack's ground exit."""
+    from sugar_source_tree.nodes import Assign
+
+    tree = _source_file("def A(p):\n    a, b = p\n    return a\n")
+    return next(node for node in tree.nodes() if isinstance(node, Assign)).fragment
 
 
 def _receivers(source: str) -> tuple[list[str], object]:
@@ -105,14 +117,75 @@ def _assert_arity(halt, arity: int) -> None:
     assert str(num(arity)) in guard, guard
 
 
+def _unpack_halts(out):
+    """The runtime unpack's own halts: those its producer names
+    (``runtime_unpack_faces``: ``<owner>.unpack``).  The right-hand side's
+    own halts (an attribute read, an opaque call, a generator's pull) are
+    kept beside them, and are not the unpack's."""
+    assert isinstance(out, ExitSet), out
+    return [
+        halt
+        for halt in out.halts()
+        if isinstance(halt.effect, UndeterminedRaiseEffect)
+        and str(halt.effect.producer_node_owner).endswith(".unpack")
+    ]
+
+
 def _unpack_halt(out):
     """The runtime unpack's one halt, beside the completed arm it never
     claims away."""
-    assert isinstance(out, ExitSet), out
-    (halt,) = out.halts()
-    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    (halt,) = _unpack_halts(out)
     assert halt.effect.exception_type_coordinate is None
     assert any(isinstance(exit_, Completed) for exit_ in out.exits), out
+    return halt
+
+
+def _walk(formula):
+    """Every node of ``formula``, itself first."""
+    yield formula
+    for child in (*getattr(formula, "operands", ()), *getattr(formula, "args", ())):
+        yield from _walk(child)
+
+
+def _disjuncts(guard):
+    if isinstance(guard, _Connective) and guard.kind == "or":
+        return guard.operands
+    return (guard,)
+
+
+def _conjuncts(guard):
+    if isinstance(guard, _Connective) and guard.kind == "and":
+        return guard.operands
+    return (guard,)
+
+
+def _unpack_arms(out):
+    """One guard per path the unpack halts on: each unpack halt's guard, a
+    disjunction split into its disjuncts (equal halts are merged by
+    disjoining their guards, ``ExitSet.normalize``)."""
+    return [arm for halt in _unpack_halts(out) for arm in _disjuncts(halt.guard)]
+
+
+def _unpacked_operands(arm):
+    """The names whose unpack ``arm`` says did not complete: the variables
+    under its ``python:unpack.completes`` atoms."""
+    return frozenset(
+        node.name
+        for atom in _walk(arm)
+        if isinstance(atom, _Atomic) and atom.name == "python:unpack.completes"
+        for node in _walk(atom)
+        if isinstance(node, _Var)
+    )
+
+
+def _ground_value_error(out):
+    """A decided unpack mismatch: Python's own ``ValueError``, raised at the
+    unpack's site, nothing bound and no completion beside it."""
+    assert isinstance(out, ExitSet), out
+    (halt,) = out.halts()
+    assert out.halts() == out.exits, out
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "ValueError"
     return halt
 
 
@@ -171,8 +244,9 @@ def test_the_obligation_survives_a_guard_as_one_halted_face() -> None:
     """DISCRIMINATING. Under an `if`, the demand is one HALTED face and the
     complementary face still completes. A refusal could not coexist with the
     guard; a retained obligation can, which is the whole point of the rung.
-    The unpack's own completed face returns too: two completed faces, the
-    branch not taken and the unpack that completed."""
+    The function completes on the branch not taken and on the unpack that
+    completed (one function value whose record holds the guarded return, its
+    guard the disjunction of the two)."""
     _, out = _receivers(
         "def A(i, values):\n"
         " if isinstance(i, tuple):\n"
@@ -183,9 +257,26 @@ def test_the_obligation_survives_a_guard_as_one_halted_face() -> None:
     halted = [exit_ for exit_ in out.exits if isinstance(exit_, Halted)]
     completed = [exit_ for exit_ in out.exits if isinstance(exit_, Completed)]
     assert len(halted) == 1
-    assert len(completed) == 2
     assert isinstance(halted[0].effect, UndeterminedRaiseEffect)
     _assert_arity(halted[0], 2)
+    assert completed, out.exits
+    completes = [
+        node
+        for exit_ in completed
+        for node in _walk(exit_.guard)
+        if isinstance(node, _Atomic)
+    ]
+    # Completed where the branch was taken and the unpack completed ...
+    assert any(atom.name == "python:unpack.completes" for atom in completes)
+    # ... and where it was not taken at all.
+    assert any(
+        isinstance(node, _Connective)
+        and node.kind == "not"
+        and isinstance(node.operands[0], _Atomic)
+        and node.operands[0].name == "adt.is_python_type"
+        for exit_ in completed
+        for node in _walk(exit_.guard)
+    ), [exit_.guard for exit_ in completed]
 
 
 # ==========================================================================
@@ -211,34 +302,43 @@ def test_matching_arity_binds_each_name_to_the_member_already_in_hand() -> None:
     assert bound[1] is members[1]
 
 
-def test_a_decidable_arity_mismatch_stays_loud_and_is_not_softened() -> None:
+def _operation_at_source(*names: str):
+    """One unpack demand blamed on a real, seated unpack site: the blame a
+    decided mismatch's ground exit cites (``ground_exceptional_exit``)."""
+    from sugar_lift_py_tests.operations import SequenceProjectionOperation
+
+    return SequenceProjectionOperation(
+        target_names=names, owner="twin", blame=_assign_fragment()
+    )
+
+
+def test_a_decidable_arity_mismatch_is_pythons_value_error_not_softened() -> None:
     """DISCRIMINATING. This is the one that keeps the runtime-cardinality arm
     honest: a count the lift CAN decide, and got wrong, must NOT be routed to
     the "belongs to __iter__" effect. Only an undecidable count is an
-    obligation; a decided-and-wrong one is a gap."""
+    obligation; a decided-and-wrong one is what CPython does with it: the
+    ground ``ValueError``, raised at the unpack, with nothing bound and no
+    completion beside it -- never the undetermined two faces."""
     from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
     from sugar_lift_py_tests.floor.term_value import TermValue
 
-    with pytest.raises(ConstructionPanic) as raised:
-        _operation("a", "b").submit(
-            TupleLiteralValue((TermValue(1), TermValue(2), TermValue(3))), None
-        )
-    message = str(raised.value)
-    assert "too many values" in message
-    assert "ground ValueError" in message
+    out = _operation_at_source("a", "b").submit(
+        TupleLiteralValue((TermValue(1), TermValue(2), TermValue(3))), None
+    )
+    halt = _ground_value_error(out)
+    assert not isinstance(halt.effect, UndeterminedRaiseEffect)
 
 
-def test_too_few_members_reports_the_other_direction() -> None:
-    """DISCRIMINATING. The gap names WHICH way the count is wrong; a single
-    "mismatch" message would lose the half that tells you what to write."""
+def test_too_few_members_is_the_same_ground_value_error() -> None:
+    """DISCRIMINATING partner: too few members is decided too, and is the
+    same ground ``ValueError``, never a completion with a name left unbound."""
     from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
     from sugar_lift_py_tests.floor.term_value import TermValue
 
-    with pytest.raises(ConstructionPanic) as raised:
-        _operation("a", "b", "c").submit(
-            TupleLiteralValue((TermValue(1), TermValue(2))), None
-        )
-    assert "not enough values" in str(raised.value)
+    out = _operation_at_source("a", "b", "c").submit(
+        TupleLiteralValue((TermValue(1), TermValue(2))), None
+    )
+    _ground_value_error(out)
 
 
 def test_a_display_right_hand_side_never_reaches_this_operation() -> None:
@@ -281,17 +381,13 @@ def test_callsite_receiver_answers_like_its_dug_floor() -> None:
     answer is reached, never what the answer is.
     """
     seen, out = _receivers("def A(o):\n a, b = o.split()\n return a\n")
-    # The call is its coordinate, re-dispatched on the EUF receiver term.
-    assert seen == ["CallSiteValue", "SymbolicValue"], seen
+    # The call is its coordinate: the callsite hands itself to the runtime
+    # unpack (``CallSiteValue.project_sequence_with`` ->
+    # ``project_symbolic``), never re-submitted as another value.
+    assert seen == ["CallSiteValue"], seen
     # The opaque call raises something undetermined too; the unpack's own
     # raise is the one its producer names (``runtime_unpack_faces``).
-    unpack_halts = [
-        halt
-        for halt in out.halts()
-        if isinstance(halt.effect, UndeterminedRaiseEffect)
-        and str(halt.effect.producer_node_owner).endswith(".unpack")
-    ]
-    (halt,) = unpack_halts
+    (halt,) = _unpack_halts(out)
     assert any(isinstance(exit_, Completed) for exit_ in out.exits), out
     _assert_arity(halt, 2)
     assert not isinstance(getattr(halt.effect, "value", None), ScopeRebinds)
@@ -307,14 +403,22 @@ def test_comprehension_receiver_retains_the_arity_demand() -> None:
 
     A comprehension over an unknown iterable has no authenticated member
     testimony, so the count is its own iteration's and the demand is retained.
+    A generator expression is a generator object (``GeneratorValue``): the
+    unpack pulls it, so the pull's halts are kept beside the unpack's own
+    (``GeneratorValue.project_sequence_with``); a list comprehension over an
+    undecided iterable is its symbolic fold (``ComprehensionValue``).
     """
-    for source in (
-        "def A(xs):\n a, b = (x for x in xs)\n return a\n",
-        "def A(xs):\n a, b = [x for x in xs]\n return a\n",
+    for source, receiver in (
+        ("def A(xs):\n a, b = (x for x in xs)\n return a\n", "GeneratorValue"),
+        ("def A(xs):\n a, b = [x for x in xs]\n return a\n", "ComprehensionValue"),
     ):
         seen, out = _receivers(source)
-        assert seen == ["ComprehensionValue"], seen
-        _assert_arity(_unpack_halt(out), 2)
+        assert seen == [receiver], (source, seen, out)
+        halts = _unpack_halts(out)
+        assert halts, out
+        for halt in halts:
+            _assert_arity(halt, 2)
+        assert any(isinstance(exit_, Completed) for exit_ in out.exits), out
 
 
 def test_absent_finite_testimony_is_not_read_as_zero_members() -> None:
@@ -358,8 +462,10 @@ def test_present_finite_testimony_binds_and_a_wrong_count_stays_loud() -> None:
     assert isinstance(value, ScopeRebinds)
     assert tuple(name for name, _ in value.bindings) == ("a", "b")
 
-    with pytest.raises(ConstructionPanic):
-        _operation("a", "b", "c").submit(present, None)
+    # The decided wrong count is Python's ``ValueError`` at the unpack's
+    # site, the same answer a tuple literal gets, never the runtime
+    # obligation.
+    _ground_value_error(_operation_at_source("a", "b", "c").submit(present, None))
 
 
 # ==========================================================================
@@ -391,21 +497,16 @@ def test_each_conditional_face_owes_its_own_operand_not_a_shared_one() -> None:
     shared operand would look identical in arity and be wrong about what the
     caller must satisfy."""
     _, out = _receivers("def A(c, p, q):\n a, b = p if c else q\n return a\n")
-    # Each halt's guard conjoins its branch with the complement of its own
-    # unpack's completes atom; the atom names the operand unpacked.
-    operands = {
-        str(
-            next(
-                conjunct
-                for conjunct in getattr(exit_.guard, "operands", (exit_.guard,))
-                if "python:unpack.completes" in str(conjunct)
-            )
-        )
-        for exit_ in out.halts()
-    }
-    assert len(operands) == 2, operands
-    assert any("p" in operand for operand in operands)
-    assert any("q" in operand for operand in operands)
+    # Each path the unpack halts on conjoins its branch with the complement
+    # of its own unpack's completes atom; the atom names the operand
+    # unpacked.  (The two halts are one effect at one site, so they may be
+    # one halt whose guard disjoins the two paths.)
+    arms = _unpack_arms(out)
+    assert len(arms) == 2, arms
+    assert {_unpacked_operands(arm) for arm in arms} == {
+        frozenset({"p"}),
+        frozenset({"q"}),
+    }, arms
 
 
 def test_the_two_conditional_faces_carry_complementary_guards() -> None:
@@ -415,9 +516,9 @@ def test_the_two_conditional_faces_carry_complementary_guards() -> None:
     from sugar_lift_py_tests.ir import not_
 
     _, out = _receivers("def A(c, p, q):\n a, b = p if c else q\n return a\n")
-    guards = [exit_.guard for exit_ in out.halts()]
-    assert len(guards) == 2
-    first, second = (set(getattr(guard, "operands", (guard,))) for guard in guards)
+    arms = _unpack_arms(out)
+    assert len(arms) == 2, arms
+    first, second = (set(_conjuncts(arm)) for arm in arms)
     assert any(not_(conjunct) in second for conjunct in first) or any(
         not_(conjunct) in first for conjunct in second
     )
