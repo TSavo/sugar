@@ -239,8 +239,9 @@ class StringValue(GuardStableValue):
         if distributed is not None:
             return distributed
         # Python ``needle in haystack`` for str: substring when both are strings;
-        # TypeError for ground non-string needles; py.in when the needle is
-        # symbolic/opaque. Never invent membership for unconstructed shapes.
+        # TypeError for ground non-string needles; the undecided membership
+        # when the needle's type is not decided. Never invent membership for
+        # unconstructed shapes.
         if type(item) is StringValue:
             from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -259,23 +260,11 @@ class StringValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if type(item) in (SymbolicValue, CallSiteValue):
-            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-            from sugar_lift_py_tests.ir import atomic
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            return ExitSet.completed(
-                PredicateValue(
-                    atomic(
-                        "py.in",
-                        [
-                            item.to_term(owner="StringValue.contains needle"),
-                            self.to_term(owner="StringValue.contains haystack"),
-                        ],
-                    ),
-                    site,
-                    operand_callsites=(*item.callsites(), *self.callsites()),
-                )
-            )
+            # A needle whose type is not decided: ``str.__contains__`` raises
+            # ``TypeError`` for a non-``str`` one, so ``x in "abc"`` may
+            # raise.  The floor's one undecided membership: two faces, the
+            # halt kept, owed (#7757 H10).
+            return self.undecided_contains(item, site, owner="StringValue.contains")
         from sugar_lift_py_tests.floor.bytes_value import BytesValue
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.floor.none_value import NoneValue

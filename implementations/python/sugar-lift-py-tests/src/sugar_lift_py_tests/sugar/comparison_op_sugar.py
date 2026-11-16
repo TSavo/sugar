@@ -21,7 +21,6 @@ Compare construction is partitioned by law — not one monomorphic refusal:
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
-from enum import Enum
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import (
@@ -46,24 +45,15 @@ COMPARE_METHODS: dict[str, str] = {
 COMPARISON_KINDS = frozenset(COMPARE_METHODS) | {"NotEq", "Is", "IsNot", "In", "NotIn"}
 
 
-class CompareLaw(str, Enum):
-    """Separate Compare construction mechanisms — laws differ, so partitions do."""
-
-    ORDERING = "ordering"
-    MEMBERSHIP = "membership"
-    EQUALITY = "equality"
-    IDENTITY = "identity"
-    CHAINING = "chaining"
-
-
 def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
     """Ordering law: never dual-edge residual FOL invent (LAW_OF_ONE).
 
     Floor undecided doors throw named; ground doors construct Sugar or
     an authenticated ground exit (a halt). A residual plain completed
     ``PredicateValue`` is OUR fabrication second door — construction panic, not a nameless dual-edge
-    ExitSet. Equality still dual-edges via the shared helper; membership uses
-    :func:`publish_undecided_membership_edges`.
+    ExitSet. Equality still dual-edges via the shared helper; membership has
+    no membrane: the container's own floor answers it, two-faced wherever it
+    is undecided (``FloorValue.undecided_contains``).
 
     Retirement path: when no path can mint ordering PredicateValue, this
     membrane only passes through and may shrink to ``return outcome``.
@@ -97,38 +87,9 @@ def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
     )
 
 
-def publish_undecided_membership_edges(left, right, site, op_kind: str, outcome):
-    """Membership law: undecided ``__contains__`` / iteration is a two-face partition.
-
-    Operand order is needle then container (the producer already swapped for
-    ``in`` / ``not in`` so the floor call is ``container.contains(item)``).
-
-    A builtin list/tuple/set/dict display answers its own undecided
-    membership with its two faces (``floor.membership``, #7757 H10), so it
-    never reaches the bare-predicate check below.  The floors that still
-    answer a bare ``py.in`` (``StringValue``, ``ComprehensionValue``,
-    ``MutableGlobalValue``'s dict, a ``GuardedValue`` rejoin) still do.
-    """
-    return _publish_undecided_dispatch_edges(
-        left,
-        right,
-        site,
-        op_kind,
-        outcome,
-        law=CompareLaw.MEMBERSHIP,
-    )
-
-
 def publish_undecided_equality_edges(left, right, site, op_kind: str, outcome):
     """Retain native equality outcomes; refuse unproven dispatch completion."""
-    return _publish_undecided_dispatch_edges(
-        left,
-        right,
-        site,
-        op_kind,
-        outcome,
-        law=CompareLaw.EQUALITY,
-    )
+    return _publish_undecided_dispatch_edges(left, right, site, op_kind, outcome)
 
 
 def construct_identity_comparison(left, right, site, *, negated: bool = False):
@@ -144,15 +105,7 @@ def construct_identity_comparison(left, right, site, *, negated: bool = False):
     return outcome.and_then(lambda predicate: predicate.negate())
 
 
-def _publish_undecided_dispatch_edges(
-    left,
-    right,
-    site,
-    op_kind: str,
-    outcome,
-    *,
-    law: CompareLaw,
-):
+def _publish_undecided_dispatch_edges(left, right, site, op_kind: str, outcome):
     """Retain constructed native outcomes, not unproven dispatch completion.
 
     An already-constructed Floor outcome owns its completion or exceptional
@@ -162,11 +115,10 @@ def _publish_undecided_dispatch_edges(
     A residual predicate alone does not prove that rich-method dispatch
     completes: Python may select user code that raises an arbitrary exception.
     Refuse that undecided case instead of inventing a TypeError or a nameless
-    exceptional face. Identity is not routed here.
+    exceptional face.  Only equality is routed here: identity dispatches no
+    user code, and membership's container floor answers its own undecided
+    case (``FloorValue.undecided_contains``, #7757 H10).
     """
-    if law is CompareLaw.IDENTITY or law is CompareLaw.CHAINING:
-        return outcome
-
     from sugar_lift_py_tests.floor import PredicateValue
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         plain_completed_value,
@@ -202,11 +154,7 @@ def _publish_undecided_dispatch_edges(
     # class whose metaclass is not decided, or an operand whose own
     # ``__eq__`` may answer first) is the same free predicate: the undecided
     # dispatch, which owes.
-    if (
-        law is CompareLaw.EQUALITY
-        and _bare_equality(predicate)
-        and (_class_object(left) or _class_object(right))
-    ):
+    if _bare_equality(predicate) and (_class_object(left) or _class_object(right)):
         return undecided_dispatch_faces(predicate, site, op_kind)
 
     denotes_left = getattr(left, "denotes_value", None)
@@ -223,8 +171,8 @@ def _publish_undecided_dispatch_edges(
     if decided_left() and decided_right():
         return outcome
 
-    # Undecided dispatch: the operands' runtime types select ``__eq__`` /
-    # ``__contains__`` (and their reflections), which this frame did not look
+    # Undecided dispatch: the operands' runtime types select ``__eq__`` (and
+    # its reflection), which this frame did not look
     # at, so the comparison may raise anything -- the #7585 law.  It completes
     # with the truth of the undecided comparison's value, keyed per
     # evaluation (``python:truth_result(python:compare_result(<kind>, left,
@@ -525,11 +473,9 @@ class ComparisonOpSugar(ConstructedTermSugar):
         ``__contains__``, then iteration, then the ``__getitem__`` sequence
         protocol, which no one dispatched method states.  The container's own
         floor answers it, two-faced wherever a type is undecided (#7757,
-        audit row NEW-1)."""
-        outcome = container.contains(item, self.site)
-        return publish_undecided_membership_edges(
-            item, container, self.site, self.op_kind, outcome
-        )
+        audit row NEW-1): its answer is the whole meaning, with no halt
+        patched on afterwards (#7757 H10)."""
+        return container.contains(item, self.site)
 
     def _ordering(self, left, right, ctx):
         """Ordering law: left owns the rich method; undecided dispatch dual-edges."""

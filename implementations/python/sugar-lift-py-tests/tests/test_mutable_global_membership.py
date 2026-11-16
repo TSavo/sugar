@@ -1,18 +1,15 @@
-"""Authenticated mutable-dict globals own symbolic membership coordinates."""
+"""A mutable module global's membership is the floor's one undecided
+membership (#7757 H10)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import MutableGlobalValue, PredicateValue, StringValue
-from sugar_lift_py_tests.ir import atomic
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, complement_guard
 from sugar_source_tree.nodes import Compare, Name
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
 
@@ -42,31 +39,44 @@ def _context(binding, *, kind: str):
     return value, ctx.with_temporal(ctx.temporal.bind_value("OPTIONS", value))
 
 
-def test_same_source_mutable_dict_membership_keeps_exact_predicate(
+def _assert_undecided_membership(outcome) -> None:
+    """The floor's one undecided membership: the keyed ``py.in`` truth
+    completes only under ``python:compare.completes``; an undetermined halt
+    (owner ``UndecidedCompare:In``) stands under the complement, owed either
+    way.  Never the bare sole predicate (#7757 H10)."""
+    assert outcome.completed_value() is None
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert completed.guard.name == "python:compare.completes"
+    assert isinstance(completed.value, PredicateValue)
+    assert completed.value.formula.name == "python:truth_result"
+    assert completed.value.formula.args[0].name == "python:compare_result"
+    assert completed.value.formula.args[0].args[0].value == "In"
+    assert halted.guard == complement_guard(completed.guard)
+    assert halted.effect.exception_name is None
+    assert halted.effect.producer_node_owner == "UndecidedCompare:In"
+    assert halted.owed and halted.owed == completed.owed
+
+
+def test_mutable_dict_membership_is_the_undecided_membership(
     tmp_path: Path,
 ) -> None:
+    """The pin names the binding, not its keys: another function may have
+    stored a key whose ``__eq__`` raises on a hash collision, so even a
+    decided key's ``in`` may raise.  Before #7757 H10 this was a bare
+    ``py.in`` the compare post-pass patched a halt onto."""
     binding, compare = _source(tmp_path, "truth.py")
     value, _ctx = _context(binding, kind="dict")
-    item = StringValue("key")
-    site = compare.fragment
 
-    outcome = value.contains(item, site)
-
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), PredicateValue)
-    assert outcome.completed_value().site is site
-    assert outcome.completed_value().formula == atomic(
-        "py.in",
-        [
-            item.to_term(owner="mutable global membership test"),
-            value.to_term(owner="mutable global membership test"),
-        ],
-    )
+    _assert_undecided_membership(value.contains(StringValue("key"), compare.fragment))
 
 
-def test_mutable_dict_membership_refuses_same_span_foreign_source(
+def test_mutable_dict_membership_at_a_foreign_source_is_the_same_undecided_membership(
     tmp_path: Path,
 ) -> None:
+    """The undecided membership reads no member of the pin, so the site's
+    source is not asked: the same two faces at either site, never a
+    refusal."""
     binding, truthful = _source(tmp_path, "truth.py")
     _foreign_binding, foreign = _source(
         tmp_path, "foreign.py", suffix="# content-distinct foreign source\n"
@@ -74,16 +84,8 @@ def test_mutable_dict_membership_refuses_same_span_foreign_source(
     value, _ctx = _context(binding, kind="dict")
     item = StringValue("key")
 
-    assert value.contains(item, truthful.fragment).completed_value() is not None
-
-    with pytest.raises(SugarNotWritten) as raised:
-        value.contains(item, foreign.fragment)
-
-    assert raised.value.owner == "MutableGlobalValue.contains"
-    assert raised.value.observed == (
-        "foreign source for mutable-global membership occurrence"
-    )
-    assert raised.value.requested == "authenticated same-source membership occurrence"
+    _assert_undecided_membership(value.contains(item, truthful.fragment))
+    _assert_undecided_membership(value.contains(item, foreign.fragment))
 
 
 def test_non_dict_mutable_global_does_not_borrow_dict_membership(

@@ -29,11 +29,17 @@ def distribute_guarded_membership(container, needle, site):
     membership floor's explicit call (#7757), never a method named by a
     string.  ``None`` is "this door does not apply", never a soft answer: the
     caller falls through to its own law, whose None arm is still the honest no.
+    The two answers rejoin by the one guarded membership rejoin
+    (``GuardedValue.rejoined_membership``): an arm that is the undecided
+    membership keeps its two faces under its own polarity.
     """
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 
     if not isinstance(needle, GuardedValue):
         return None
-    return needle.predicate_from_left(
-        lambda arm: container.contains(arm, site), site, operation="contains"
+    return needle.rejoined_membership(
+        container.contains(needle.when_true, site),
+        container.contains(needle.when_false, site),
+        operand=container,
+        site=site,
     )
