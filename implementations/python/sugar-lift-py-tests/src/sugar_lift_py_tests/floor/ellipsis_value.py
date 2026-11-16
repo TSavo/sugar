@@ -10,8 +10,7 @@ class EllipsisValue(FloorValue):
     """The floor for the `...` literal. No fields -- the Ellipsis-ness IS the
     type, mirroring NoneValue. Stands as the vendor-canonical ``py.ellipsis``
     ctor: already in the verifier's structural ground-ctor whitelist
-    (``consistency.rs`` #4387/#4398 residue), the kit's own ground-ctor list
-    (``call_site_value.py._GROUND_DATA_CTOR_NAMES``), and the isinstance fold
+    (``consistency.rs`` #4387/#4398 residue) and the isinstance fold
     table (``symbolic_value.py``: ``"py.ellipsis": "ellipsis"``)."""
 
     def python_isinstance(self, type_name: str, type_term, site):

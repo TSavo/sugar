@@ -159,7 +159,7 @@ def test_bodyless_call_remains_opaque_without_borrowing_ordering_testimony() -> 
     opaque = CallSiteValue("opaque", (), (), ctor("call:opaque", []), None)
 
     assert "less_than" not in CallSiteValue.__dict__
-    assert opaque._dig_floor_or_none(None, owner="opaque compare twin") is None
+    assert opaque.body is None
 
 
 def test_lying_caller_coordinate_is_rejected_before_it_can_be_evidence() -> None:

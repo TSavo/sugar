@@ -191,11 +191,6 @@ def _returned_term(outcome) -> TermValue:
         if isinstance(value, ReturnValue):
             value = value.value
             continue
-        if isinstance(value, CallSiteValue):
-            dug = value._dig_floor_or_none(None, owner="binop-method-caller")
-            if dug is not None:
-                value = dug
-                continue
         record = getattr(value, "record", None)
         if record is not None and record.statements:
             value = record.statements[-1]

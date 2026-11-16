@@ -447,12 +447,6 @@ def _negated_truth_standing_on_the_call(outcome):
     return completed.value.formula
 
 
-def test_dig_leaves_a_two_arm_method_body_absent() -> None:
-    callsite = _two_arm_method_callsite()
-    dug = callsite._dig_floor_or_none(None, owner="UnaryOpSugar.not method body")
-    assert dug is None
-
-
 def test_not_of_a_two_arm_method_body_stands_on_the_call() -> None:
     from dataclasses import dataclass
 
@@ -532,12 +526,6 @@ def _deferred_lookup_method_callsite():
         site="deferred-lookup",
         source_call_frame_cid="blake3-512:" + "8" * 128,
     )
-
-
-def test_dig_leaves_a_deferred_lookup_method_body_absent() -> None:
-    callsite = _deferred_lookup_method_callsite()
-    dug = callsite._dig_floor_or_none(None, owner="UnaryOpSugar.not method body")
-    assert dug is None
 
 
 def test_not_of_a_deferred_lookup_method_body_stands_on_the_call() -> None:
@@ -638,12 +626,6 @@ def _multi_return_block_method_callsite():
         site="multi-return-matches",
         source_call_frame_cid="blake3-512:" + "7" * 128,
     )
-
-
-def test_dig_leaves_a_multi_return_block_absent() -> None:
-    callsite = _multi_return_block_method_callsite()
-    dug = callsite._dig_floor_or_none(None, owner="UnaryOpSugar.not method body")
-    assert dug is None
 
 
 def test_not_of_a_multi_return_block_stands_on_the_call() -> None:

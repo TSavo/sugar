@@ -35,7 +35,6 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.callable_application import CallableApplication
-from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, LambdaCallable, TermValue
 from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
@@ -160,7 +159,7 @@ def _returned(outcome) -> list:
 
     def visit(value) -> None:
         if isinstance(value, (ReturnValue, GuardedReturn)):
-            found.append(_resolved(value.value))
+            found.append(value.value)
             return
         for entry in getattr(value, "statements", ()) or ():
             visit(entry)
@@ -172,16 +171,6 @@ def _returned(outcome) -> list:
         if isinstance(exit_, Completed):
             visit(exit_.value)
     return found
-
-
-def _resolved(value):
-    if isinstance(value, CallSiteValue) and value.body is not None:
-        dug = value._dig_floor_or_none(
-            ReduceContext.root(owner="lambda-cell"), owner="lambda-cell"
-        )
-        if dug is not None:
-            return dug
-    return value
 
 
 # ---------------------------------------------------------------------------

@@ -121,7 +121,7 @@ def _finite_equality_face(value, peer, *, matches: bool):
 
 
 def _equals_and_refine(left, right, site, ctx, left_coordinate):
-    outcome = _equals_with_derived_residue(left, right, site, ctx)
+    outcome = _equals_with_undecided_edges(left, right, site, ctx)
     from sugar_lift_py_tests.floor import PredicateValue
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -162,7 +162,7 @@ def _equals_and_refine(left, right, site, ctx, left_coordinate):
     )
 
 
-def _equals_with_derived_residue(left, right, site, ctx):
+def _equals_with_undecided_edges(left, right, site, ctx):
     from sugar_lift_py_tests.sugar.comparison_op_sugar import (
         publish_undecided_equality_edges,
     )
@@ -172,24 +172,10 @@ def _equals_with_derived_residue(left, right, site, ctx):
     # (the subclass rule first), then identity, which no one dispatched
     # method states.  The floor answers it, and an undecided operand
     # dual-edges below (#7757, audit row NEW-1).
+    # A call's result is its coordinate (#7757 step 6): no callee body is
+    # read here for a residue; what the call returns is joined at prove.
     outcome = left.equals(right, site, ctx)
 
-    from sugar_lift_py_tests.floor import CallSiteValue, PredicateValue
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        plain_completed_value,
-    )
-
-    if isinstance(left, CallSiteValue):
-        residue = left.derived_equality_residue(ctx)
-        predicate = plain_completed_value(outcome)
-        if residue is not None and isinstance(predicate, PredicateValue):
-            outcome = ExitSet.completed(
-                replace(
-                    predicate,
-                    derived_formulas=(*predicate.derived_formulas, residue),
-                )
-            )
     # Equality law: dual-edge when either operand type is undecided.
     return publish_undecided_equality_edges(
         left,

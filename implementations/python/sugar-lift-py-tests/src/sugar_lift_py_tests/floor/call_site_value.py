@@ -508,27 +508,15 @@ class CallSiteValue(FloorValue):
         return self
 
     def callable_application_with(self, operation, ctx):
-        """Apply the authenticated value returned by a source-backed call.
+        """Applying what a call returned is the named construction gap.
 
-        Decorator factories commonly return another callable.  The call
-        occurrence remains the producer coordinate, but Python applies the
-        returned floor.  Opaque or self-recursive projection stays loud rather
-        than treating the call spelling as callable authority.
+        A call's value is its coordinate: no callee body is applied at lift
+        (#7757 step 6), so the callable it returned is not in hand, and
+        ``force_floor`` refuses by name; the call spelling is never callable
+        authority.
         """
-        projected = self.force_floor(
-            ctx, owner="CallSiteValue.callable_application_with"
-        )
-        if projected is self:
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                owner="CallSiteValue.callable_application_with",
-                blame=operation.site,
-                observed="source call projected to its own call coordinate",
-                requested="authenticated returned callable Floor",
-                fix="retain the factory return or keep decorator application loud",
-            )
-        return operation.apply(projected, ctx)
+        del operation
+        self.force_floor(ctx, owner="CallSiteValue.callable_application_with")
 
     def truth(self, site):
         # A call result's truth is the one truth rule's two faces
@@ -544,9 +532,8 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.sugar.bool_op_sugar import _unanswered_truth
 
         if is_lift_time_decidable(self.term):
-            constructed = self._construct_decidable_truth(site)
-            if constructed is not None:
-                return constructed
+            # No callee body is applied at lift (#7757 step 6): a ground
+            # call's truth is not in hand, and is refused by name.
             construction_panic_gap(
                 owner="CallSiteValue.truth",
                 blame=site,
@@ -559,21 +546,6 @@ class CallSiteValue(FloorValue):
             )
         return _unanswered_truth(self, site, owner="CallSiteValue.truth")
 
-    def _construct_decidable_truth(self, site):
-        """Construct truth for a ground callsite, or return None to stay loud.
-
-        - Dug body answers with its truth, taken through the one truth rule
-          (``bool_op_sugar.truth_of``): a dug value whose truth is not decided
-          is its two faces.
-        Unconstructable ground residual returns None so the caller panics.
-        """
-        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
-
-        dug = self._dig_floor_or_none(None, owner="CallSiteValue.truth")
-        if dug is not None and dug is not self:
-            return truth_of(dug, site, owner="CallSiteValue.truth")
-        return None
-
     def bitwise_invert(self, site):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
@@ -585,12 +557,6 @@ class CallSiteValue(FloorValue):
         return SymbolicValue(self.result_term()).unary_minus(site)
 
     def unary_plus(self, site):
-        dug = self._dig_floor_or_none(None, owner="CallSiteValue.unary_plus")
-        if dug is not None and dug is not self:
-            return dug.unary_plus(site)
-        if self.body is not None:
-            return super().unary_plus(site)
-
         from sugar_lift_py_tests.effect import runtime_unary_plus
 
         return runtime_unary_plus(self, site)
@@ -720,12 +686,9 @@ class CallSiteValue(FloorValue):
         )
 
     def contains(self, item, site):
-        # Dig a concrete container when the body yields one; otherwise the call
-        # result's container type is undecided — named refusal, never
-        # ExitSet.completed(py.in) fabrication.
-        dug = self._dig_floor_or_none(None, owner="CallSiteValue.contains")
-        if dug is not None and dug is not self:
-            return dug.contains(item, site)
+        # The call result's container type is undecided (no callee body is
+        # applied at lift, #7757 step 6) — never ExitSet.completed(py.in)
+        # fabrication.
         return self.undecided_contains(item, site, owner="CallSiteValue.contains")
 
     def _builtin_exception_instance_subscript(self, site):
@@ -787,8 +750,8 @@ class CallSiteValue(FloorValue):
         node constructs its second operand.) A call bound to the builtin
         ``list`` (its ``LanguageCallee``, never its spelling) is list-shaped.
         The ``py.subscript`` coordinate (its marker, never its spelling) of a
-        diggable tuple/list projects the element when the index is a ground
-        int (unpack residual: ``handles`` from a returned triple).
+        tuple/list in hand projects the element when the index is a ground
+        int.
         A curried For post-state (``loop:…`` target) that carried a list via
         append-rebind is still list-shaped: further appends rebind through
         ``py.list_append`` without re-digging the loop body. Chained
@@ -830,13 +793,6 @@ class CallSiteValue(FloorValue):
                 and is_constructed_list_callsite(receiver.arg_values[0])
             )
 
-        def dig_floor(operand):
-            if isinstance(operand, CallSiteValue):
-                return operand._dig_floor_or_none(
-                    None, owner="CallSiteValue.append_with"
-                )
-            return None
-
         def list_append_coordinate(prior):
             return ExitSet.completed(list_append_coordinate_value(prior, value, site))
 
@@ -854,31 +810,25 @@ class CallSiteValue(FloorValue):
                 return operand.append_with(value, site)
             if not isinstance(operand, CallSiteValue):
                 return None
-            dug = dig_floor(operand)
-            if is_list_floor(dug):
-                return dug.append_with(value, site)
             if is_constructed_list_callsite(operand):
                 return list_append_coordinate(operand)
             return resolve_receiver(operand)
 
         def resolve_receiver(receiver: CallSiteValue):
-            # Unpack residual: handles = returned_triple[2] where the call digs
-            # to a TupleValue/ListValue and the index is a ground int.
+            # Unpack residual: handles = triple[2] where the base is a
+            # TupleValue/ListValue in hand and the index is a ground int.  A
+            # call's result is never one: no callee body is applied at lift
+            # (#7757 step 6).
             if receiver.subscript_coordinate and len(receiver.arg_values) == 2:
                 base, index = receiver.arg_values
                 if isinstance(index, TermValue) and type(index.value) is int:
-                    floor_base = base
-                    if isinstance(base, CallSiteValue):
-                        dug_base = dig_floor(base)
-                        if dug_base is not None:
-                            floor_base = dug_base
-                    if isinstance(floor_base, (ListValue, TupleValue)):
+                    if isinstance(base, (ListValue, TupleValue)):
                         from sugar_lift_py_tests.operations.subscript_operation import (
                             discharge_subscript,
                         )
 
                         projected = discharge_subscript(
-                            floor_base,
+                            base,
                             index,
                             site,
                             None,
@@ -920,56 +870,6 @@ class CallSiteValue(FloorValue):
         # inv that consumes the term can still project the edge later.
         return (self,)
 
-    def derived_equality_residue(self, ctx):
-        """Return the callsite's ground body fact when its dig warrants one.
-
-        The function universe already owns the body post.  Equality testimony
-        additionally needs the callsite-keyed residue so the stated assertion
-        and the derived value remain independently visible at the EUF join.
-        Only a single ``out = ground-value`` post is a derived value pin;
-        opaque, effectful, symbolic, and multi-exit bodies stay absent and
-        therefore loud at the existing construction-gap boundary.
-
-        Ground values are primitive consts *and* data constructors the
-        verifier treats as structural values (``None``, ``py.ellipsis``,
-        ``py.complex``, tuples/arrays/… — see ``_is_ground_value_term``).
-        That parity is load-bearing: without a callsite-keyed Derived dual,
-        ``assert A() == None`` against a body that returns ``...`` soft-SATs
-        (#4387 ellipsis E2E residue).
-        """
-        floor = self._dig_floor_or_none(
-            ctx,
-            owner="CallSiteValue.derived_equality_residue",
-        )
-        if floor is None:
-            return None
-        posts = tuple(floor.post_contribution())
-
-        from sugar_lift_py_tests.ir import (
-            _Atomic,
-            _Var,
-            eq,
-        )
-
-        if not posts:
-            rhs = floor.to_term(owner="CallSiteValue.derived_equality_residue")
-        elif len(posts) == 1:
-            post = posts[0]
-            if not (
-                isinstance(post, _Atomic)
-                and post.name == "="
-                and len(post.args) == 2
-                and isinstance(post.args[0], _Var)
-                and post.args[0].name == "out"
-            ):
-                return None
-            rhs = post.args[1]
-        else:
-            return None
-        if not _is_ground_value_term(rhs):
-            return None
-        return eq(self.result_term(), rhs)
-
     def linear_method_call(self, method_name: str, args: tuple, site):
         """Name the next link in a timeless receiver-method rewrite."""
         from sugar_lift_py_tests.ir import ctor
@@ -993,23 +893,12 @@ class CallSiteValue(FloorValue):
     def format_data_model(self, spec, site, ctx) -> Any:
         """Construct ``format(call(), spec)`` at the Python data-model seam.
 
-        A carried body is statically decidable and must reduce (or panic) before
-        dispatch.  A body-less callsite still has an exact receiver coordinate:
-        preserve it as the symbolic ``__format__`` method call without claiming
-        a concrete return value and without manufacturing a RuntimeEffect.
+        A callsite has an exact receiver coordinate: preserve it as the
+        symbolic ``__format__`` method call without claiming a concrete return
+        value and without manufacturing a RuntimeEffect.  No callee body is
+        applied at lift (#7757 step 6).
         """
-        if self.body is not None:
-            floor = self._dig_floor_or_none(
-                ctx,
-                owner="FormatDunderCallSugar callsite receiver",
-            )
-            if floor is None:
-                from sugar_lift_py_tests.outcome import ExitSet
-
-                return ExitSet.completed(
-                    self.linear_method_call("__format__", (spec,), site)
-                )
-            return floor.format_data_model(spec, site, ctx)
+        del ctx
         from sugar_lift_py_tests.outcome import ExitSet
 
         return ExitSet.completed(self.linear_method_call("__format__", (spec,), site))
@@ -1060,10 +949,10 @@ class CallSiteValue(FloorValue):
         )
 
     def add(self, other, site, ctx):
-        """Addition floor via interface dispatch: dig, redispatch, or refuse.
+        """Addition floor via interface dispatch: concatenation or undecided.
 
         BinOpSugar calls left.add(right, site, ctx) — not binary_operator_with.
-        Without this totalizer, dig of `want_bytes(x) + self.sep`
+        Without this totalizer, `want_bytes(x) + self.sep`
         construction_panics mid-body.
         A named string coordinate plus a ground string
         (``type(exc).__name__ + "()"``) is concatenation: emit ``call:__add__``
@@ -1073,12 +962,12 @@ class CallSiteValue(FloorValue):
 
         if type(other) is StringValue and self.names_a_string():
             return self.named_string_concat(self, other, site)
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other, site, ctx, op="+", floor_method="add", undecided=super().add
         )
 
     def subtract(self, other, site, ctx):
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other,
             site,
             ctx,
@@ -1088,7 +977,7 @@ class CallSiteValue(FloorValue):
         )
 
     def multiply(self, other, site, ctx):
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other,
             site,
             ctx,
@@ -1098,22 +987,22 @@ class CallSiteValue(FloorValue):
         )
 
     def power(self, other, site, ctx):
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other, site, ctx, op="**", floor_method="power", undecided=super().power
         )
 
     def divide(self, other, site, ctx):
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other, site, ctx, op="/", floor_method="divide", undecided=super().divide
         )
 
     def modulo(self, other, site, ctx):
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other, site, ctx, op="%", floor_method="modulo", undecided=super().modulo
         )
 
     def floor_divide(self, other, site, ctx):
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other,
             site,
             ctx,
@@ -1123,7 +1012,7 @@ class CallSiteValue(FloorValue):
         )
 
     def left_shift(self, other, site, ctx):
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other,
             site,
             ctx,
@@ -1136,7 +1025,7 @@ class CallSiteValue(FloorValue):
         # Base64 / alphabet index math: `ord(c) >> 2` on call results.
         # Without this, FloorValue.right_shift panics (A2 mint-failed on
         # python-literal-base64 / base64-federation).
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other,
             site,
             ctx,
@@ -1146,9 +1035,9 @@ class CallSiteValue(FloorValue):
         )
 
     def bitwise_and(self, other, site, ctx):
-        # Same family as left_shift / bitwise_or: dig then redispatch, else
+        # Same family as left_shift / bitwise_or: the undecided dispatch, or
         # retain the named undecided-dispatch refusal.
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other,
             site,
             ctx,
@@ -1158,7 +1047,7 @@ class CallSiteValue(FloorValue):
         )
 
     def bitwise_xor(self, other, site, ctx):
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other,
             site,
             ctx,
@@ -1168,7 +1057,7 @@ class CallSiteValue(FloorValue):
         )
 
     def bitwise_or(self, other, site, ctx):
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other,
             site,
             ctx,
@@ -1178,7 +1067,7 @@ class CallSiteValue(FloorValue):
         )
 
     def matrix_multiply(self, other, site, ctx):
-        return self._dig_or_undecided_binop(
+        return self._undecided_binop(
             other,
             site,
             ctx,
@@ -1187,25 +1076,20 @@ class CallSiteValue(FloorValue):
             undecided=super().matrix_multiply,
         )
 
-    def _dig_or_undecided_binop(
+    def _undecided_binop(
         self, other, site, ctx, *, op: str, floor_method: str, undecided
     ):
-        """Dig source body when present; otherwise retain undecided dispatch.
+        """Retain undecided dispatch: no invent of concrete sums.
 
-        No invent of concrete sums. The dig and the redispatch run under the
-        caller's context (#7757): a body is never applied context-free.
-        Mid-dig ConstructionPanic propagates (process-terminal; never dig opacity).
+        A call's result is its coordinate (no callee body is applied at lift,
+        #7757 step 6), so the operator over it is the undecided dispatch,
+        run under the caller's context.
 
-        Keep an opaque named leaf (``preserve_opaque_leaf``). ``_exception_type_name``
-        reduces to ``attr:__name__``, which has no further body; discarding that
-        leaf would refuse ``helper() + "()"`` on the helper callsite itself
-        instead of naming concat of the known string coordinate.
-
-        Every call here is written out (#7757): the dug floor and each arm of a
-        guarded right operand answer through the binary floor's own explicit
-        call (``BINARY_FLOOR_OPERATIONS``), and ``undecided`` is the caller's
-        own ``super()`` floor (``super().subtract``), never a method looked up
-        by its name.
+        Every call here is written out (#7757): each arm of a guarded right
+        operand answers through the binary floor's own explicit call
+        (``BINARY_FLOOR_OPERATIONS``), and ``undecided`` is the caller's own
+        ``super()`` floor (``super().subtract``), never a method looked up by
+        its name.
         """
         from sugar_lift_py_tests.floor.floor_value import BINARY_FLOOR_OPERATIONS
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
@@ -1215,14 +1099,6 @@ class CallSiteValue(FloorValue):
             return other.map_from_left(
                 lambda arm: operate(self, arm, site, ctx), site, operation=floor_method
             )
-
-        dug = self._dig_floor_or_none(
-            ctx,
-            owner=f"CallSiteValue.{floor_method}",
-            preserve_opaque_leaf=True,
-        )
-        if dug is not None and dug is not self:
-            return operate(dug, other, site, ctx)
 
         refused = self._undecided_binary_law(other, site, op)
         if refused is not None:
@@ -1260,22 +1136,17 @@ class CallSiteValue(FloorValue):
     def subscript_with(self, operation, ctx):
         """Subscript on a callsite result.
 
-        Dig when the body floors; otherwise the read of this callsite's
-        result is undecided and answers the one two-faced form
+        The read of this callsite's result is undecided (no callee body is
+        applied at lift, #7757 step 6) and answers the one two-faced form
         (:meth:`FloorValue.undecided_subscript`), produced once. The operation
         owns the submission door -- the deleted central dispatcher must never
         be rediscovered here.
         """
+        del ctx
         if self.builtin_exception_class is not None:
             decided = self._builtin_exception_instance_subscript(operation.blame)
             if decided is not None:
                 return decided
-        floor = self._dig_floor_or_none(
-            ctx,
-            owner=f"{operation.owner} callsite subscript receiver",
-        )
-        if floor is not None:
-            return operation.submit(floor, ctx)
         return self.undecided_subscript(
             operation.index, operation.blame, owner="CallSiteValue.subscript"
         )
@@ -1283,75 +1154,16 @@ class CallSiteValue(FloorValue):
     def project_sequence_with(self, operation, ctx):
         """``a, b = f(...)``: unpack of a callsite result.
 
-        Same dig-or-symbolic totalizer as subscript_with, and the same route
-        ``OpaqueOpCallsite`` already documents for this exact operation: dig
-        the callsite floor when the
-        body floors, so a callee returning a display makes the arity lift-time
-        decidable and the members bind from the values already in hand;
-        otherwise re-dispatch on ``SymbolicValue(self.term)``, whose runtime
-        unpack is two-faced over the callsite's own term
-        (``runtime_unpack_faces``).
-
-        Neither arm invents a member and neither assumes the count matched --
-        which is what ``SequenceProjectionOperation`` requires of a value that
-        answers at all. Absence of this arm was the ``project_sequence_with``
-        panic on six of the measured rows.
-
-        It dispatches on the dug floor's own port. The opaque arm
-        hands the CALLSITE ITSELF to ``project_symbolic``, so the retained
+        A call's value is its coordinate (no callee body is applied at lift,
+        #7757 step 6, the owner's ruling of 2026-11-15, "Edge, join at
+        prove"), so the unpack hands the CALLSITE ITSELF to
+        ``project_symbolic``, whose runtime unpack is two-faced over the
+        callsite's own term (``runtime_unpack_faces``): the retained
         obligation names ``call:<callee>(...)`` -- the coordinate the unpack
-        actually demands members of -- and never a fabricated element.
+        actually demands members of -- and never a fabricated element.  It
+        neither invents a member nor assumes the count matched.
         """
-        floor = self._dig_floor_or_none(
-            ctx, owner=f"{operation.owner} callsite unpack right-hand side"
-        )
-        if floor is not None:
-            return floor.project_sequence_with(operation, ctx)
         return operation.project_symbolic(self, ctx)
-
-    def _dig_floor_or_none(
-        self,
-        ctx: Any,
-        *,
-        owner: str,
-        incomplete_outcome: list | None = None,
-        preserve_opaque_leaf: bool = False,
-        seen: frozenset[str] = frozenset(),
-        depth: int = 0,
-        budget: int = _FORCE_FLOOR_BUDGET,
-    ) -> FloorValue | None:
-        """Return a concrete floor when dig succeeds; None when the receiver is opaque.
-
-        A call's value is its coordinate: no callee body is applied at lift
-        (#7757 step 6, the owner's ruling of 2026-11-15, "Edge, join at
-        prove"), so every call is opaque here -- an EUF-join residual, not a
-        panic -- and what it returns is what the callee's contract states,
-        joined at prove.  Budget / recursive demand still panics: those are
-        non-composable, not joinable coordinates.
-        """
-        del ctx, incomplete_outcome
-        key = _term_cycle_key(self.term)
-        if depth >= budget or len(seen) >= budget:
-            _force_floor_gap(
-                owner=owner,
-                target_name=self.target_name,
-                observed="callsite value demand budget exhausted",
-                fix=(
-                    f"callsite `{self.target_name}` exceeded force_floor dig budget "
-                    f"{budget}; leave the bridge as axiomatic"
-                ),
-            )
-        if key in seen:
-            _force_floor_gap(
-                owner=owner,
-                target_name=self.target_name,
-                observed="recursive callsite value demand",
-                fix=(
-                    f"callsite `{self.target_name}` recursively demanded its own "
-                    "floor; leave the bridge as axiomatic"
-                ),
-            )
-        return self if preserve_opaque_leaf else None
 
     def force_floor(
         self,
@@ -1533,55 +1345,6 @@ def _current_occurrence_path() -> tuple[str, ...]:
     from sugar_lift_py_tests.occurrence import current_path
 
     return current_path()
-
-
-# Data constructors the verifier treats as structural *values* (not operators /
-# callsites). Must stay aligned with sugar-verifier `is_ground_data_ctor_name`
-# so Derived residue duals leave the same ground faces as gaps structurally.
-_GROUND_DATA_CTOR_NAMES = frozenset(
-    {
-        "tuple",
-        "array",
-        "None",
-        "py.complex",
-        "py.ellipsis",
-        "python:module",
-        "python:type",
-        "python:dict",
-        "python:dict_entry",
-        "python:set",
-        "python:frozenset",
-        "python:bytes",
-        "python:bytearray",
-        "python:list",
-        "python:tuple",
-    }
-)
-
-
-def _is_ground_value_term(term) -> bool:
-    """True when ``term`` is a structural ground value for Derived EUF residue.
-
-    Mirrors sugar-verifier ``is_const_value``: primitive consts, plus ground
-    data constructors whose args are themselves ground. Operator/callsite
-    ctors (``+``, ``call:…``, ``py.attr``, …) stay out so dig residue cannot
-    invent a dual that structural consistency would not mark as a gap.
-    """
-    from sugar_lift_py_tests.ir import (
-        _ConstBool,
-        _ConstInt,
-        _ConstReal,
-        _ConstStr,
-        _Ctor,
-    )
-
-    if isinstance(term, (_ConstBool, _ConstInt, _ConstReal, _ConstStr)):
-        return True
-    if not isinstance(term, _Ctor):
-        return False
-    if term.name not in _GROUND_DATA_CTOR_NAMES:
-        return False
-    return all(_is_ground_value_term(arg) for arg in term.args)
 
 
 def _force_floor_gap(

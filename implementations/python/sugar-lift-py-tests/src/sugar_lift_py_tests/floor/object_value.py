@@ -1243,7 +1243,7 @@ class ObjectValue(FloorValue):
         receiver's class (``ClassDefinitionValue.namespace_member``, #7757),
         the one resolution every reader of a class member reads (an
         attribute read, an explicit or implicit method call, a comparison, a
-        store; ``Cls.m``; ``super().m``).
+        store).
 
         A ``def`` the holding class's body left last is ``method``: this
         receiver's roster function that very statement wrote, the holding

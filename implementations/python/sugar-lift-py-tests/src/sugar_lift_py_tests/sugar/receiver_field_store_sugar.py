@@ -100,7 +100,6 @@ class ReceiverFieldStoreSugar(Sugar):
         )
         from sugar_lift_py_tests.sugar.store_effect_sugar import attribute_mutation
 
-        receiver = floored_receiver(receiver, ctx)
         if not isinstance(receiver, ObjectValue):
             return attribute_mutation(
                 "__setattr__",
@@ -187,23 +186,3 @@ class ReceiverFieldStoreSugar(Sugar):
         return record_statement_value(carry_walrus_binds(binds, call), ctx).and_then(
             advanced
         )
-
-
-def floored_receiver(receiver, ctx):
-    """``receiver`` as a field store or its post-state reads it: an object
-    read through its authenticated constructor call's key is that call's
-    floor, as an attribute read takes it (``AttributeSugar``); any other
-    value is itself."""
-    from sugar_lift_py_tests.floor import CallSiteValue
-
-    if (
-        isinstance(receiver, CallSiteValue)
-        and receiver.body is not None
-        and receiver.source_call_frame_cid is not None
-    ):
-        return receiver.force_floor(
-            ctx,
-            owner="authenticated receiver field store",
-            project_callsite=False,
-        )
-    return receiver

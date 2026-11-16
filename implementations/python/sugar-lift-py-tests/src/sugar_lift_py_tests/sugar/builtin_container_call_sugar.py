@@ -305,10 +305,6 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )
-        from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
-            floored_receiver,
-        )
-        from sugar_source_tree.container_mutation import field_store_rule
 
         unknown = ExitSet.completed(self._changed(ctx))
         if self.prior is None or not self.rules:
@@ -329,11 +325,6 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
                         self.subjects[subject].desugar(ctx)
                     )
             met_value = met[subject]
-            if met_value is not None and field_store_rule(method) is not None:
-                # The one field store decides by its receiver as the store
-                # read it: an object read through its constructor call's key
-                # is that call's floor (``floored_receiver``).
-                met_value = floored_receiver(met_value, ctx)
             if met_value is None or _may_change(
                 met_value, method, pure, sharer, held=value
             ):

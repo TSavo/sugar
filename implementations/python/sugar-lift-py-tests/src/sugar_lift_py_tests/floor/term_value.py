@@ -385,12 +385,6 @@ class TermValue(GuardStableValue):
         if type(other) is SymbolicValue:
             return SymbolicValue(self.to_term(owner=str(site))).power(other, site, ctx)
         if type(other) is CallSiteValue:
-            dug = other._dig_floor_or_none(
-                ctx, owner="TermValue.power callsite exponent"
-            )
-            if dug is not None and dug is not other:
-                return self.power(dug, site, ctx)
-
             from sugar_lift_py_tests.effect import (
                 PowerRuntimeEffect,
                 runtime_effect_evidence,

@@ -72,12 +72,8 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.floor.object_value import ObjectValue
         from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
-            floored_receiver,
-        )
 
         def update(receiver, value):
-            receiver = floored_receiver(receiver, ctx)
             if isinstance(receiver, ObjectValue):
                 if receiver.field_store_runs_code(self.attr):
                     return self._left(ctx)

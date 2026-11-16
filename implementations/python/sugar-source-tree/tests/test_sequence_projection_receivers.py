@@ -16,8 +16,8 @@ The categories, and what each one owes:
   (`UndeterminedRaiseEffect`) and nothing binds -- exactly as CPython binds
   nothing when `UNPACK_SEQUENCE` raises -- and under the atom each name binds
   its position's projection.  The halt is never the whole answer.
-- **undug callsite coordinate**. Currently loud; see the frontier test at the
-  bottom, which names the arm that retires it.
+- **callsite coordinate**. A call is its coordinate (#7757 step 6): it
+  answers as a symbolic receiver does, over the call's own term.
 
 Every twin states its arity exactly. None asserts `!= 1`.
 """
@@ -103,37 +103,6 @@ def _assert_arity(halt, arity: int) -> None:
     guard = str(halt.guard)
     assert "python:unpack.destructure" in guard, guard
     assert str(num(arity)) in guard, guard
-
-
-def _answers_when_dig_yields(dug, source: str):
-    """Every `(receiver, answer)` the unpack demand produced, with the callsite
-    dig forced to `dug`.
-
-    A callsite whose callee body projects a finite display is not reachable from
-    a two-function fixture here -- the callee universe is not available to the
-    dig at this seam -- so the dig is driven directly. That keeps the twin about
-    THIS arm's routing rather than about the availability of a callee universe.
-    """
-    import sugar_lift_py_tests.operations.sequence_projection_operation as spo
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-
-    answers: list[tuple[str, object]] = []
-    original_dig = CallSiteValue._dig_floor_or_none
-    original_submit = spo.SequenceProjectionOperation.submit
-
-    def recording(self, value, ctx):
-        answer = original_submit(self, value, ctx)
-        answers.append((type(value).__name__, answer))
-        return answer
-
-    CallSiteValue._dig_floor_or_none = lambda self, ctx, **kwargs: dug
-    spo.SequenceProjectionOperation.submit = recording
-    try:
-        _out(source)
-    finally:
-        CallSiteValue._dig_floor_or_none = original_dig
-        spo.SequenceProjectionOperation.submit = original_submit
-    return answers
 
 
 def _unpack_halt(out):
@@ -312,7 +281,7 @@ def test_callsite_receiver_answers_like_its_dug_floor() -> None:
     answer is reached, never what the answer is.
     """
     seen, out = _receivers("def A(o):\n a, b = o.split()\n return a\n")
-    # Dug to the opaque residual, then re-dispatched on the EUF receiver term.
+    # The call is its coordinate, re-dispatched on the EUF receiver term.
     assert seen == ["CallSiteValue", "SymbolicValue"], seen
     # The opaque call raises something undetermined too; the unpack's own
     # raise is the one its producer names (``runtime_unpack_faces``).
@@ -326,59 +295,6 @@ def test_callsite_receiver_answers_like_its_dug_floor() -> None:
     assert any(isinstance(exit_, Completed) for exit_ in out.exits), out
     _assert_arity(halt, 2)
     assert not isinstance(getattr(halt.effect, "value", None), ScopeRebinds)
-
-
-def test_a_callsite_digs_before_it_falls_back_to_the_symbolic_term() -> None:
-    """DISCRIMINATING. The arm must CONSULT the dig, not skip to the term.
-
-    An arm that always answered with `SymbolicValue(self.term)` would pass the
-    test above -- opaque bodies are the common case -- while throwing away every
-    decidable count a projecting callee body hands over. This drives the dig half
-    directly: when the floor digs to authenticated finite members, the names bind
-    to the members ALREADY IN HAND and no runtime obligation is minted.
-
-    Asserted on the operation's own answer rather than the function outcome,
-    because the TREE froze `return a` as an unbound read at substitution time --
-    it cannot pair targets with members for a non-display right-hand side, which
-    is the whole reason this sugar exists. So the rebinds are correct and the
-    tail still reads unbound. That is a separate, pre-existing seam (the one
-    `test_binding_state_unbound` documents), not this arm's answer, and this twin
-    is careful not to claim otherwise.
-    """
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
-
-    members = (TermValue(4), TermValue(5))
-    answers = _answers_when_dig_yields(
-        TupleLiteralValue(members), "def A(o):\n a, b = o.split()\n return a\n"
-    )
-
-    # The callsite consulted the dig -- the dug display received the demand --
-    # and the callsite's own answer is that display's answer.
-    assert [name for name, _ in answers] == ["TupleLiteralValue", "CallSiteValue"]
-    for _, answer in answers:
-        rebinds = answer.completed_value()
-        assert isinstance(rebinds, ScopeRebinds)
-        assert tuple(n for n, _ in rebinds.bindings) == ("a", "b")
-        # The SAME member objects the dug display was holding.
-        assert tuple(v for _, v in rebinds.bindings) == members
-    del CallSiteValue
-
-
-def test_a_dug_display_of_the_wrong_size_stays_the_decidable_gap() -> None:
-    """DISCRIMINATING. Digging must not launder a decidable mismatch into the
-    runtime obligation: once the count IS known, getting it wrong is a gap."""
-    from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
-
-    with pytest.raises(ConstructionPanic) as raised:
-        _answers_when_dig_yields(
-            TupleLiteralValue((TermValue(1), TermValue(2), TermValue(3))),
-            "def A(o):\n a, b = o.split()\n return a\n",
-        )
-    assert "too many values" in str(raised.value)
-    assert "ground ValueError" in str(raised.value)
 
 
 # ==========================================================================
