@@ -768,6 +768,12 @@ row is a statement of fact, never a claim to check (``consistency.rs``,
 #: the attribute is read).
 _FUNCTION_KIND = "function"
 _FIELD_KIND = "field"
+#: A single-target assignment of a literal or a display to the name
+#: (``x = 1``, ``x = (a, b)``, ``x = {}``): a value of a builtin class that
+#: defines no ``__get__``, so a read of it off an instance is the value
+#: itself where no hook runs (``consistency::NAMESPACE_VALUE_KIND``,
+#: ``class_read_holds``).  It names no function: no dispatch joins it.
+_VALUE_KIND = "value"
 #: A name only CPython's type creation may write (``nodes._TYPE_CREATION_NAMES``
 #: the body does not bind and no module store names): whether the class holds
 #: it is undecided as for ``undecided``, and what it may hold is type
@@ -798,7 +804,9 @@ def class_namespace_row(cls, file_rel: str) -> list:
       undecorated, not a generator, not ``async``); ``staticmethod``,
       ``classmethod`` or ``property`` for such a ``def`` under that one
       builtin decorator (``ClassDef._method_descriptor_kind``); ``field``
-      for a lambda the body assigns to the name; ``undecided`` where the
+      for a lambda the body assigns to the name; ``value`` (no symbol) for
+      a literal or display the body assigns to the name (``_VALUE_KIND``:
+      its class defines no ``__get__``); ``undecided`` where the
       lookup does not decide whether it holds it (``creation`` where that is
       only because type creation may write it, ``_CREATION_KIND``); ``other``
       for anything
@@ -952,8 +960,28 @@ def _namespace_value_kind(cls, name: str) -> tuple:
     lambda to the name, whose function is that lambda.  Its join symbol is
     the function's own (``bridge_source_symbol``), whose contract is the
     function's body: a descriptor decorator wraps the function without
-    changing what a call of it runs."""
-    from sugar_source_tree.nodes import Assign, FunctionDef, Lambda, Name
+    changing what a call of it runs.
+
+    ``(_VALUE_KIND, "")`` for a single-target assignment (or an annotated
+    one) of a literal or a display to the name, by a statement of the body
+    itself: its value's class (``int``, ``str``, ``bytes``, ``float``,
+    ``complex``, ``bool``, ``NoneType``, ``ellipsis``, ``tuple``, ``list``,
+    ``dict``, ``set``) defines no ``__get__``, read off the syntax alone,
+    whatever a display holds.  Any other value (a call such as
+    ``property(f)`` or ``SomeDescriptor()``, a name) may be a descriptor:
+    ``other``."""
+    from sugar_source_tree.nodes import (
+        AnnAssign,
+        Assign,
+        Constant,
+        Dict,
+        FunctionDef,
+        Lambda,
+        List,
+        Name,
+        Set,
+        Tuple_,
+    )
 
     if not cls.namespace_value_is_body(name):
         return None, None
@@ -978,6 +1006,19 @@ def _namespace_value_kind(cls, name: str) -> tuple:
         and isinstance(binder.value, Lambda)
     ):
         return _FIELD_KIND, binder.value.bridge_source_symbol()
+    if isinstance(binder, Assign):
+        targets = binder.targets
+    elif isinstance(binder, AnnAssign) and binder.value is not None:
+        targets = (binder.target,)
+    else:
+        return None, None
+    if (
+        len(targets) == 1
+        and isinstance(targets[0], Name)
+        and targets[0].id == name
+        and type(binder.value) in (Constant, Tuple_, List, Dict, Set)
+    ):
+        return _VALUE_KIND, ""
     return None, None
 
 

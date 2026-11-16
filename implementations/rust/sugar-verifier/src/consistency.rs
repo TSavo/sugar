@@ -6897,6 +6897,104 @@ fn plain_read_holds(table: &DispatchTable, class: &Json, field: &str) -> bool {
     plain_access_holds(table, class, field, &PLAIN_READ_HOOKS)
 }
 
+/// `python:class_read(<class>, <field>)`: a read of `<field>` on an instance
+/// of `<class>` is what its class's namespace binds the name to, by
+/// Python's own rule (the Python kit's `receiver_dispatch.CLASS_READ`): the
+/// instance's `__dict__` does not hold it, no hook runs, and the binding is
+/// no descriptor but a function's. The kit states a class-field value read
+/// (`ObjectValue.attribute`) only under it; under its complement the read
+/// is the dispatched read (#7757 L1).
+const PYTHON_CLASS_READ: &str = "python:class_read";
+
+/// The namespace kind of a class-body binding to a literal or a display
+/// (the kit's `tree_enumerate._VALUE_KIND`): a value of a builtin class
+/// that defines no `__get__` (`int`, `str`, `bytes`, `float`, `complex`,
+/// `bool`, `NoneType`, `ellipsis`, `tuple`, `list`, `dict`, `set`), so a
+/// read off an instance is the value itself. It names no function, so no
+/// dispatch joins it (`dispatch_walk` reads its empty symbol as
+/// undecided).
+const NAMESPACE_VALUE_KIND: &str = "value";
+
+/// Whether a read of `field` on an instance whose class input is bound to
+/// `class` is its class's binding of the name, read as Python reads it:
+/// `field` is no dunder name; `class` is a decided instance (a class call's
+/// result read through the instance its constructor contract states, as
+/// `plain_access_holds` reads it) whose fields do not name `field` (an
+/// entry would win over a binding that is no data descriptor); every class
+/// of the order its own proof states is a source class with a namespace
+/// row, stated alike, or `object`, last, binding none of
+/// `PLAIN_READ_HOOKS` (`__getattribute__` runs on every read); and the
+/// first class of the order that binds `field` binds it to a value
+/// (`NAMESPACE_VALUE_KIND`: its class defines no `__get__`) or to a
+/// function held as a field (`DISPATCH_FIELD_KIND`: `function.__get__`
+/// binds it to the instance). Any other binding -- a value of another
+/// class (`other`: its type may define `__get__`, as `property(f)` or a
+/// descriptor instance does), an undecided one, a `def` -- or none: false.
+fn class_read_holds(table: &DispatchTable, class: &Json, field: &str) -> bool {
+    if field.is_empty() || (field.starts_with("__") && field.ends_with("__")) {
+        return false;
+    }
+    let constructed = match constructed_class_symbol(class) {
+        Some(symbol) => match table.constructed.get(symbol) {
+            Some(Some(instance)) => Some(instance.clone()),
+            _ => return false,
+        },
+        None => None,
+    };
+    let class = constructed.as_ref().unwrap_or(class);
+    let Some((name, args)) = ctor_parts(class) else {
+        return false;
+    };
+    if name != PYTHON_INSTANCE {
+        return false;
+    }
+    let Some((subject, fields)) = args.split_first() else {
+        return false;
+    };
+    let Some(subject) = const_str(subject) else {
+        return false;
+    };
+    if fields
+        .iter()
+        .any(|held| const_str(held).is_none_or(|held| held == field))
+    {
+        return false;
+    }
+    let namespaces = &table.namespaces;
+    let Some(order) = namespaces.get(subject).map(|namespace| &namespace.mro) else {
+        return false;
+    };
+    if order.first().map(String::as_str) != Some(subject) {
+        return false;
+    }
+    let mut found: Option<&str> = None;
+    for (index, entry) in order.iter().enumerate() {
+        if let Some(builtin) = entry.strip_prefix(BUILTIN_CLASS_PREFIX) {
+            if builtin != "object" || index + 1 != order.len() {
+                return false;
+            }
+            continue;
+        }
+        let Some(namespace) = namespaces.get(entry) else {
+            return false;
+        };
+        if namespace.mro.is_empty()
+            || PLAIN_READ_HOOKS.iter().any(|hook| {
+                namespace
+                    .binds
+                    .get(*hook)
+                    .is_some_and(|(kind, _)| kind.as_str() != NAMESPACE_CREATION_KIND)
+            })
+        {
+            return false;
+        }
+        if found.is_none() {
+            found = namespace.binds.get(field).map(|(kind, _)| kind.as_str());
+        }
+    }
+    matches!(found, Some(NAMESPACE_VALUE_KIND | DISPATCH_FIELD_KIND))
+}
+
 /// The walk `plain_store_holds` and `plain_read_holds` share: `field` is
 /// no dunder name, `class` is a decided instance (a class call's result
 /// read through the instance its constructor contract states, as
@@ -7069,7 +7167,7 @@ fn mentions_plain_store(node: &Json) -> bool {
             if map.get("kind").and_then(|v| v.as_str()) == Some("atomic")
                 && matches!(
                     map.get("name").and_then(|v| v.as_str()),
-                    Some(PYTHON_PLAIN_STORE | PYTHON_PLAIN_READ)
+                    Some(PYTHON_PLAIN_STORE | PYTHON_PLAIN_READ | PYTHON_CLASS_READ)
                 )
             {
                 return true;
@@ -7136,6 +7234,7 @@ fn decided_plain_stores(node: &Json, table: &DispatchTable) -> (Json, bool) {
                 match node.get("name").and_then(|v| v.as_str()) {
                     Some(PYTHON_PLAIN_STORE) => plain_store_holds,
                     Some(PYTHON_PLAIN_READ) => plain_read_holds,
+                    Some(PYTHON_CLASS_READ) => class_read_holds,
                     Some(PYTHON_CALL_LEAVES) => call_leaves_holds,
                     _ => return (node.clone(), false),
                 };
@@ -17742,6 +17841,95 @@ mod tests {
             constructed.clone(), string_const("n")
         ]});
         assert_eq!(decide_plain_stores(&guard, Some(&table)), bool_formula(true));
+    }
+
+    #[test]
+    fn a_class_read_is_decided_only_for_a_plain_value_with_no_hook() {
+        // `python:class_read(<class>, "<f>")` holds where the instance's
+        // fields do not name `f`, no class of the order binds a read hook,
+        // and the first class binding `f` binds a value whose class defines
+        // no `__get__` (`value`) or a function held as a field (`field`).
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.Base".to_string(),
+            namespace(
+                &["python:m.Base", "builtins.object"],
+                &[
+                    ("limit", NAMESPACE_VALUE_KIND, ""),
+                    ("pick", DISPATCH_FIELD_KIND, "python:m.Base.<lambda>"),
+                    ("handle", "other", ""),
+                    ("size", DISPATCH_PROPERTY_KIND, "python:m.Base.size"),
+                    ("get", DISPATCH_FUNCTION_KIND, "python:m.Base.get"),
+                    ("maybe", "undecided", ""),
+                ],
+            ),
+        );
+        namespaces.insert(
+            "python:m.Box".to_string(),
+            namespace(&["python:m.Box", "python:m.Base", "builtins.object"], &[]),
+        );
+        let constructed = json!({"kind": "ctor", "name": "python:constructed", "args": [
+            string_const("python:m.Box")
+        ]});
+        let stated = [("python:m.Box", Some(instance("python:m.Box", &["n"])))];
+        let table = class_table(&namespaces, &stated);
+        assert!(class_read_holds(&table, &instance("python:m.Box", &[]), "limit"));
+        assert!(class_read_holds(&table, &constructed, "limit"));
+        assert!(class_read_holds(&table, &constructed, "pick"));
+        // A value of another class (a descriptor instance, `property(f)`),
+        // a `def`, an undecided binding, no binding, a dunder: not decided.
+        for field in ["handle", "size", "get", "maybe", "missing", "__doc__"] {
+            assert!(!class_read_holds(&table, &constructed, field), "{field}");
+        }
+        // The instance's `__dict__` holds the name: its entry wins.
+        assert!(!class_read_holds(&table, &instance("python:m.Box", &["limit"]), "limit"));
+        // A free class input, or a class call whose instance no contract
+        // states: not decided.
+        assert!(!class_read_holds(&table, &var("class:self"), "limit"));
+        assert!(!class_read_holds(
+            &class_table(&namespaces, &[("python:m.Box", None)]),
+            &constructed,
+            "limit"
+        ));
+        // A read hook anywhere in the order (`__getattribute__` runs on
+        // every read): not decided, the read is the dispatched read.
+        for hook in PLAIN_READ_HOOKS {
+            let mut hooked = namespaces.clone();
+            hooked
+                .get_mut("python:m.Box")
+                .unwrap()
+                .binds
+                .insert(hook.to_string(), ("function".to_string(), String::new()));
+            let hooked = class_table(&hooked, &stated);
+            assert!(!class_read_holds(&hooked, &constructed, "limit"), "{hook}");
+        }
+        // A subclass rebinding the name to anything else shadows the value.
+        let mut shadowed = namespaces.clone();
+        shadowed
+            .get_mut("python:m.Box")
+            .unwrap()
+            .binds
+            .insert("limit".to_string(), ("other".to_string(), String::new()));
+        assert!(!class_read_holds(&class_table(&shadowed, &stated), &constructed, "limit"));
+        // A class no row states, or a builtin base other than `object`.
+        let mut unstated = namespaces.clone();
+        unstated.remove("python:m.Base");
+        assert!(!class_read_holds(&class_table(&unstated, &stated), &constructed, "limit"));
+        let mut builtin = namespaces.clone();
+        builtin.get_mut("python:m.Box").unwrap().mro = vec![
+            "python:m.Box".to_string(),
+            "builtins.dict".to_string(),
+            "builtins.object".to_string(),
+        ];
+        assert!(!class_read_holds(&class_table(&builtin, &stated), &constructed, "limit"));
+        // The guard folds to `true` where it holds, and stands otherwise.
+        let guard = |field: &str| {
+            json!({"kind": "atomic", "name": PYTHON_CLASS_READ, "args": [
+                constructed.clone(), string_const(field)
+            ]})
+        };
+        assert_eq!(decide_plain_stores(&guard("limit"), Some(&table)), bool_formula(true));
+        assert_eq!(decide_plain_stores(&guard("handle"), Some(&table)), guard("handle"));
     }
 
     #[test]
