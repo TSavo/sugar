@@ -7,10 +7,10 @@ Corpus (pandas 3.0.3, content-verified):
 
 Shape: Name + Subscript store unpack (``out`` binds, then ``codes[-1]`` stores).
 Construction admits the leaf as ``UnpackStoreAssignSugar`` +
-``SubscriptStoreEffectSugar``.  Production laws for the setitem half reuse the
-#6630 projector: source evaluation is value→receiver→index; discharge mint is
-receiver→index→value.  Later store halt preserves the earlier-binding pre-effect
-state without fabricated completion (post-#6640 / #6644).
+``SubscriptStoreEffectSugar``.  The setitem half is the one item mutation
+(``store_effect_sugar.item_mutation``, #7757 step 7): source evaluation is
+value→receiver→index; the dispatched call is receiver→index→value.  A later
+store halt keeps the earlier-binding state without fabricated completion.
 
 Does not touch carrier, reducer, ExitSet, setitem producer/projector, or census.
 """
@@ -18,7 +18,6 @@ Does not touch carrier, reducer, ExitSet, setitem producer/projector, or census.
 from __future__ import annotations
 
 import hashlib
-import inspect
 
 import pytest
 
@@ -50,7 +49,7 @@ CORPUS_LINE = 1291
 CORPUS_TEXT = "out, codes[-1] = out[sorter], codes[-1][sorter]"
 
 # Isomorphic production program: same Name+Subscript unpack shape as the corpus
-# site, with formals so the setitem demand discharges under authenticated actuals.
+# site, with formals.
 ISOMORPH = (
     "def f(out, codes, i, sorter, rhs_out, rhs_store):\n"
     "    out, codes[i] = rhs_out, rhs_store\n"
@@ -60,14 +59,24 @@ ISOMORPH = (
 # Since #8925 ``codes`` above takes ``class:codes`` as an input of ``f``'s
 # contract (an item store through an unpack leaf is read as ``codes[i] = v``
 # is), so its store is the dispatched ``__setitem__`` edge, owed with its halt
-# kept and answered at prove by the class each caller binds (#8864).  The
-# ``setitem`` carrier, whose discharge the faces below read, stands for the same
-# unpack on a formal whose class is no input: ``held = codes`` reads ``codes``
-# bare, and the store goes through ``held`` (``codes``'s object).
-ISOMORPH_CARRIER = (
+# kept and answered at prove by the class each caller binds (#8864).  No item
+# store waits on a caller's actual (#7757 step 7), so the same unpack on a
+# formal whose class is no input -- ``held = codes`` reads ``codes`` bare, and
+# the store goes through ``held`` -- is the undecided mutation, owed on both
+# faces, its halt kept with the block's state.
+ISOMORPH_UNDECIDED = (
     "def f(out, codes, i, sorter, rhs_out, rhs_store):\n"
     "    held = codes\n"
     "    out, held[i] = rhs_out, rhs_store\n"
+    "    return out\n"
+)
+
+# The same unpack on a list the frame built: the receiver is decided, so the
+# store is the list's own (``ListValue.setitem``), here at a bad index.
+ISOMORPH_BAD_INDEX = (
+    "def f(out, rhs_out):\n"
+    "    codes = [0]\n"
+    "    out, codes[5] = rhs_out, 99\n"
     "    return out\n"
 )
 
@@ -88,20 +97,22 @@ def _tree(source: str, name: str = "pandas_unpack_setitem.py") -> SourceFile:
     )
 
 
+def _desugared(source: str, name: str):
+    """``source``'s one function alone and its own proof's reduction."""
+    tree = _tree(source, name)
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    return function, function.sugar().desugar(None)
+
+
 def _isomorph_dispatched():
     """``ISOMORPH`` alone: ``codes``'s class is an input (#8925), so the
     unpack leaf store is the dispatched edge."""
-    tree = _tree(ISOMORPH, "isomorph_alone.py")
-    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    return function, function.sugar().desugar(None)
+    return _desugared(ISOMORPH, "isomorph_alone.py")
 
 
-def _isomorph_helper():
-    """``ISOMORPH_CARRIER`` alone: the undischarged ``setitem`` carrier, with
-    the pre-effect state the body's reducer enrolls."""
-    tree = _tree(ISOMORPH_CARRIER, "isomorph_carrier_alone.py")
-    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    return function, function.sugar().desugar(None)
+def _isomorph_undecided():
+    """``ISOMORPH_UNDECIDED`` alone: the store is the undecided mutation."""
+    return _desugared(ISOMORPH_UNDECIDED, "isomorph_undecided_alone.py")
 
 
 def _dispatched_call(outcome, method: str = "__setitem__"):
@@ -128,6 +139,62 @@ def _dispatched_call(outcome, method: str = "__setitem__"):
     call = raised.args[0]
     assert call.name == call_symbol(f"dispatch:{method}"), call
     return call
+
+
+def _undecided_store(outcome):
+    """The undecided mutation (``item_mutation`` over a receiver whose type
+    nothing here decides, ``undecided_item_mutation_faces``): no carrier and
+    no dispatched edge; one undetermined halt owned by ``UndecidedSetitem``,
+    kept with the block's state; every completed face under the store's own
+    ``python:setitem.completes`` atom; both faces owing the undecided member
+    (symbol ``None``)."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedSetitem"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.state is not None
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for face in (halt, *completed):
+        assert None in {call.symbol for call in owed_calls(ExitSet((face,)))}
+    for face in completed:
+        assert "python:setitem.completes" in str(face.guard)
+    assert "python:dispatch:__setitem__" not in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    assert outcome.completed_value() is None
+
+
+def _floor_store(receiver, index, value):
+    """The one item mutation on a receiver the lift decided (the ``ListValue``
+    a caller hands ``codes``): the list's own store, at the unpack's site."""
+    from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
+    tree = _tree(ISOMORPH_UNDECIDED, "floor_store_site.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    site = function.body[1].fragment
+    return item_mutation("__setitem__", receiver, (index, value), site, None, unit=None)
+
+
+def _bad_index_halt() -> Halted:
+    """``ISOMORPH_BAD_INDEX`` alone: its sole face, the store's named
+    ``IndexError``, kept with the block's record."""
+    _, exits = _desugared(ISOMORPH_BAD_INDEX, "isomorph_bad_index.py")
+    assert isinstance(exits, ExitSet)
+    assert len(exits.exits) == 1, exits
+    halted = exits.exits[0]
+    assert isinstance(halted, Halted)
+    assert halted.effect.exception_type_coordinate == _identity("IndexError")
+    return halted
 
 
 # ---------------------------------------------------------------------------
@@ -192,152 +259,94 @@ def test_real_coordinate_constructs_unpack_store_with_setitem_leaf() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Isomorphic production: discharge order + earlier-binding halt
+# Isomorphic production: dispatch order + earlier-binding halt
 # ---------------------------------------------------------------------------
 
 
 def test_isomorph_helper_retains_setitem_discharge_order() -> None:
-    """Discharge mint is receiver → index → value (not source-eval order)."""
+    """The dispatched call is receiver → index → value (not source-eval order)."""
     # Expected shape changed (#8925): on a formal whose class is an input the
-    # store is the dispatched ``__setitem__`` edge, in the same order, with
-    # ``class:codes`` riding last.  The carrier stands where it is no input.
+    # store is the dispatched ``__setitem__`` edge, with ``class:codes``
+    # riding last.
     from sugar_lift_py_tests.ir import str_const
 
     _, outcome = _isomorph_dispatched()
     call = _dispatched_call(outcome)
-    assert [arg.name for arg in call.args[:3]] == ["codes", "i", "rhs_store"]
+    # Isomorph formals: codes, i, rhs_store (out binds from name leaf, not setitem).
+    names = tuple(arg.name for arg in call.args[:3])
+    assert names == ("codes", "i", "rhs_store")
     rides = call.args[-1]
     assert rides.name == "py.class", rides
     assert rides.args[0] == str_const("0")
     assert rides.args[1].name == "class:codes", rides
     assert outcome.completed_value() is None
-
-    _, pending = _isomorph_helper()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setitem"
-    # Isomorph formals: codes, i, rhs_store (out binds from name leaf, not setitem).
-    names = tuple(operand.term.name for operand in pending.operands)
-    assert names == ("codes", "i", "rhs_store")
-    parameters = tuple(
-        inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
-    )
-    assert parameters == ("receiver", "index", "value", "site", "ctx")
     # Source eval order for the store half is value → receiver → index.
     source_eval = ("rhs_store", "codes", "i")
     assert names != source_eval
 
+    # Expected shape changed (#7757 step 7): on a formal whose class is no
+    # input the store is the undecided mutation, never a ``setitem`` carrier
+    # awaiting actuals, and the carrier's projector is deleted.
+    _, undecided = _isomorph_undecided()
+    _undecided_store(undecided)
+    assert "setitem" not in _NATIVE_OPERATION_PROJECTORS
+
 
 def test_isomorph_eval_order_value_receiver_index_is_not_discharge_order() -> None:
-    """Truthful twin: discharge ≠ eval; lying twin equating them fails."""
-    _, pending = _isomorph_helper()
-    discharge = tuple(operand.term.name for operand in pending.operands)
+    """Truthful twin: dispatch ≠ eval; lying twin equating them fails."""
+    _, outcome = _isomorph_dispatched()
+    dispatch = tuple(arg.name for arg in _dispatched_call(outcome).args[:3])
     source_eval = ("rhs_store", "codes", "i")
-    assert discharge == ("codes", "i", "rhs_store")
+    assert dispatch == ("codes", "i", "rhs_store")
     with pytest.raises(AssertionError):
-        assert discharge == source_eval, "eval order is not discharge order"
+        assert dispatch == source_eval, "eval order is not dispatch order"
 
 
 def test_isomorph_mutable_completes_and_invalid_index_halts_with_earlier_state() -> (
     None
 ):
-    """Completed store + IndexError halt carrying authentic pre-effect state."""
-    _, pending = _isomorph_helper()
-    assert pending.pre_effect_state is not None
-    codes_cid, i_cid, rhs_cid = pending.demand.operand_coordinate_cids
-
-    ok = pending.discharge(
-        None,
-        {
-            codes_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
-            i_cid: TermValue(0),
-            rhs_cid: TermValue(99),
-        },
+    """Completed store + IndexError halt carrying the block's state."""
+    ok = _floor_store(
+        fresh(ListValue, (TermValue(0), TermValue(1))), TermValue(0), TermValue(99)
     )
     assert isinstance(ok, ExitSet)
-    assert isinstance(ok.exits[0], Completed)
-    universe = ok.exits[0].value
-    assert isinstance(universe, UniverseValue)
-    lists = [s for s in universe.record.statements if isinstance(s, ListValue)]
-    assert lists and lists[0] == fresh(ListValue, (TermValue(99), TermValue(1)))
+    assert ok.completed_value() == fresh(ListValue, (TermValue(99), TermValue(1)))
 
-    bad = pending.discharge(
-        None,
-        {
-            codes_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(5),
-            rhs_cid: TermValue(99),
-        },
-    )
-    halted = bad.exits[0]
-    assert isinstance(halted, Halted)
+    bad = _floor_store(fresh(ListValue, (TermValue(0),)), TermValue(5), TermValue(99))
+    assert len(bad.exits) == 1
+    assert isinstance(bad.exits[0], Halted)
+    assert bad.exits[0].effect.exception_type_coordinate == _identity("IndexError")
+
+    halted = _bad_index_halt()
     assert not isinstance(halted, Completed)
-    assert halted.effect.exception_type_coordinate == _identity("IndexError")
     # Authentic earlier-binding halt state — not fabricated completion.
     assert halted.state is not None
-    assert pending.pre_effect_state.state is halted.state
     assert not isinstance(getattr(halted, "value", None), UniverseValue)
 
 
 def test_isomorph_later_halt_discrimination_not_completed() -> None:
     """Bite: IndexError arm must not be a Completed body."""
-    _, pending = _isomorph_helper()
-    codes_cid, i_cid, rhs_cid = pending.demand.operand_coordinate_cids
-    bad = pending.discharge(
-        None,
-        {
-            codes_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(5),
-            rhs_cid: TermValue(99),
-        },
-    )
+    halted = _bad_index_halt()
     with pytest.raises(AssertionError):
-        assert isinstance(bad.exits[0], Completed)
+        assert isinstance(halted, Completed)
     with pytest.raises(AssertionError):
-        assert bad.exits[0].state is None
+        assert halted.state is None
 
 
 def test_isomorph_lying_swapped_index_value_mint_differs() -> None:
-    """Truthful discharge order vs lying index/value swap are distinguishable."""
-    function, truthful = _isomorph_helper()
-    # The unpack is ``ISOMORPH_CARRIER``'s second statement.
-    site = function.body[1].fragment
-    obj_c, key_c, value_c = truthful.coordinates
-    lying = NativeOperationExitCarrierV1.mint(
-        site=site,
-        operator="setitem",
-        operands=(
-            truthful.operands[0],
-            truthful.operands[2],
-            truthful.operands[1],
-        ),
-        coordinates=(obj_c, value_c, key_c),
-    )
-    actuals = {
-        obj_c.coordinate_cid: fresh(
-            ListValue, (TermValue(0), TermValue(1), TermValue(2))
-        ),
-        key_c.coordinate_cid: TermValue(1),
-        value_c.coordinate_cid: TermValue(99),
-    }
-    truthful_face = truthful.discharge(None, actuals).exits[0]
-    lying_face = lying.discharge(None, actuals).exits[0]
-    assert isinstance(truthful_face, Completed)
+    """Truthful store vs lying index/value swap are distinguishable."""
+    base = fresh(ListValue, (TermValue(0), TermValue(1), TermValue(2)))
+    truthful = _floor_store(base, TermValue(1), TermValue(99))
+    lying = _floor_store(base, TermValue(99), TermValue(1))
     # Truthful post-state stores 99 at index 1.
-    t_lists = [
-        s for s in truthful_face.value.record.statements if isinstance(s, ListValue)
-    ]
-    assert t_lists[0] == fresh(ListValue, (TermValue(0), TermValue(99), TermValue(2)))
-    if isinstance(lying_face, Completed) and isinstance(
-        lying_face.value, UniverseValue
-    ):
-        l_lists = [
-            s for s in lying_face.value.record.statements if isinstance(s, ListValue)
-        ]
-        assert l_lists[0] != t_lists[0]
-    elif isinstance(lying_face, Completed) and isinstance(lying_face.value, ListValue):
-        assert lying_face.value != t_lists[0]
-    else:
-        assert isinstance(lying_face, Halted)
+    t_list = truthful.completed_value()
+    assert t_list == fresh(ListValue, (TermValue(0), TermValue(99), TermValue(2)))
+    # The swap stores 1 at index 99: the named IndexError, never that list.
+    (lying_face,) = lying.exits
+    assert isinstance(lying_face, Halted)
+    assert lying_face.effect.exception_type_coordinate == _identity("IndexError")
+    with pytest.raises(AssertionError):
+        assert lying.completed_value() == t_list
 
 
 def test_isomorph_source_caller_invalid_index_preserves_state() -> None:
@@ -345,9 +354,9 @@ def test_isomorph_source_caller_invalid_index_preserves_state() -> None:
 
     Expected verdict changed (#7757 steps 5 and 6, #8705): the source call
     no longer is the one IndexError halt of the followed body.  It is the
-    edge, which owes its halt; the IndexError with the earlier binding's
-    state is the row discharged with the call's actuals, which prove joins
-    at the call (#8690, #8749)."""
+    edge, which owes its halt; the IndexError is the list's own store at the
+    call's actuals, which prove joins at the call (#8690, #8749), and a
+    decided list's store halt keeps the block's state."""
     source = ISOMORPH + "\nf([0], [0], 5, 0, 1, 9)\n"
     tree = _tree(source, "isomorph_call.py")
     call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
@@ -358,18 +367,8 @@ def test_isomorph_source_caller_invalid_index_preserves_state() -> None:
     assert len(completed) == 1, outcome
     assert not isinstance(completed[0].value, UniverseValue)
 
-    _, pending = _isomorph_helper()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            obj_cid: fresh(ListValue, (TermValue(0),)),
-            key_cid: TermValue(5),
-            value_cid: TermValue(9),
-        },
-    )
+    exits = _floor_store(fresh(ListValue, (TermValue(0),)), TermValue(5), TermValue(9))
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert "IndexError" in repr(halted.effect.exception_type_coordinate)
-    assert halted.state is not None
+    assert _bad_index_halt().state is not None

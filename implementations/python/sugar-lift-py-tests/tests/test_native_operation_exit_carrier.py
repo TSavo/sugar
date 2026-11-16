@@ -862,22 +862,15 @@ def _setattr_site():
     return next(tree.functions()).fragment
 
 
-def _setitem_carrier():
-    """Mint setitem in discharge order: receiver, index, value."""
-    receiver = _coordinate("receiver", 0)
-    index = _coordinate("index", 1)
-    value = _coordinate("value", 2)
-    carrier = NativeOperationExitCarrierV1.mint(
-        site=_setitem_site(),
-        operator="setitem",
-        operands=(
-            SymbolicValue(make_var("receiver"), receiver),
-            SymbolicValue(make_var("index"), index),
-            SymbolicValue(make_var("value"), value),
-        ),
-        coordinates=(receiver, index, value),
+def _item_store(receiver, index, value):
+    """``receiver[index] = value`` through the one item mutation (#7757 step
+    7): an item store mints no carrier, and a decided receiver is its
+    floor's own store."""
+    from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
+    return item_mutation(
+        "__setitem__", receiver, (index, value), _setitem_site(), None, unit=None
     )
-    return carrier, receiver, index, value
 
 
 @dataclass(frozen=True)
@@ -909,17 +902,11 @@ class _AttrStoreReceiver(FloorValue):
         )
 
 
-def test_setitem_discharges_in_receiver_index_value_order_and_completes():
-    """``receiver[index] = value`` discharge order is receiver, index, value."""
-    carrier, receiver, index, value = _setitem_carrier()
-
-    exits = carrier.discharge(
-        None,
-        {
-            receiver.coordinate_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
-            index.coordinate_cid: TermValue(0),
-            value.coordinate_cid: TermValue(9),
-        },
+def test_item_store_on_a_decided_list_stores_the_value_at_the_index():
+    """``receiver[index] = value`` on a decided list is the list's own store:
+    the value lands at the index, never the index at the value."""
+    exits = _item_store(
+        fresh(ListValue, (TermValue(0), TermValue(1))), TermValue(0), TermValue(9)
     )
 
     assert len(exits.exits) == 1
@@ -928,18 +915,9 @@ def test_setitem_discharges_in_receiver_index_value_order_and_completes():
     assert completed.value == fresh(ListValue, (TermValue(9), TermValue(1)))
 
 
-def test_setitem_discharges_and_halts_with_named_exception_identity():
+def test_item_store_halts_with_named_exception_identity():
     """Store halt identity comes from the operation floor, never the boundary."""
-    carrier, receiver, index, value = _setitem_carrier()
-
-    exits = carrier.discharge(
-        None,
-        {
-            receiver.coordinate_cid: fresh(ListValue, (TermValue(0),)),
-            index.coordinate_cid: TermValue(4),
-            value.coordinate_cid: TermValue(9),
-        },
-    )
+    exits = _item_store(fresh(ListValue, (TermValue(0),)), TermValue(4), TermValue(9))
 
     assert len(exits.exits) == 1
     halted = exits.exits[0]
@@ -984,13 +962,13 @@ def test_setattr_named_unwraps_string_value_and_discharges():
     assert completed.value == _AttrStoreReceiver((("name", TermValue(7)),))
 
 
-def test_source_evaluation_order_rhs_receiver_index_is_independent_of_discharge():
+def test_source_evaluation_order_rhs_receiver_index_is_independent_of_the_store():
     """Python eval order (RHS, receiver, index) is not the setitem call order.
 
     Source producers evaluate value first, then the target's receiver, then
-    the index.  Discharge still binds ``receiver, index, value`` because the
-    Floor method is ``setitem(index, value)``.  Conflating the two orders is
-    the defect the explicit projector table exists to prevent.
+    the index.  The store still calls ``setitem(index, value)`` on the
+    receiver.  An item store mints no carrier, so the projector table holds
+    no ``setitem`` entry (``store_effect_sugar.item_mutation``, #7757).
     """
     order: list[str] = []
 
@@ -1022,58 +1000,24 @@ def test_source_evaluation_order_rhs_receiver_index_is_independent_of_discharge(
     assert order == ["value", "receiver", "index"]
     assert source_outcome.completed_value() == fresh(ListValue, (TermValue(9),))
 
-    # Discharge order is independently receiver, index, value on the table.
-    import inspect
-
-    parameters = tuple(
-        inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
-    )
-    assert parameters == ("receiver", "index", "value", "site", "ctx")
-    assert parameters[:3] != ("value", "receiver", "index")
+    # No carrier: no ``setitem`` or ``delitem`` projector stands.
+    assert "setitem" not in _NATIVE_OPERATION_PROJECTORS
+    assert "delitem" not in _NATIVE_OPERATION_PROJECTORS
 
 
 def test_lying_swapped_index_and_value_must_fail_to_match_correct_store():
     """Swapped index/value still calls cleanly — so order must be enforced by twins.
 
-    A generic splat would hide this: both orders invoke ``setitem`` without
-    TypeError.  The explicit projector names the signature so a producer that
-    mints value before index cannot silently claim the truthful store face.
+    Both orders invoke ``setitem`` without TypeError.  The store with the
+    value and the index swapped must not claim the truthful store face.
     """
-    receiver = _coordinate("receiver", 0)
-    index = _coordinate("index", 1)
-    value = _coordinate("value", 2)
-    site = _setitem_site()
-    truthful = NativeOperationExitCarrierV1.mint(
-        site=site,
-        operator="setitem",
-        operands=(
-            SymbolicValue(make_var("receiver"), receiver),
-            SymbolicValue(make_var("index"), index),
-            SymbolicValue(make_var("value"), value),
-        ),
-        coordinates=(receiver, index, value),
-    )
-    # LYING mint: index and value slots swapped relative to the projector.
-    lying = NativeOperationExitCarrierV1.mint(
-        site=site,
-        operator="setitem",
-        operands=(
-            SymbolicValue(make_var("receiver"), receiver),
-            SymbolicValue(make_var("value"), value),
-            SymbolicValue(make_var("index"), index),
-        ),
-        coordinates=(receiver, value, index),
-    )
 
-    actuals = {
-        receiver.coordinate_cid: fresh(
-            ListValue, (TermValue(0), TermValue(1), TermValue(2))
-        ),
-        index.coordinate_cid: TermValue(1),
-        value.coordinate_cid: TermValue(99),
-    }
-    truthful_exits = truthful.discharge(None, actuals)
-    lying_exits = lying.discharge(None, actuals)
+    def receiver():
+        return fresh(ListValue, (TermValue(0), TermValue(1), TermValue(2)))
+
+    truthful_exits = _item_store(receiver(), TermValue(1), TermValue(99))
+    # LYING store: index and value swapped.
+    lying_exits = _item_store(receiver(), TermValue(99), TermValue(1))
 
     assert isinstance(truthful_exits.exits[0], Completed)
     assert truthful_exits.exits[0].value == fresh(
@@ -1130,13 +1074,15 @@ def test_production_minted_operators_equal_projector_table_exactly():
         "projectors with no production mint path: " f"{sorted(orphan_projectors)}"
     )
     assert "subscript" in projectors
-    assert "setitem" in projectors
     assert "setattr_named" in projectors
     # Store-family delete twins: production set == projector keys (both ways).
-    assert "delitem" in projectors
     assert "delattr_named" in projectors
-    assert "delitem" in production
     assert "delattr_named" in production
+    # An item store or delete mints no carrier (``store_effect_sugar.
+    # item_mutation``, #7757): neither set names it.
+    for item_operator in ("setitem", "delitem"):
+        assert item_operator not in projectors
+        assert item_operator not in production
 
 
 def test_symbolic_formal_subscript_discharges_completed_through_projector():

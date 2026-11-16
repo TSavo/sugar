@@ -646,9 +646,10 @@ class PathContainerCallSugar(ConstructedTermSugar):
 
         # Every operand of the store, delete or in-place operator is projected
         # to its value before the operation, through the one projection every
-        # store operand takes (``project_operation_receiver``, as
-        # ``SubscriptStoreEffectSugar.project_setitem`` does): ``a[f()] = 9``
-        # stores at what ``f`` returns, never at the unapplied call.
+        # store operand takes (``project_operation_receiver``, as the one
+        # item mutation does, ``store_effect_sugar.item_mutation``):
+        # ``a[f()] = 9`` stores at what ``f`` returns, never at the unapplied
+        # call.
         operands = tuple(
             operand.project_operation_receiver(
                 ctx, owner=f"{type(self).__name__} operand"
@@ -661,77 +662,30 @@ class PathContainerCallSugar(ConstructedTermSugar):
             if decided is not None:
                 return decided
             return _opaque_pair(kind, self.method, self.site)
-        dispatched = self._dispatched_item_operation(receiver, operands)
-        if dispatched is not None:
-            return dispatched
         return self._ordinary(receiver, operands, ctx)
 
-    def _dispatched_item_operation(self, receiver, operands):
-        """``r[k] = v`` / ``del r[k]`` on a formal or a cell whose class is an
-        input of the contract (``receiver_dispatch.dispatch_on_receiver``):
-        Python runs ``type(r).__setitem__(r, k, v)`` / ``__delitem__(r,
-        k)``, so the operation is the dispatched edge, resolved at prove at
-        the class the caller binds (a builtin ``list`` or ``dict`` takes its
-        law, ``consistency::builtin_dispatch_answer``), never a store this
-        frame decides (#7757 step 7).  Its pair: the receiver as the call
-        left it (``receiver_dispatch.receiver_after_dispatch``) and ``None``,
-        on the call's completed face; its halted face is the edge's own.
-        None for an in-place operator, any other operation, or a receiver
-        that is not a formal's or a cell's plain value whose class is an
-        input here."""
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-
-        if (
-            type(receiver) is not SymbolicValue
-            or self.operator is not None
-            or self.method not in ("__setitem__", "__delitem__")
-        ):
-            return None
-        from sugar_lift_py_tests.floor import builtin_container_method as law
-        from sugar_lift_py_tests.floor.tuple_value import TupleValue
-        from sugar_lift_py_tests.receiver_dispatch import (
-            dispatch_on_receiver,
-            receiver_after_dispatch,
-        )
-
-        outcome = dispatch_on_receiver(
-            self.method, receiver, tuple(operands), (), self.site, unit=self.unit
-        )
-        if outcome is None:
-            return None
-
-        def pair(result):
-            post = receiver_after_dispatch(receiver, result)
-            if post is None:
-                post = self._after(receiver)
-            return ExitSet.completed(TupleValue((post, law._none())))
-
-        return outcome.and_then(pair)
-
     def _ordinary(self, receiver, operands, ctx) -> ExitSet:
-        """The operation on a value the container law does not cite: the
-        floor's own item store or delete, or the in-place operator."""
+        """The operation on a value the container law does not cite: the one
+        item store or delete (``store_effect_sugar.item_mutation``: the
+        dispatched ``type(r).__setitem__`` / ``__delitem__`` where the
+        receiver's class is an input here, the undecided mutation where
+        nothing decides it, its floor's own where the lift does), or the
+        in-place operator.  Its pair: the receiver as the operation left it
+        and ``None``."""
         from sugar_lift_py_tests.floor import builtin_container_method as law
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
-        if self.method == "__setitem__" and len(operands) == 2:
-            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                SubscriptStoreEffectSugar,
-            )
+        if (self.method, len(operands)) in (("__setitem__", 2), ("__delitem__", 1)):
+            from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
 
-            key, value = operands
-            # The floor's store answers the receiver after it.
-            return SubscriptStoreEffectSugar.project_setitem(
-                receiver, key, value, self.site, ctx
-            ).and_then(lambda post: ExitSet.completed(TupleValue((post, law._none()))))
-        if self.method == "__delitem__" and len(operands) == 1:
-            from sugar_lift_py_tests.sugar.delete_effect_sugar import (
-                SubscriptDeleteEffectSugar,
-            )
-
-            (key,) = operands
-            return SubscriptDeleteEffectSugar.project_delitem(
-                receiver, key, self.site, ctx
+            return item_mutation(
+                self.method,
+                receiver,
+                operands,
+                self.site,
+                ctx,
+                unit=self.unit,
+                label=self.label,
             ).and_then(lambda post: ExitSet.completed(TupleValue((post, law._none()))))
         if _in_place(self.method) and self.operator is not None and len(operands) == 1:
             from sugar_lift_py_tests.sugar.augassign_sugar import project_augmented

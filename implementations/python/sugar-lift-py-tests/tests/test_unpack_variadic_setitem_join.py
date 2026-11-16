@@ -7,8 +7,8 @@ Concrete program:
         return x
 
 Earlier Name binding (x ← p) survives later variadic-derived store halt:
-when a[i] raises IndexError, the sole face is Halted with exact
-pre_effect_state identity — never a fabricated Completed return of x.
+when a[i] raises IndexError, the sole face is Halted with the block's state
+kept — never a fabricated Completed return of x.
 
 Success path: x returns as formal p; a[i] stores the authenticated TupleValue
 packed from remaining positionals.
@@ -17,16 +17,20 @@ Since #8925 ``a`` above takes ``class:a`` as an input of ``f``'s contract (an
 item store through an unpack leaf is read as ``a[i] = v`` is), so the store
 is the dispatched ``__setitem__`` edge, ``call:dispatch:__setitem__(a, i,
 values, py.class("0", class:a))``, owed with its halt kept and answered at
-prove by the class each caller binds (#8864).  The ``setitem`` carrier stands
-for the same unpack on a formal whose class is no input; the discharge faces
-below read it off ``CARRIER_PROGRAM`` (``b = a`` reads ``a`` bare).
+prove by the class each caller binds (#8864).
 
-Does not touch carrier/ExitSet, store producer/projector/Floor; no second binder.
+No item store waits on a caller's actual, so no ``setitem`` carrier stands
+anywhere (#7757 step 7, ``store_effect_sugar.item_mutation``).  The same
+unpack on a formal whose class is no input (``UNDECIDED_PROGRAM``: ``b = a``
+reads ``a`` bare) is the undecided mutation, owed on both faces, its halt
+kept with the block's state.  The list's own store faces (the pack stored at
+the cell, the named ``IndexError`` at a bad index) are read where the
+receiver is decided: the one item mutation on a ``ListValue`` actual, and the
+same unpack on a list the frame built, the pack still the formal ``values``
+(``DECIDED_PROGRAM`` / ``BAD_INDEX_PROGRAM``).
 """
 
 from __future__ import annotations
-
-import inspect
 
 import pytest
 
@@ -53,9 +57,19 @@ PROGRAM = "def f(a, i, p, *values):\n    x, a[i] = p, values\n    return x\n"
 
 # The same unpack on a formal whose class is no input of ``f``'s contract:
 # ``b = a`` reads ``a`` bare, so the store through ``b`` (``a``'s object) is
-# the ``setitem`` carrier over ``a``'s formal coordinate.
-CARRIER_PROGRAM = (
+# the undecided mutation (``item_mutation``: nothing here decides its type).
+UNDECIDED_PROGRAM = (
     "def f(a, i, p, *values):\n    b = a\n    x, b[i] = p, values\n    return x\n"
+)
+
+# The same unpack on a list the frame built: the receiver is decided, so the
+# store is the list's own (``ListValue.setitem``) with the formal pack as its
+# value, at a good and a bad index.
+DECIDED_PROGRAM = (
+    "def f(p, *values):\n    a = [0]\n    x, a[0] = p, values\n    return x\n"
+)
+BAD_INDEX_PROGRAM = (
+    "def f(p, *values):\n    a = [0]\n    x, a[5] = p, values\n    return x\n"
 )
 
 
@@ -66,20 +80,22 @@ def _tree(source: str, name: str = "unpack_variadic_setitem.py") -> SourceFile:
     )
 
 
+def _desugared(source: str, name: str):
+    """``source``'s one function alone and its own proof's reduction."""
+    tree = _tree(source, name)
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    return function, function.sugar().desugar(None)
+
+
 def _dispatched_helper():
     """``PROGRAM`` alone and its own proof's reduction: ``a``'s class is an
     input (#8925), so its unpack leaf store is the dispatched edge."""
-    tree = _tree(PROGRAM, "helper_alone.py")
-    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    return function, function.sugar().desugar(None)
+    return _desugared(PROGRAM, "helper_alone.py")
 
 
-def _helper():
-    """``CARRIER_PROGRAM`` alone: the undischarged ``setitem`` carrier, with
-    the pre-effect state the body's reducer enrolls."""
-    tree = _tree(CARRIER_PROGRAM, "helper_carrier_alone.py")
-    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    return function, function.sugar().desugar(None)
+def _undecided_helper():
+    """``UNDECIDED_PROGRAM`` alone: the store is the undecided mutation."""
+    return _desugared(UNDECIDED_PROGRAM, "helper_undecided_alone.py")
 
 
 def _dispatched_call(outcome, method: str = "__setitem__"):
@@ -108,6 +124,51 @@ def _dispatched_call(outcome, method: str = "__setitem__"):
     return call
 
 
+def _undecided_store(outcome):
+    """The undecided mutation (``item_mutation`` over a receiver whose type
+    nothing here decides, ``undecided_item_mutation_faces``): no carrier and
+    no dispatched edge; one undetermined halt owned by ``UndecidedSetitem``,
+    kept with the block's state; every completed face under the store's own
+    ``python:setitem.completes`` atom; both faces owing the undecided member
+    (symbol ``None``).  Returns the halt and the completed faces."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedSetitem"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.state is not None
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for face in (halt, *completed):
+        assert None in {call.symbol for call in owed_calls(ExitSet((face,)))}
+    for face in completed:
+        assert "python:setitem.completes" in str(face.guard)
+    assert "python:dispatch:__setitem__" not in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    assert outcome.completed_value() is None
+    return halt, completed
+
+
+def _floor_store(receiver, index, value):
+    """The one item mutation on a receiver the lift decided (the ``ListValue``
+    a caller hands ``a``): the list's own store, at the unpack's site."""
+    from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
+    tree = _tree(UNDECIDED_PROGRAM, "floor_store_site.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    site = function.body[1].fragment
+    return item_mutation("__setitem__", receiver, (index, value), site, None, unit=None)
+
+
 def _call(actuals: str):
     tree = _tree(PROGRAM + f"\nf({actuals})\n")
     call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
@@ -123,20 +184,20 @@ def _identity(name: str):
     )
 
 
-def _completed_universe(pending, actuals) -> UniverseValue:
-    exits = pending.discharge(None, actuals)
-    assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    face = exits.exits[0]
+def _sole_completed_universe(outcome) -> UniverseValue:
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1, outcome
+    face = outcome.exits[0]
     assert isinstance(face, Completed)
     assert isinstance(face.value, UniverseValue)
     return face.value
 
 
-def _stored_list(universe: UniverseValue) -> ListValue:
-    lists = [s for s in universe.record.statements if isinstance(s, ListValue)]
-    assert len(lists) == 1, lists
-    return lists[0]
+def _stored_list(outcome) -> ListValue:
+    """The list the one item mutation completed with."""
+    value = outcome.completed_value()
+    assert isinstance(value, ListValue), outcome
+    return value
 
 
 def _returned(universe: UniverseValue) -> ReturnValue:
@@ -145,22 +206,37 @@ def _returned(universe: UniverseValue) -> ReturnValue:
     return returns[0]
 
 
+def _index_error(halted) -> None:
+    """The floor's named ``IndexError`` at its authenticated locus."""
+    assert isinstance(halted, Halted)
+    assert not isinstance(halted, Completed)
+    assert halted.effect.exception_type_coordinate == _identity("IndexError")
+    assert (
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
+    ), (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
-# Helper alone: setitem demand; value formal is *values
+# Helper alone: the dispatched edge; value formal is *values
 # ---------------------------------------------------------------------------
 
 
 def test_helper_alone_retains_setitem_with_variadic_value() -> None:
     # Expected shape changed (#8925): on a formal whose class is an input the
     # unpack leaf store is the dispatched ``__setitem__`` edge, the pack its
-    # value operand, in discharge order; ``x`` binds ``p`` beside it, so
-    # every completed face returns ``p``.  The carrier stands where the class
-    # is no input.
+    # value operand, in dispatch order; ``x`` binds ``p`` beside it, so every
+    # completed face returns ``p``.
     from sugar_lift_py_tests.ir import str_const
 
-    _, outcome = _dispatched_helper()
+    function, outcome = _dispatched_helper()
     call = _dispatched_call(outcome)
     assert [arg.name for arg in call.args[:3]] == ["a", "i", "values"]
+    # p is a Name-binding formal, not a setitem operand.
+    assert "p" not in [arg.name for arg in call.args[:3]]
     rides = call.args[-1]
     assert rides.name == "py.class", rides
     assert rides.args[0] == str_const("0")
@@ -170,43 +246,35 @@ def test_helper_alone_retains_setitem_with_variadic_value() -> None:
     for face in completed:
         assert isinstance(face.value, UniverseValue), face.value
         assert _returned(face.value).value.term.name == "p"
-
-    function, pending = _helper()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setitem"
-    assert tuple(operand.term.name for operand in pending.operands) == (
-        "a",
-        "i",
-        "values",
-    )
     kinds = {
         c.declared_name: c.parameter_kind for c in function.sugar().formal_coordinates
     }
     assert kinds["values"] == "variadic-positional"
     assert kinds["p"] == "positional-or-keyword"
-    # p is a Name-binding formal, not a setitem operand.
-    setitem_cids = set(pending.demand.operand_coordinate_cids)
-    p_cid = next(
-        c.coordinate_cid
-        for c in function.sugar().formal_coordinates
-        if c.declared_name == "p"
-    )
-    assert p_cid not in setitem_cids
-    parameters = tuple(
-        inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
-    )
-    assert parameters == ("receiver", "index", "value", "site", "ctx")
+
+    # Expected shape changed (#7757 step 7): on a formal whose class is no
+    # input the store is the undecided mutation, never a ``setitem`` carrier
+    # awaiting actuals; ``x`` still binds ``p`` on its completed face.
+    _, undecided = _undecided_helper()
+    _halt, undecided_completed = _undecided_store(undecided)
+    for face in undecided_completed:
+        assert isinstance(face.value, UniverseValue), face.value
+        assert _returned(face.value).value.term.name == "p"
+    # The carrier's projector is deleted: no item store is minted as one.
+    assert "setitem" not in _NATIVE_OPERATION_PROJECTORS
 
 
 def test_helper_alone_is_not_completed_discrimination() -> None:
     _, dispatched = _dispatched_helper()
     assert dispatched.completed_value() is None
     assert dispatched.halts()
-    _, pending = _helper()
+    _, undecided = _undecided_helper()
     with pytest.raises(AssertionError):
-        assert isinstance(pending, ExitSet) and pending.completed_value() is not None
+        assert undecided.completed_value() is not None
     with pytest.raises(AssertionError):
-        assert isinstance(pending, Completed)
+        assert not undecided.halts(), "the undecided store dropped its halt"
+    with pytest.raises(AssertionError):
+        assert isinstance(undecided, Completed)
 
 
 # ---------------------------------------------------------------------------
@@ -215,18 +283,12 @@ def test_helper_alone_is_not_completed_discrimination() -> None:
 
 
 def test_mutable_receiver_completes_with_x_and_variadic_store() -> None:
-    _, pending = _helper()
-    a_cid, i_cid, values_cid = pending.demand.operand_coordinate_cids
     pack = TupleValue((TermValue(1), TermValue(2)))
-    universe = _completed_universe(
-        pending,
-        {
-            a_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(0),
-            values_cid: pack,
-        },
-    )
-    assert _stored_list(universe) == fresh(ListValue, (pack,))
+    stored = _floor_store(fresh(ListValue, (TermValue(0),)), TermValue(0), pack)
+    assert _stored_list(stored) == fresh(ListValue, (pack,))
+    # The formal pack stored on a decided list: ``x`` returns ``p``.
+    _, outcome = _desugared(DECIDED_PROGRAM, "decided_ok.py")
+    universe = _sole_completed_universe(outcome)
     returned = _returned(universe)
     assert isinstance(returned.value, SymbolicValue)
     assert returned.value.term.name == "p"
@@ -323,18 +385,12 @@ def test_source_caller_packs_remaining_positionals_into_values() -> None:
 
 
 def test_empty_variadic_store_is_honest_empty_tuple() -> None:
-    _, pending = _helper()
-    a_cid, i_cid, values_cid = pending.demand.operand_coordinate_cids
-    universe = _completed_universe(
-        pending,
-        {
-            a_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(0),
-            values_cid: TupleValue(()),
-        },
+    stored = _floor_store(
+        fresh(ListValue, (TermValue(0),)), TermValue(0), TupleValue(())
     )
-    assert _stored_list(universe) == fresh(ListValue, (TupleValue(()),))
-    assert _returned(universe).value.term.name == "p"
+    assert _stored_list(stored) == fresh(ListValue, (TupleValue(()),))
+    _, outcome = _desugared(DECIDED_PROGRAM, "decided_ok_empty.py")
+    assert _returned(_sole_completed_universe(outcome)).value.term.name == "p"
 
 
 # ---------------------------------------------------------------------------
@@ -345,35 +401,23 @@ def test_empty_variadic_store_is_honest_empty_tuple() -> None:
 def test_variadic_store_halt_preserves_earlier_name_binding_state() -> None:
     """IndexError on a[i]=values; x←p is not rolled into a Completed return.
 
-    Post-#6644: halt face carries pending.pre_effect_state.state identity.
+    The store of a pack on the list a caller hands ``a`` raises the named
+    ``IndexError`` at index 5.  The same unpack on a list the frame built
+    halts there with the block's record kept (``halts_at_statement_head``).
     Sole face is Halted — no fabricated completion of the return of x.
     """
-    _, pending = _helper()
-    assert pending.pre_effect_state is not None
-    a_cid, i_cid, values_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            a_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(5),
-            values_cid: TupleValue((TermValue(9),)),
-        },
+    floor = _floor_store(
+        fresh(ListValue, (TermValue(0),)), TermValue(5), TupleValue((TermValue(9),))
     )
+    assert len(floor.exits) == 1
+    _index_error(floor.exits[0])
+
+    _, exits = _desugared(BAD_INDEX_PROGRAM, "decided_bad.py")
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     halted = exits.exits[0]
-    assert isinstance(halted, Halted)
-    assert not isinstance(halted, Completed)
-    assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
-    )
+    _index_error(halted)
     assert halted.state is not None
-    assert pending.pre_effect_state.state is halted.state
     assert not isinstance(getattr(halted, "value", None), UniverseValue)
     assert all(isinstance(face, Halted) for face in exits.exits)
 
@@ -383,7 +427,7 @@ def test_source_caller_variadic_store_halt_no_fabricated_completion() -> None:
     # no longer is the one IndexError halt of the followed body; it is the
     # edge, which owes its halt, and its completed face is the call value,
     # never a completed return of ``x``.  The named IndexError with the
-    # earlier binding's state is the row discharged with these actuals
+    # earlier binding's state is the list's own store at these actuals
     # (``test_variadic_store_halt_preserves_earlier_name_binding_state``),
     # joined at the call by prove (#8690, #8749).
     call = _the_call("[0], 5, 7, 1, 2")
@@ -398,16 +442,7 @@ def test_source_caller_variadic_store_halt_no_fabricated_completion() -> None:
 
 def test_halt_discrimination_is_not_completed_return_of_x() -> None:
     """Bite: store halt must not present Completed with return of p/x."""
-    _, pending = _helper()
-    a_cid, i_cid, values_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            a_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(5),
-            values_cid: TupleValue((TermValue(9),)),
-        },
-    )
+    _, exits = _desugared(BAD_INDEX_PROGRAM, "decided_bad_d.py")
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed), "halted store completed the body"
     with pytest.raises(AssertionError):
@@ -415,32 +450,25 @@ def test_halt_discrimination_is_not_completed_return_of_x() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Twins: discharge order ≠ eval order; dropped pack undischarged
+# Twins: dispatch order ≠ eval order; no store waits on an actual
 # ---------------------------------------------------------------------------
 
 
 def test_swapped_source_discharge_order_twin_fails() -> None:
-    _, pending = _helper()
-    discharge_names = tuple(operand.term.name for operand in pending.operands)
+    _, outcome = _dispatched_helper()
+    call = _dispatched_call(outcome)
+    dispatch_names = tuple(arg.name for arg in call.args[:3])
     source_eval_names = ("values", "a", "i")  # value, receiver, index
-    assert discharge_names == ("a", "i", "values")
-    assert discharge_names != source_eval_names
+    assert dispatch_names == ("a", "i", "values")
+    assert dispatch_names != source_eval_names
     with pytest.raises(AssertionError):
-        assert discharge_names == source_eval_names
+        assert dispatch_names == source_eval_names
 
 
-def test_dropped_variadic_pack_is_undischarged() -> None:
-    """The dropped pack leaves the store the cited unanswered face (#7825)."""
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
-
-    _, pending = _helper()
-    a_cid, i_cid, _values_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(
-        None,
-        {
-            a_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(0),
-        },
-    )
-    assert pending.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
+def test_undecided_receiver_store_is_owed_never_waiting_on_actuals() -> None:
+    """No store waits on a caller's actual (#7757 step 7): where nothing
+    decides the receiver's type the store of the pack is the undecided
+    mutation, owing the undecided member on both faces, never a completed
+    value (formerly a carrier left undischarged by a dropped pack, #7825)."""
+    _, outcome = _undecided_helper()
+    _undecided_store(outcome)

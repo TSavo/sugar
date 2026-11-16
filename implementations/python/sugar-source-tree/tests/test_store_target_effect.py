@@ -102,27 +102,31 @@ def test_attribute_store_post_out_equals_the_returned_value():
     assert post.args[1].name == "v"
 
 
-def _pending_subscript_store():
+def _subscript_store_outcome():
+    """``xs[i] = v`` on a formal: the one item mutation
+    (``store_effect_sugar.item_mutation``, #7757 step 7), never a carrier
+    waiting on a caller's actuals -- the dispatched ``__setitem__`` where
+    ``xs``'s class is an input, the undecided mutation where it is not."""
     from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
 
-    pending = _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    return pending
+    outcome = _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar()
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    return outcome
 
 
-def test_subscript_store_retains_setitem_demand_without_caller():
-    pending = _pending_subscript_store()
+def test_subscript_store_on_a_formal_keeps_its_halt_and_waits_on_no_caller():
+    text = repr(_subscript_store_outcome())
 
-    assert pending.demand.operator == "setitem"
-    assert all(pending.demand.operand_coordinate_cids)
+    # The store's own halt face is kept: the dispatched call's, or the
+    # undecided mutation's.
+    assert "UnknownCallee:dispatch:__setitem__" in text or "UndecidedSetitem" in text
 
 
 def test_subscript_store_does_not_borrow_the_read_path():
-    pending = _pending_subscript_store()
+    text = repr(_subscript_store_outcome())
 
-    assert pending.demand.operator == "setitem"
-    assert len(pending.operands) == 3
-    assert len(pending.demand.operand_coordinate_cids) == 3
+    assert "__setitem__" in text
+    assert "__getitem__" not in text
 
 
 def test_attribute_store_witness_site_is_the_tree_fragment():

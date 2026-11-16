@@ -1,11 +1,14 @@
-"""Source-defined subscript stores discharge through authenticated callers.
+"""Source-defined subscript stores through authenticated callers.
 
 A same-file call is its coordinate and edge, joined at prove (#7757 steps 5
-and 6, the owner's ruling "Edge, join at prove", #8705): the helper's
-``setitem`` carrier is discharged by prove's one binder with the call's
-actuals, never at the call.  What the store does with a caller's actuals is
-the helper's own row discharged with them; the call owes its halt, which
-prove joins at the call (#8690) with the type the contract states (#8749).
+and 6, the owner's ruling "Edge, join at prove", #8705).  The helper's store
+is the one item mutation (``store_effect_sugar.item_mutation``, #7757 step
+7), never a carrier waiting on the call's actuals: on a formal whose class is
+an input of the helper's contract it is the dispatched ``__setitem__`` edge,
+on one whose class is no input the undecided mutation (owed, its halt kept).
+What the store does with a caller's actuals is the floor's own store on the
+decided value the caller passes; the call owes its halt, which prove joins at
+the call (#8690) with the type the contract states (#8749).
 """
 
 from __future__ import annotations
@@ -15,11 +18,13 @@ from sugar_lift_py_tests.context_manager_contract import (
     EffectBoundaryDisposition,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
 from sugar_lift_py_tests.floor import TermValue, TupleValue
 from sugar_lift_py_tests.outcome import (
+    Completed,
     ExitSet,
     Halted,
     NativeOperationExitCarrierV1,
@@ -72,27 +77,25 @@ _TUPLE_CALLER = (
     "helper((0,), 0, 9)\n"
 )
 
+# The same store on a formal whose class is no input of ``helper``'s
+# contract: ``return obj`` reads ``obj`` bare (``nodes._receiver_uses``:
+# blocked), so nothing here decides ``type(obj).__setitem__``.
+_UNDECIDED_HELPER = (
+    "def helper(obj, key, value):\n    obj[key] = value\n    return obj\n"
+)
 
-def _carrier(helper):
-    """The ``setitem`` carrier ``SubscriptStoreEffectSugar.project_setitem``
-    mints for a store on a formal whose class is no input of its contract,
-    over ``helper``'s own formal coordinates, at the store's statement.
-    ``helper`` itself takes ``class:obj`` (``obj`` is stored into and used
-    no other way), so its own store is the dispatched edge instead
-    (``_dispatched_call``, #8857)."""
-    from sugar_lift_py_tests.floor import SymbolicValue
-    from sugar_lift_py_tests.ir import make_var
-    from sugar_lift_py_tests.sugar.store_effect_sugar import (
-        SubscriptStoreEffectSugar,
-    )
 
-    obj_c, key_c, value_c = helper.formal_coordinates()
-    return SubscriptStoreEffectSugar.mint_setitem_carrier(
-        site=helper.body[0].fragment,
-        receiver=SymbolicValue(make_var("obj"), obj_c),
-        index=SymbolicValue(make_var("key"), key_c),
-        value=SymbolicValue(make_var("value"), value_c),
-    )
+def _stored_with_the_callers_actuals(helper):
+    """``obj[key] = value`` at ``helper``'s store with what ``helper((0,),
+    0, 9)`` passes: the one item mutation (``item_mutation``) on a receiver
+    whose type the lift decides is the floor's own store, every face of it
+    kept (#7757 step 7)."""
+    from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
+    site = helper.body[0].fragment
+    receiver = TupleValue((TermValue(0),))
+    operands = (TermValue(0), TermValue(9))
+    return item_mutation("__setitem__", receiver, operands, site, None, unit=None)
 
 
 def _dispatched_call(outcome, method: str = "__setitem__"):
@@ -121,27 +124,47 @@ def _dispatched_call(outcome, method: str = "__setitem__"):
     return call
 
 
-def _discharged_with_the_callers_actuals(helper):
-    """The ``setitem`` carrier discharged with what ``helper((0,), 0, 9)``
-    passes: the Floor ``setitem`` projector's answer."""
-    pending = _carrier(helper)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
-    return pending.discharge(
-        None,
-        {
-            obj_cid: TupleValue((TermValue(0),)),
-            key_cid: TermValue(0),
-            value_cid: TermValue(9),
-        },
-    )
+def _undecided_store(outcome) -> Halted:
+    """The undecided item mutation (``undecided_item_mutation_faces``) in a
+    helper's own proof: no carrier and no dispatched edge, one
+    ``UndeterminedRaiseEffect`` halt owned by ``UndecidedSetitem`` kept
+    with the state the store began from, and every completed face and the
+    halt owing the undecided member at the store's site."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedSetitem"
+    ]
+    assert len(halts) == 1, outcome
+    (halt,) = halts
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.state is not None
+    assert not [
+        face
+        for face in outcome.halts()
+        if str(face.effect.producer_node_owner).startswith("UnknownCallee:dispatch:")
+    ]
+    owed = unanswered_call(None, halt.effect.site)
+    assert owed in owed_calls(outcome)
+    assert owed in halt.owed
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    assert all(owed in face.owed for face in completed)
+    assert outcome.completed_value() is None
+    return halt
 
 
 def test_helper_alone_retains_setitem_demand_in_projector_order() -> None:
     # Expected shape changed (#8857): ``obj``'s class is an input of
     # ``helper``'s contract, so its store is the dispatched ``__setitem__``
-    # edge in the projector's order, then ``py.class("0", class:obj)``; the
-    # carrier in that order stands where the class is no input.
+    # edge in the order ``type(obj).__setitem__(obj, key, value)`` takes,
+    # then ``py.class("0", class:obj)``.  Expected shape changed (#7757 step
+    # 7): where the class is no input the store is no carrier but the
+    # undecided mutation, owed with its halt kept.
     from sugar_lift_py_tests.ir import str_const
 
     helper, _calls = _helper_and_calls(
@@ -156,18 +179,8 @@ def test_helper_alone_retains_setitem_demand_in_projector_order() -> None:
     assert rides.args[1].name == "class:obj"
     assert len(call.args) == 4
 
-    pending = _carrier(helper)
-
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setitem"
-    assert tuple(value.term.name for value in pending.operands) == (
-        "obj",
-        "key",
-        "value",
-    )
-    assert pending.demand.operand_coordinate_cids == tuple(
-        value.formal_coordinate.coordinate_cid for value in pending.operands
-    )
+    undecided, _calls = _helper_and_calls(_UNDECIDED_HELPER)
+    _undecided_store(undecided.sugar().desugar(None))
 
 
 # ``test_positional_keyword_and_default_callers_complete_same_store_demand``
@@ -183,7 +196,7 @@ def test_immutable_receiver_reads_but_formal_store_halts_with_named_type() -> No
     readable = TupleValue((TermValue(0),)).subscript(TermValue(0), "read.py:1")
     assert readable.completed_value() == TermValue(0)
 
-    halted = _one_face(_discharged_with_the_callers_actuals(helper))
+    halted = _one_face(_stored_with_the_callers_actuals(helper))
 
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
@@ -199,7 +212,7 @@ def test_immutable_receiver_reads_but_formal_store_halts_with_named_type() -> No
 
 def test_wrong_expected_type_leaves_setitem_exception_unconsumed() -> None:
     helper, _calls = _helper_and_calls(_TUPLE_CALLER)
-    produced = _discharged_with_the_callers_actuals(helper)
+    produced = _stored_with_the_callers_actuals(helper)
     original = _one_face(produced)
     assert isinstance(original, Halted)
 

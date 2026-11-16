@@ -111,24 +111,8 @@ class SubscriptStoreEffectSugar(Sugar):
     once.  Dispatch is ``__setitem__`` via Floor ``setitem`` — a different
     method and obligation from the load path ``subscript`` / ``__getitem__``.
 
-    Projection arms:
-
-    0. **A receiver whose type binds no ``__setitem__``**
-       (``receiver_lacks_item_method``) → its ``TypeError``, whatever the
-       key and value are: a formal key or value is not waited on.
-    1. **Any formal operand** → ``NativeOperationExitCarrierV1`` demand
-       ``setitem`` with operands and coordinates in *discharge* order
-       ``(receiver, index, value)``.  The n-ary projector calls
-       ``receiver.setitem(index, value, site, ctx)``.  Helper alone stays
-       undischarged; an ordinary source caller supplies actuals.
-    2. **Decided runtime type** → ``receiver.setitem(index, value, site, ctx)``
-       projecting its completed or halted faces through the store path
-       (never the load path).
-    3. **Undecided non-formal** → two faces (#7585): no floor decides
-       ``type(receiver).__setitem__``, so the store completes only under
-       ``python:setitem.completes(python:setitem(<site occurrence>))`` --
-       leaving the receiver's contents unknown -- and halts with an
-       ``UndeterminedRaiseEffect`` under the complement.
+    The store itself is the one item mutation (``item_mutation``), the same
+    one the container-mutation door's ``__setitem__`` takes.
     """
 
     receiver: Sugar
@@ -159,91 +143,94 @@ class SubscriptStoreEffectSugar(Sugar):
         )
 
     def _store(self, receiver, index, value, ctx) -> ExitSet:
-        return self.project_setitem(receiver, index, value, self.site, ctx)
-
-    @staticmethod
-    def project_setitem(receiver, index, value, site, ctx) -> ExitSet:
-        """Producer-owned subscript **store** projection (one door).
-
-        Shared by the ordinary store statement and every store target of a
-        chain or an unpack (each is that same statement); the store applies
-        under the statement's ``ctx``.
-        """
-        from sugar_lift_py_tests.floor.floor_value import receiver_lacks_item_method
-
-        receiver = receiver.project_operation_receiver(
-            ctx, owner="SubscriptStoreEffectSugar receiver"
-        )
-        index = index.project_operation_receiver(
-            ctx, owner="SubscriptStoreEffectSugar index"
-        )
-        value = value.project_operation_receiver(
-            ctx, owner="SubscriptStoreEffectSugar value"
-        )
-        coordinates = tuple(
-            getattr(operand, "formal_coordinate", None)
-            for operand in (receiver, index, value)
-        )
-        if receiver_lacks_item_method(receiver, "__setitem__"):
-            # The receiver's type binds no ``__setitem__``: the store raises
-            # ``TypeError`` whatever the key and value are, so it waits on
-            # neither (``ObjectValue.setitem``).
-            return receiver.setitem(index, value, site, ctx)
-        if any(coordinate is not None for coordinate in coordinates):
-            # Undischarged demand awaiting caller actuals — not a refusal.
-            return SubscriptStoreEffectSugar.mint_setitem_carrier(
-                site=site,
-                receiver=receiver,
-                index=index,
-                value=value,
-            )
-        if not receiver.runtime_type_is_decided():
-            return _undecided_setitem_faces(receiver, site)
-        return receiver.setitem(index, value, site, ctx)
-
-    @staticmethod
-    def mint_setitem_carrier(*, site, receiver, index, value):
-        """Producer-side contract for n-ary ``setitem`` discharge.
-
-        Operand order matches the projector table (#6614):
-        ``receiver.setitem(index, value, site, ctx)``.  This is *discharge* order
-        (receiver, index, value) — not source evaluation order (value,
-        receiver, index).  Coordinates are exactly one slot per ordered
-        operand; lengths and order are load-bearing (#6613 ``__post_init__``).
-        """
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-
-        coordinates = tuple(
-            getattr(operand, "formal_coordinate", None)
-            for operand in (receiver, index, value)
-        )
-        if not any(coordinate is not None for coordinate in coordinates):
-            raise ValueError(
-                "setitem carrier requires at least one formal_coordinate among "
-                "receiver, index, and value"
-            )
-        return NativeOperationExitCarrierV1.mint(
-            site=site,
-            operator="setitem",
-            operands=(receiver, index, value),
-            coordinates=coordinates,
+        return item_mutation(
+            "__setitem__",
+            receiver,
+            (index, value),
+            self.site,
+            ctx,
+            unit=getattr(self.site, "unit", None),
         )
 
 
-def _undecided_setitem_faces(receiver, site):
-    """``r[k] = v`` where nothing decides ``type(r).__setitem__``.
+#: ``(noun, owner)`` of each item mutation's undecided faces.
+_ITEM_MUTATIONS = {
+    "__setitem__": ("setitem", "UndecidedSetitem"),
+    "__delitem__": ("delitem", "UndecidedDelitem"),
+}
 
-    The receiver is a value this frame holds (an opaque call result, an
-    unknown read) but no floor, contract or source testified to its type, so
-    ``__setitem__`` may run anything and raise anything.  See
-    :func:`undecided_item_mutation_faces`.
-    """
-    del receiver
-    return undecided_item_mutation_faces(
-        site, noun="setitem", method="__setitem__", owner="UndecidedSetitem"
+
+def item_mutation(
+    method, receiver, operands, site, ctx, *, unit, label="receiver"
+) -> ExitSet:
+    """``receiver[k] = v`` (``__setitem__``, ``operands`` the key and the
+    value) or ``del receiver[k]`` (``__delitem__``, the key): THE item store
+    or delete, one way (#7757 step 7), whatever the receiver is.  Python runs
+    ``type(receiver).__setitem__(receiver, k, v)``; the operation completes
+    with the receiver as it left it.  Every operand is projected to its value
+    first (``a[f()] = 9`` stores at what ``f`` returns).
+
+    - A receiver whose type binds no such method (``receiver_lacks_item_
+      method``) raises its ``TypeError``, whatever the key and the value
+      are.
+    - A receiver whose class is a class input here or a same-file class's
+      call result (``receiver_dispatch.dispatch_on_receiver``: a formal's,
+      a captured cell's, an ``__init__`` receiver's) is the dispatched call
+      ``call:dispatch:__setitem__(...)``, resolved at prove at the class the
+      caller binds: a builtin ``list`` or ``dict`` takes its law
+      (``consistency::builtin_dispatch_answer``, #8864), a source class its
+      method's contract; owed where nothing binds it.  The receiver after
+      it is ``python:after(<call>, "0")`` (``receiver_after_dispatch``).
+    - A receiver whose type nothing here decides -- a formal whose class is
+      no input, an opaque call result -- is the undecided mutation
+      (``undecided_item_mutation_faces``): it completes under its own atom
+      or raises something undetermined, both faces owing the undecided
+      member.  No operation waits on a caller's actual.
+    - A receiver whose type the lift decides is its floor's own store or
+      delete, every face of it (an ``IndexError``, a ``KeyError``, a
+      ``TypeError``) kept.
+
+    ``label`` names the receiver's unknown post-state where a dispatched
+    call leaves no ``after`` term."""
+    from sugar_lift_py_tests.floor.floor_value import receiver_lacks_item_method
+    from sugar_lift_py_tests.receiver_dispatch import (
+        dispatch_on_receiver,
+        receiver_after_dispatch,
     )
+
+    owner = f"item_mutation({method})"
+    receiver = receiver.project_operation_receiver(ctx, owner=f"{owner} receiver")
+    operands = tuple(
+        operand.project_operation_receiver(ctx, owner=f"{owner} operand")
+        for operand in operands
+    )
+
+    def floor():
+        if method == "__setitem__":
+            return receiver.setitem(*operands, site, ctx)
+        return receiver.delitem(*operands, site, ctx)
+
+    if receiver_lacks_item_method(receiver, method):
+        return floor()
+    dispatched = dispatch_on_receiver(method, receiver, operands, (), site, unit=unit)
+    if dispatched is not None:
+        from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+            _unknown_after,
+        )
+
+        def after(result):
+            post = receiver_after_dispatch(receiver, result)
+            return ExitSet.completed(
+                post if post is not None else _unknown_after(site, label)
+            )
+
+        return dispatched.and_then(after)
+    if not receiver.runtime_type_is_decided():
+        noun, undecided_owner = _ITEM_MUTATIONS[method]
+        return undecided_item_mutation_faces(
+            site, noun=noun, method=method, owner=undecided_owner
+        )
+    return floor()
 
 
 def undecided_item_mutation_faces(site, *, noun: str, method: str, owner: str):

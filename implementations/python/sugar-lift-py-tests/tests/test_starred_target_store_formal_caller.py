@@ -46,7 +46,7 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_ex
 from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
     ReceiverFieldStoreSugar,
 )
-from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
+from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.unpack_projection_targets import (
     NameUnpackTarget,
@@ -457,24 +457,31 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     """Roster is positional — wrong index / missing formal coordinate stays loud.
 
     1. Positional roster members zip by source leaf index, never by name keys.
-    2. Formal setitem store leaf mints discharge coordinates (receiver, index,
-       value); a lying twin with swapped index/value slots is distinguishable.
-    3. A formal missing from discharge actuals is the cited unanswered face
-       (#7825) — never a silent completion.
+    2. A setitem store leaf on a formal whose class is an input is the
+       dispatched ``__setitem__`` edge over (receiver, index, value), then
+       the receiver's class; a lying twin with swapped index/value slots is
+       distinguishable.
+    3. A store leaf on a formal whose type nothing here decides is the
+       undecided item mutation, owed on both faces (#7825) — never a silent
+       completion, and never a carrier waiting on a caller's actual (#7757).
     """
     from types import SimpleNamespace
 
+    from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.ir import make_var, str_const
     from sugar_lift_py_tests.operations.positional_unpack_operation import (
         PositionalUnpackOperation,
         UnpackMemberRoster,
     )
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
 
-    site = _site("def f(a, i, xs):\n    a[i], name = xs\n")
+    program = "def f(a, i, xs):\n    a[i], name = xs\n"
+    site = _site(program)
     # --- positional roster: members by index, no string keys ---
     op = PositionalUnpackOperation(
         fixed_prefix=2,
@@ -501,57 +508,68 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     with pytest.raises(AssertionError):
         assert lying_roster == roster_out.completed_value()
 
-    # --- formal setitem leaf: discharge coordinates must stay ordered ---
+    # --- formal setitem leaf: the dispatched edge, in discharge order ---
+    # ``a`` is stored into through an unpack leaf and used no other way, so
+    # its class is an input of ``f``'s contract (``nodes._receiver_uses``)
+    # and the leaf's store is ``type(a).__setitem__(a, i, <member>)``, owed
+    # with its halt and the state the store began from kept.
+    _, outcome = _helper(program)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    dispatched = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UnknownCallee:dispatch:__setitem__"
+    ]
+    assert len(dispatched) == 1, outcome
+    assert dispatched[0].state is not None
+    assert "python:dispatch:__setitem__" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    raised = dispatched[0].effect.raised_by_call
+    assert raised.name == "python:raised", raised
+    call = raised.args[0]
+    assert call.name == call_symbol("dispatch:__setitem__"), call
+    # Discharge order: receiver, index, value — not value-first; the
+    # receiver's class rides last.
+    assert len(call.args) == 4
+    assert [arg.name for arg in call.args[:2]] == ["a", "i"]
+    assert call.args[2].name not in ("a", "i")
+    assert call.args[3].name == "py.class"
+    assert call.args[3].args[0] == str_const("0")
+    assert call.args[3].args[1].name == "class:a"
+    truthful = tuple(call.args)
+    # Wrong-order twin swaps the index and value slots.
+    lying = (truthful[0], truthful[2], truthful[1], truthful[3])
+    assert lying != truthful
+    with pytest.raises(AssertionError):
+        assert lying == truthful
+
+    # --- a formal whose type nothing here decides: the undecided mutation ---
+    # With no module the receiver's class is an input of (``unit=None``), the
+    # formal ``a`` is a value whose type nothing here decides, whatever
+    # coordinate it carries: the store completes under its own atom or raises
+    # something undetermined under the complement, never a carrier.
     coord_a = SimpleNamespace(coordinate_cid="cid:a")
     coord_i = SimpleNamespace(coordinate_cid="cid:i")
     formal_receiver = SymbolicValue(make_var("a"), formal_coordinate=coord_a)
     formal_index = SymbolicValue(make_var("i"), formal_coordinate=coord_i)
     member = TermValue(99)
-    # The leaf's store is ``a[i] = <member>``'s own: the one setitem door.
-    projected = SubscriptStoreEffectSugar.project_setitem(
-        formal_receiver, formal_index, member, site, None
+    out = item_mutation(
+        "__setitem__", formal_receiver, (formal_index, member), site, None, unit=None
     )
-    assert isinstance(projected, NativeOperationExitCarrierV1), projected
-    assert projected.demand.operator == "setitem"
-    # Discharge order: receiver, index, value — not value-first.
-    assert len(projected.operands) == 3
-    assert projected.operands[2] == member
-    cids = projected.demand.operand_coordinate_cids
-    assert cids[0] == "cid:a"
-    assert cids[1] == "cid:i"
-    # Member is ground — no formal coordinate on the value slot.
-    assert cids[2] is None
-    truthful_coords = projected.coordinates
-    # Wrong-order twin swaps index and value coordinate slots.
-    lying = NativeOperationExitCarrierV1.mint(
-        site=site,
-        operator="setitem",
-        operands=(
-            projected.operands[0],
-            projected.operands[2],
-            projected.operands[1],
-        ),
-        coordinates=(
-            truthful_coords[0],
-            truthful_coords[2],
-            truthful_coords[1],
-        ),
-    )
-    assert lying.demand.operand_coordinate_cids != cids
-    with pytest.raises(AssertionError):
-        assert lying.demand.operand_coordinate_cids == cids
-    # Missing formals → the cited unanswered face (#7825), never a completion:
-    # it owes the store as an ``undecided`` member and its halt names the
-    # first formal no actual answers.
-    for actuals, absent in (
-        ({}, "cid:a"),
-        ({"cid:a": fresh(ListValue, (TermValue(0),))}, "cid:i"),
-    ):
-        out = projected.discharge(None, actuals)
-        assert out.completed_value() is None
-        assert {arm.owed for arm in out.exits} == {(projected.unanswered_call(),)}
-        (halted,) = out.halts()
-        assert halted.effect.blame == f"authenticated caller actual absent for {absent}"
+    assert isinstance(out, ExitSet), out
+    assert not isinstance(out, NativeOperationExitCarrierV1)
+    assert out.completed_value() is None
+    assert len(out.exits) == 2
+    (done,) = [face for face in out.exits if isinstance(face, Completed)]
+    (halted,) = out.halts()
+    assert "python:setitem.completes" in str(done.guard)
+    assert halted.guard == complement_guard(done.guard)
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.producer_node_owner == "UndecidedSetitem"
+    # Both faces owe the store as the one ``undecided`` member, at its site.
+    assert done.owed == halted.owed == (unanswered_call(None, site),)
 
 
 def test_successful_roster_carries_authenticated_unpack_occurrence() -> None:
