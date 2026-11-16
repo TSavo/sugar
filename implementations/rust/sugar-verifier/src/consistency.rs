@@ -17606,6 +17606,119 @@ mod tests {
         assert_eq!(decide_plain_stores(&stated, Some(&table)), field);
     }
 
+    #[test]
+    fn a_super_call_leaves_what_the_method_after_the_cell_class_states() {
+        // `Child.run` runs `super().check()` and then reads `self.n` (#7757):
+        // the read is the `field:self.n` input under
+        // `and(python:plain_read(class:self, "n"), python:call_leaves(<call>,
+        // "0"))`. The call's lookup starts after `Child`
+        // (`py.lookup("", "python:m.Child")`) and reaches `Base.check`, which
+        // states `python:leaves("self")`: the guard folds. `Child`'s own
+        // `check`, which states nothing it leaves, is the one a lookup from
+        // the first class of the order reaches: that guard stands.
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.Base".to_string(),
+            namespace(
+                &["python:m.Base", "builtins.object"],
+                &[("check", "function", "python:m.Base.check")],
+            ),
+        );
+        namespaces.insert(
+            "python:m.Child".to_string(),
+            namespace(
+                &["python:m.Child", "python:m.Base", "builtins.object"],
+                &[("check", "function", "python:m.Child.check")],
+            ),
+        );
+        let leaves = json!({"kind": "atomic", "name": PYTHON_LEAVES, "args": [string_const("self")]});
+        let base_binding = BridgeBinding {
+            source_symbol: "python:m.Base.check".to_string(),
+            target_cid: String::new(),
+            target_proof_cid: None,
+            formals: vec!["self".to_string()],
+            out_binding: "out".to_string(),
+            stated_inputs: Vec::new(),
+            definition: None,
+        };
+        let child_binding = BridgeBinding {
+            source_symbol: "python:m.Child.check".to_string(),
+            target_cid: String::new(),
+            target_proof_cid: None,
+            formals: vec!["self".to_string()],
+            out_binding: "out".to_string(),
+            stated_inputs: Vec::new(),
+            definition: None,
+        };
+        let mut answers = BTreeMap::new();
+        answers.insert(
+            "python:m.Base.check".to_string(),
+            Some((
+                base_binding,
+                json!({"kind": "and", "operands": [leaves]}),
+                Vec::new(),
+                true,
+                Vec::new(),
+            )),
+        );
+        answers.insert(
+            "python:m.Child.check".to_string(),
+            Some((
+                child_binding,
+                json!({"kind": "and", "operands": []}),
+                Vec::new(),
+                true,
+                Vec::new(),
+            )),
+        );
+        let table = DispatchTable {
+            namespaces: Arc::new(namespaces),
+            answers,
+            constructed: BTreeMap::new(),
+            constructed_fields: BTreeMap::new(),
+        };
+        let class = json!({"kind": "ctor", "name": PYTHON_CLASS, "args": [
+            string_const("0"),
+            instance("python:m.Child", &[]),
+        ]});
+        let lookup = json!({"kind": "ctor", "name": PYTHON_LOOKUP, "args": [
+            string_const(""),
+            string_const("python:m.Child"),
+        ]});
+        let call = json!({"kind": "ctor", "name": "call:dispatch:check", "args": [
+            var("self"),
+            lookup,
+            class.clone(),
+        ]});
+        assert!(call_leaves_holds(&table, &call, "0"));
+        let own = json!({"kind": "ctor", "name": "call:dispatch:check", "args": [
+            var("self"),
+            class,
+        ]});
+        assert!(!call_leaves_holds(&table, &own, "0"));
+        let plain_read = json!({"kind": "atomic", "name": PYTHON_PLAIN_READ, "args": [
+            instance("python:m.Child", &[]),
+            string_const("n"),
+        ]});
+        let field = json!({"kind": "atomic", "name": "=", "args": [var("x"), int(2)]});
+        let after_super = json!({"kind": "implies", "operands": [
+            {"kind": "and", "operands": [
+                plain_read.clone(),
+                {"kind": "atomic", "name": PYTHON_CALL_LEAVES, "args": [call, string_const("0")]},
+            ]},
+            field.clone(),
+        ]});
+        assert_eq!(decide_plain_stores(&after_super, Some(&table)), field);
+        let after_own = json!({"kind": "implies", "operands": [
+            {"kind": "and", "operands": [
+                plain_read,
+                {"kind": "atomic", "name": PYTHON_CALL_LEAVES, "args": [own, string_const("0")]},
+            ]},
+            field.clone(),
+        ]});
+        assert_ne!(decide_plain_stores(&after_own, Some(&table)), field);
+    }
+
     /// `Box.__init__(self, n)` storing `self.n = n`, as its contract states
     /// it (the kit's `UniverseValue.receiver_holds_facts` and
     /// `field_facts`, #7757 B2): the field and what `self.__dict__` may hold,

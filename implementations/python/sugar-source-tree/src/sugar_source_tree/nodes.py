@@ -24364,7 +24364,13 @@ def _receiver_field_inputs(definition) -> tuple:
       of it (``p.x = v``, ``p.x += v``, ``del p.x``, ``p.x`` as a loop or
       ``with`` target), and never uses it any other way
       (``_receiver_uses``: bare, an item read, a field's method, a nested
-      function, a zero-argument ``super()``);
+      function);
+    - every read of ``super`` is a zero-argument ``super().<m>()`` the body
+      runs as a whole top-level statement (``_receiver_super_calls``): a
+      base's method runs on ``p`` there, and a read after it is the input
+      only where that call leaves ``p`` unchanged
+      (``python:call_leaves(<call>, "0")``, decided at prove,
+      ``receiver_dispatch.receiver_field_read``);
     - ``<f>`` is no dunder name (``__class__`` and ``__dict__`` are
       ``object``'s own data descriptors, never a ``__dict__`` entry).
 
@@ -24391,8 +24397,15 @@ def _read_receiver_field_inputs(definition) -> tuple:
     uses = _receiver_uses(definition)
     if uses is None:
         return ()
-    received, blocked, _read, zero_argument_super = uses
-    if receiver in received or receiver in blocked or zero_argument_super:
+    received, blocked, _read, _zero_argument_super = uses
+    if receiver in received or receiver in blocked:
+        return ()
+    # A zero-argument ``super()`` runs a base's method on the receiver: a
+    # field read after it is the input only under the guard that the call
+    # leaves the receiver (``receiver_dispatch.receiver_field_read``), which
+    # names each call by its statement.  Any other read of ``super`` is a
+    # call this frame cannot place: no field is an input.
+    if _receiver_super_calls(definition) is None:
         return ()
     body = definition.body
     statements = tuple(body) if isinstance(body, (list, tuple)) else (body,)
@@ -24416,6 +24429,89 @@ def _read_receiver_field_inputs(definition) -> tuple:
         for field in sorted(fields)
         if not (field.startswith("__") and field.endswith("__"))
     )
+
+
+def _receiver_super_calls(definition):
+    """The zero-argument ``super()`` calls of ``definition``'s body a field
+    input of its receiver may be read across (#7757): ``((end, method,
+    call), ...)`` in source order, ``end`` the ``(line, column)`` where the
+    statement making the call ends, ``method`` the name looked up on the
+    super object, ``call`` the ``super()`` call itself.  ``()`` where the
+    body reads ``super`` nowhere.
+
+    None where it reads ``super`` any other way: every read of the name
+    ``super`` must be the builtin (``SourceUnit.language_callee_of``),
+    called with no argument, its result's method called with no argument
+    either, ``super().<m>()``, standing as the whole value of a statement
+    at the body's top level -- an expression statement or an assignment to
+    one name.  Such a call runs once on every path through the statements
+    after it, after everything before it, and nothing else of its
+    statement runs after it, so a read whose statement starts after it
+    reads the receiver as the call left it, and a read before it as the
+    object arrived.  The call is ``BuiltinSuperValue._dispatched`` over the
+    receiver's class input; a read after it is the field input only where
+    prove decides that the method it resolves to leaves the receiver
+    (``receiver_dispatch.receiver_field_read``).  A ``super()`` anywhere
+    else (an operand, a branch, a loop, a nested scope, a bare ``super``)
+    is a call no read can be placed after: no field is an input.
+
+    Read once per definition (its construction-cache row)."""
+    row = definition._coordinate()[2]
+    if "__receiver_super_calls__" in row:
+        return row["__receiver_super_calls__"]
+    answer = _read_receiver_super_calls(definition)
+    row["__receiver_super_calls__"] = answer
+    return answer
+
+
+def _read_receiver_super_calls(definition):
+    """``_receiver_super_calls``, read off the definition's body."""
+    body = definition.body
+    statements = tuple(body) if isinstance(body, (list, tuple)) else (body,)
+    placed: dict = {}
+    for statement in statements:
+        if isinstance(statement, Expr):
+            value = statement.value
+        elif (
+            isinstance(statement, Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], Name)
+        ):
+            value = statement.value
+        else:
+            continue
+        if not (
+            isinstance(value, Call)
+            and not value.args
+            and not getattr(value, "keywords", ())
+            and isinstance(value.func, Attribute)
+            and isinstance(value.func.value, Call)
+        ):
+            continue
+        made = value.func.value
+        if (
+            isinstance(made.func, Name)
+            and made.func.id == "super"
+            and not made.args
+            and not getattr(made, "keywords", ())
+        ):
+            placed[id(made.func)] = (statement, value.func.attr, made)
+    unit = definition.unit
+    found = []
+    for statement in statements:
+        for node in statement.walk():
+            if not (isinstance(node, Name) and node.id == "super"):
+                continue
+            held = placed.get(id(node))
+            if (
+                held is None
+                or unit.language_callee_of(node) is not LanguageCallee.BUILTIN_SUPER
+            ):
+                return None
+            call_statement, method, made = held
+            span = call_statement.line_col_span()
+            found.append(((span.end_line, span.end_col), method, made))
+    return tuple(found)
 
 
 def _method_receiver(definition):

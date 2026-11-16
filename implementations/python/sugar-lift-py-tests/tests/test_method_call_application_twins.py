@@ -453,19 +453,72 @@ def test_super_method_call_carries_the_method_raise(tmp_path: Path) -> None:
     call after ``Child`` (``class:self``), joined at prove where
     ``child.run()`` binds ``Child`` (#7757 step 8): the lie carries
     ``Base.check``'s raise and is refuted (``unsat``).  The truthful half
-    stays ``open``: ``return self.n`` reads ``self`` after a base's method ran
-    on it, so ``self.n`` is no ``field:self.n`` input
-    (``nodes._receiver_field_inputs`` excludes a body with a zero-argument
-    ``super()``) and the read is the one unanswered read, never ``sat`` for
-    the lie."""
+    reads ``self.n`` after a base's method ran on ``self``: the
+    ``field:self.n`` input under ``python:plain_read(class:self, "n")`` and
+    ``python:call_leaves(<super().check()>, "0")``
+    (``receiver_dispatch.receiver_field_read``,
+    ``nodes._receiver_super_calls``).  At ``child.run()`` the input is
+    bound to the ``n`` ``Child``'s constructor contract states, and the
+    guard is decided on the class rows: the lookup after ``Child`` reaches
+    ``Base.check``, whose contract states ``python:leaves("self")``
+    (``consistency::call_leaves_holds``): ``sat``."""
 
     _pair(
         tmp_path,
         "super-call",
         _SUPER_CALL.format(body="        return None"),
         _SUPER_CALL.format(body="        raise ValueError('bad base')"),
-        expected=("open", "unsat"),
+        expected=("sat", "unsat"),
     )
+
+
+_SUPER_STORES = """\
+class Base:
+    def check(self):
+        self.n = {stored}
+
+
+class Child(Base):
+    def __init__(self, n):
+        self.n = n
+
+    def run(self):
+        state = super().check()
+        return self.n
+
+
+def test_child():
+    child = Child(2)
+    value = child.run()
+    assert value == {claim}
+"""
+
+
+def test_a_field_a_base_method_stores_is_never_the_value_it_arrived_with(
+    tmp_path: Path,
+) -> None:
+    """``super().check()`` stores ``self.n = 5`` before ``run`` reads it.
+    ``Base.check`` changes its receiver, so its contract states no
+    ``python:leaves("self")``: the guard ``python:call_leaves(<call>, "0")``
+    is not decided and ``self.n`` is the undecided read, never the ``2``
+    the object arrived with.  The claim on the value the object arrived
+    with (a lie: Python reads 5) is never ``sat``; the truthful claim on 5
+    is never refuted (#7757)."""
+    told = run_source_through_real_solver(
+        tmp_path / "t", _SUPER_STORES.format(stored=5, claim=5)
+    )
+    lied = run_source_through_real_solver(
+        tmp_path / "l", _SUPER_STORES.format(stored=5, claim=2)
+    )
+    (test_line,) = (
+        number
+        for number, line in enumerate(_SUPER_STORES.splitlines(), start=1)
+        if line.startswith("def test_")
+    )
+    assert told.verdict != "unsat"
+    assert claim_verdict(told.prove_doc, claims_from_line=test_line) != "unsat"
+    assert claim_verdict(lied.prove_doc, claims_from_line=test_line) != "sat"
+    assert lied.verdict != "sat"
 
 
 # A method reads a field ``__init__`` set, through ``self``, applied on a
