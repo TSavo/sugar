@@ -7,6 +7,46 @@ from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
+def project_delattr(receiver, attr: str, site, ctx) -> ExitSet:
+    """``del receiver.attr`` on an already-evaluated receiver: the one
+    attribute delete, the delete side of ``store_effect_sugar.project_setattr``.
+    ``AttributeDeleteEffectSugar`` and every carrier that holds a value
+    (``AuthenticatedExceptionTypeValue``) delete through it, never through
+    the held value's own ``delattr`` past the door (#7757).  Its three arms
+    are ``AttributeDeleteEffectSugar``'s (formal carrier, decided ``delattr``,
+    undecided two faces)."""
+    formal_coordinate = getattr(receiver, "formal_coordinate", None)
+    if formal_coordinate is not None:
+        # Undischarged demand awaiting caller actuals — not a refusal.
+        return AttributeDeleteEffectSugar.mint_delattr_named_carrier(
+            site=site,
+            receiver=receiver,
+            attr=attr,
+        )
+
+    if receiver.runtime_type_is_decided():
+        return receiver.delattr(attr, site, ctx)
+
+    from sugar_lift_py_tests.effect import (
+        AttributeDeleteRuntimeEffect,
+        runtime_effect_evidence,
+    )
+    from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    operand = ctor(
+        "python:attribute_delete_target",
+        [receiver.to_term(owner="attribute delete"), str_const(attr)],
+    )
+    return store_faces(
+        AttributeDeleteRuntimeEffect(
+            "attribute deletion runtime boundary: Python dispatches "
+            f"__delattr__/descriptor deletion for .{attr}",
+            **runtime_effect_evidence("py.delattr", operand, site),
+        )
+    )
+
+
 @dataclass(frozen=True)
 class AttributeDeleteEffectSugar(Sugar):
     """`del receiver.attr` — evaluate once, then project the delete face.
@@ -46,36 +86,7 @@ class AttributeDeleteEffectSugar(Sugar):
         )
 
     def _delete(self, receiver, ctx) -> ExitSet:
-        formal_coordinate = getattr(receiver, "formal_coordinate", None)
-        if formal_coordinate is not None:
-            # Undischarged demand awaiting caller actuals — not a refusal.
-            return self.mint_delattr_named_carrier(
-                site=self.site,
-                receiver=receiver,
-                attr=self.attr,
-            )
-
-        if receiver.runtime_type_is_decided():
-            return receiver.delattr(self.attr, self.site, ctx)
-
-        from sugar_lift_py_tests.effect import (
-            AttributeDeleteRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
-        from sugar_lift_py_tests.ir import ctor, str_const
-
-        operand = ctor(
-            "python:attribute_delete_target",
-            [receiver.to_term(owner="attribute delete"), str_const(self.attr)],
-        )
-        return store_faces(
-            AttributeDeleteRuntimeEffect(
-                "attribute deletion runtime boundary: Python dispatches "
-                f"__delattr__/descriptor deletion for .{self.attr}",
-                **runtime_effect_evidence("py.delattr", operand, self.site),
-            )
-        )
+        return project_delattr(receiver, self.attr, self.site, ctx)
 
     @staticmethod
     def mint_delattr_named_carrier(*, site, receiver, attr: str):
