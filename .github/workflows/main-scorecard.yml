@@ -270,6 +270,9 @@ jobs:
             suite.log
             twins.log
             tree.log
+            suite.crash.log
+            twins.crash.log
+            tree.crash.log
             twin-evidence/**
           if-no-files-found: ignore
       - name: Job wall time

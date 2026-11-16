@@ -69,6 +69,26 @@
 # A pytest killed by a signal prints that test and the crashing thread's
 # stack into the job log as well; the full log is the uploaded artifact
 # (`if: always()`).
+#
+# A FAULT SIGNAL IS RUN ONCE MORE (run 43881434709, #8416)
+#
+# Five SIGSEGVs in these lanes (runs 43832361876, 43841836171, 43881434709
+# and two canonical-suite shards) hit five unrelated sites: pathlib's
+# _parse_path under a 1,421-path sort, inspect.getfile while pytest formats
+# a failure, a pure-Python string loop in a process whose only native module
+# was _cffi_backend, nodes._child_edges, spans.line_col. Every faulthandler
+# stack is whole and shallow (46-55 frames, none elided): no recursion was
+# under way, the recursion limit is never raised in these processes, and the
+# one other thread (engine_log's watchdog) was asleep in time.sleep each
+# time. That is the signature #5932 measured and traced to this host's
+# CPU (the i9-13900K's boost instability, which a 53x clock cap stopped), not
+# a code path, and no change to the code under test can prevent it. What
+# the lane can guarantee is that one fault never leaves the shard's other
+# tests unmeasured: a pytest killed by SIGILL, SIGBUS or SIGSEGV runs once
+# more in a fresh process, its crash log kept as <label>.crash.log and
+# uploaded. The crashed process wrote no summary, so nothing is merged; a
+# second fault leaves the shard incomplete as before, so a crash the code
+# does cause (it recurs) is never hidden. A timeout or a kill is not rerun.
 set -uo pipefail
 
 repo="$GITHUB_WORKSPACE"
@@ -133,14 +153,30 @@ run_pytest() {
   # Over budget: SIGINT, so pytest reports where it was and writes its
   # summary (exit 2); KILL a minute later if it does not stop. timeout exits 124.
   if [ "$budget" -gt 0 ]; then limit=(timeout -s INT -k 60 "$budget"); fi
-  PYTHONFAULTHANDLER=1 PYTHONPATH="$repo/tools:$PYTHONPATH" \
-    "${limit[@]}" python -m pytest "${paths[@]}" -v \
-    -p no:cacheprovider -p no:randomly \
-    -p scorecard_carry_pytest \
-    --carry-label "$label" --carry-summary "$summary" \
-    "$@" \
-    > "$log" 2>&1
-  rc=$?
+  local attempt
+  for attempt in 1 2; do
+    PYTHONFAULTHANDLER=1 PYTHONPATH="$repo/tools:$PYTHONPATH" \
+      "${limit[@]}" python -m pytest "${paths[@]}" -v \
+      -p no:cacheprovider -p no:randomly \
+      -p scorecard_carry_pytest \
+      --carry-label "$label" --carry-summary "$summary" \
+      "$@" \
+      > "$log" 2>&1
+    rc=$?
+    # A fault signal (SIGILL 132, SIGBUS 135, SIGSEGV 139) at a site no
+    # code path explains is run once more in a fresh process (see A FAULT
+    # SIGNAL IS RUN ONCE MORE above): the crashed process wrote no summary,
+    # so nothing is merged or carried. Its log is kept beside the rerun's.
+    # A second fault leaves the shard incomplete below, never retried again.
+    case "$rc" in
+      132 | 135 | 139) ;;
+      *) break ;;
+    esac
+    [ "$attempt" -eq 1 ] || break
+    mv "$log" "${log%.log}.crash.log"
+    echo "::warning::$label pytest killed by signal $((rc - 128)) in: $(grep -a -m1 'Fatal Python error' "${log%.log}.crash.log" || echo '(no faulthandler dump in the log)'); running it once more in a fresh process (crash log: $(basename "${log%.log}.crash.log"))"
+    awk '/^Current thread/ { on = 1 } on && /^$/ { exit } on' "${log%.log}.crash.log"
+  done
   echo "$rc" > "${summary%.json}.exit"
   echo "$label pytest exit $rc"
   grep -a 'SCORECARD CARRY' "$log"
@@ -173,6 +209,8 @@ cmd_run() {
   mkdir -p "$results/suite" "$results/twins" "$results/tree"
   # This shard's results from an earlier attempt are replaced, never kept.
   rm -f "$results"/suite/shard-"$tag".* "$results"/twins/shard-"$tag".* "$results"/tree/shard-"$tag".*
+  # A crash log is this run's only (the self-hosted workspace persists).
+  rm -f "$repo/suite.crash.log" "$repo/twins.crash.log" "$repo/tree.crash.log"
   cd "$py"
   if [ -s "$suite_list" ] || [ -s "$twins_list" ] || [ -s "$tree_list" ]; then
     SUGAR_BIN="$("$repo/bin/sugarbin" --profile release)"
