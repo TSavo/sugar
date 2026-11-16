@@ -10,9 +10,10 @@
    free ``__class__``) is ``RuntimeError: super(): __class__ cell not
    found``, whatever ``__class__`` a caller bound; a cell's class is the one
    its own class statement makes, never a caller's.
-3. ``supercheck``: ``obj`` not an instance of ``__class__`` is the
-   ``TypeError``; a check not decided here is two-faced, owing the
-   ``undecided`` member.
+3. ``supercheck`` is stated once, as one term over the class it tests
+   (``python:super_check_of``), two-faced and owed; prove decides it, or
+   its negation (``obj`` not an instance of ``__class__``: the
+   ``TypeError``), where the proofs state the class's order.
 4. In a generator expression the frame's first argument is the ``.0``
    iterator.  Over a builtin iterable (a display, ``range(...)``, ...) it is
    decided no instance of ``__class__``: the ``TypeError``.  Over anything
@@ -286,30 +287,68 @@ _UNRELATED = (
 )
 
 
-def test_super_on_an_instance_of_the_class_completes() -> None:
-    tree, context, classes = _parsed(_UNRELATED, "unrelated.py")
+def _the_one_check(outcome):
+    """The check ``supercheck`` is stated as (#7757): two faces, the super
+    object under ``python:super_check_of.completes(python:super_check_of(
+    <class>, "<cell>", <occ>))`` and the undetermined raise under its
+    complement, owed.  The lift decides nothing; prove decides the atom or
+    its negation (``consistency::super_check_facts``).  Returns the
+    completed face's value and the check term's ``(class, cell)``."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == "BuiltinSuperValue.supercheck"
+    (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert outcome.owed_items()
+    checks = []
+    pending = [done.guard]
+    while pending:
+        node = pending.pop()
+        if getattr(node, "name", None) == "python:super_check_of":
+            checks.append(node)
+        pending.extend(getattr(node, "args", ()) or ())
+    (check,) = checks
+    assert "python:super_check(" not in repr(done.guard)
+    return done.value, check.args[0], check.args[1].value
+
+
+def test_super_on_an_instance_of_the_class_states_the_one_check(tmp_path) -> None:
+    # The receiver's class is decided here: the check names it
+    # (``python:instance("<A>")``) beside the cell ``A``, and prove decides
+    # it passes (``A``'s order holds ``A``).  The lift never reads the order.
+    tree, context, classes = _parsed(_UNRELATED, "unrelated.py", tmp_path)
     receiver = classes["A"].fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     outcome = zero_argument_super(
         _super_site(tree), _frame(context, classes["A"], receiver)
     )
 
-    made = outcome.completed_value()
+    made, tested, cell = _the_one_check(outcome)
     assert isinstance(made, BuiltinSuperValue)
     assert made.receiver is receiver
+    assert tested.name == "python:instance"
+    assert tested.args[0].value == "python:unrelated.A"
+    assert cell == "python:unrelated.A"
 
 
-def test_super_on_an_instance_of_an_unrelated_class_is_the_type_error() -> None:
+def test_super_on_an_instance_of_an_unrelated_class_is_decided_at_prove(
+    tmp_path,
+) -> None:
     # ``A.m(Other())``: Other's MRO (Other, object) holds no A, and
-    # ``obj.__class__`` is object's own: CPython's TypeError.
-    tree, context, classes = _parsed(_UNRELATED, "unrelated.py")
+    # ``obj.__class__`` is object's own: CPython's TypeError.  That is
+    # decided at prove, the check's negation, off the rows ``Other`` and
+    # ``A`` state; the lift states the same one check, never the TypeError.
+    tree, context, classes = _parsed(_UNRELATED, "unrelated.py", tmp_path)
     receiver = classes["Other"].fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     outcome = zero_argument_super(
         _super_site(tree), _frame(context, classes["A"], receiver)
     )
 
-    assert _raised(outcome) == ["TypeError"]
+    _made, tested, cell = _the_one_check(outcome)
+    assert tested.args[0].value == "python:unrelated.Other"
+    assert cell == "python:unrelated.A"
 
 
 def test_an_undecided_check_is_two_faced_and_owed() -> None:

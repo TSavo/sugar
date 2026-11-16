@@ -613,13 +613,13 @@ def zero_argument_super(site, ctx):
        constructor by binding), it is no instance of the source class
        ``__class__`` holds: ``supercheck`` raises ``TypeError``.  Otherwise
        the iterator may be one (a class whose ``__iter__`` returns ``self``),
-       and the check is ``BuiltinSuperValue.constructed``'s undecided form
-       over a receiver not read here;
+       and the check is ``BuiltinSuperValue.constructed``'s one check term
+       over a receiver not read here (``python:super_receiver_class``), owed;
     4. otherwise ``super(__class__, obj)`` with ``obj`` the frame's first
        formal (``zero_argument_super_receiver``) and ``__class__`` the
        frame's cell, read as the class value the context binds for that
-       class statement: ``BuiltinSuperValue.constructed``, which makes the
-       instance check.
+       class statement: ``BuiltinSuperValue.constructed``, which states the
+       instance check as one term, decided at prove (#7757).
 
     Each decided failure is the call's halt.  A cell or receiver not read
     here refuses by name.
@@ -644,8 +644,8 @@ def zero_argument_super(site, ctx):
     temporal = getattr(ctx, "temporal", None)
     current_class = _class_cell_value(cell, temporal) if decided else None
     if in_generator and current_class is not None:
-        # The ``.0`` iterator is no value here: ``super_check`` over it is
-        # undecided, never the TypeError assumed.
+        # The ``.0`` iterator is no value here: the check over it is owed,
+        # never the TypeError assumed.
         return BuiltinSuperValue.constructed(current_class, None, site)
     receiver = zero_argument_super_receiver(site, temporal)
     if current_class is None or receiver is None:
