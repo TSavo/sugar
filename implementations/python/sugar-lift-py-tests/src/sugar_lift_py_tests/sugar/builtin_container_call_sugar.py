@@ -137,7 +137,27 @@ def _immutable(value, depth=0) -> bool:
     return False
 
 
-def _may_change(value, method, pure, sharer, held=None) -> bool:
+def _frame_global_input_name(value):
+    """The name of the module global ``value`` is the frame's own free input
+    of (``call_site_sugar.bind_global_inputs``: a ``SymbolicValue`` carrying
+    its ``global:<name>`` input coordinate), else None."""
+    from sugar_lift_py_tests.contract_input import (
+        GLOBAL_INPUT,
+        ContractInputCoordinateV1,
+    )
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+    coordinate = getattr(value, "formal_coordinate", None)
+    if (
+        type(value) is SymbolicValue
+        and isinstance(coordinate, ContractInputCoordinateV1)
+        and coordinate.input_kind == GLOBAL_INPUT
+    ):
+        return coordinate.name
+    return None
+
+
+def _may_change(value, method, pure, sharer, held=None, unit=None) -> bool:
     """Whether a call may have changed ``value``, the value it met.
 
     ``method`` names the receiver's method when the value is the receiver
@@ -166,7 +186,19 @@ def _may_change(value, method, pure, sharer, held=None) -> bool:
     ``del o.<attr>`` (``container_mutation.FIELD_DELETE_METHOD``) is
     ``type(o).__delattr__``: a source instance's own value is its floor's
     answer, and what it holds or shares may have changed, since the delete
-    may run code."""
+    may run code.
+
+    A module global read in a function's own contract is its free input
+    (``call_site_sugar.bind_global_inputs``), a value no floor types, yet an
+    object the module's run made (``unit``: the module it stands in).  As an
+    operand (no ``method``) it is decided by that object, as a call's record
+    decides it (``call_site_sugar.global_may_change``): an immutable one is
+    kept, a builtin container a cited pure builtin was handed is kept, any
+    other -- or one the run does not decide -- may have changed.  Never kept
+    because its type is free: ``try: g()  except E: return G[0]`` (or
+    ``g(); return G[0]``) with a same-file ``g`` storing into ``G`` read the
+    entry's contents after the call, which prove grounds to the module's
+    object, so the lie read ``sat`` and the truth ``unsat`` (#7757 H7)."""
     from sugar_lift_py_tests.floor import builtin_container_method as law
     from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.source_call_resolution import builtin_typed_value
@@ -189,9 +221,9 @@ def _may_change(value, method, pure, sharer, held=None) -> bool:
     if store is not None:
         attr, operand = store
         if operand:
-            return _may_change(value, field_store_method(attr), False, True) and (
-                held is None or _may_change(held, "", False, False)
-            )
+            return _may_change(
+                value, field_store_method(attr), False, True, unit=unit
+            ) and (held is None or _may_change(held, "", False, False, unit=unit))
         if isinstance(value, ObjectValue):
             return True
     kind = law.container_kind(value)
@@ -217,7 +249,18 @@ def _may_change(value, method, pure, sharer, held=None) -> bool:
         # ``o.set(3)`` as much as ``o.append(3)`` (#7757).  The container
         # law's method names are read only on a value it decides (below).
         # An operand the source does not type keeps its value, as it always
-        # has.
+        # has -- save the frame's own input of a module global, whose object
+        # the module's run made: that object decides it (``unit``).
+        name = None if method or unit is None else _frame_global_input_name(value)
+        if name is not None:
+            from sugar_lift_py_tests.sugar.call_site_sugar import (
+                _module_final_global,
+            )
+
+            stood = _module_final_global(unit, name)
+            if stood is None or _frame_global_input_name(stood) is not None:
+                return True
+            return _may_change(stood, method, pure, sharer, held)
         return bool(method)
     if method and method not in law.MUTATING_METHODS[kind] and not _in_place(method):
         return False
@@ -336,7 +379,12 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
                     )
             met_value = met[subject]
             if met_value is None or _may_change(
-                met_value, method, pure, sharer, held=value
+                met_value,
+                method,
+                pure,
+                sharer,
+                held=value,
+                unit=getattr(self.site, "unit", None),
             ):
                 return unknown
         return held
