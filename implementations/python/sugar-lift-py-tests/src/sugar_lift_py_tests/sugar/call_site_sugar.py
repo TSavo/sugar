@@ -1550,22 +1550,10 @@ def stated_global_values(definition) -> tuple:
     ``nodes.undecided_module_binding_key``) is never stated, and the run is
     not asked for it."""
     from sugar_lift_py_tests.floor.object_identity import holds_stale, instance_stale
-    from sugar_source_tree.nodes import undecided_module_binding_key
 
     stated = []
     for item in _global_inputs(definition):
-        name = item.coordinate.name
-        keys = global_input_keys(definition.unit, name)
-        if len(keys) != 1:
-            keys = _keys_on_the_arm_the_run_took(definition.unit, name)
-        if len(keys) != 1:
-            continue
-        if keys[0] == undecided_module_binding_key(definition.unit, name):
-            continue
-        read = ModuleFinalValue(definition.unit, keys[0]).read()
-        if read is None or read.owed_items():
-            continue
-        value = read.completed_value()
+        value = _module_final_global(definition.unit, item.coordinate.name)
         if value is None:
             continue
         # A container whose contents the run did not leave current (a call
@@ -1575,6 +1563,123 @@ def stated_global_values(definition) -> tuple:
             continue
         stated.append((item.formal, value.to_term(owner="stated_global_values")))
     return tuple(stated)
+
+
+def _module_final_global(unit, name: str):
+    """The one completed value ``unit``'s module run left for the module
+    global ``name``, read where its one key is read (``ModuleFinalValue``),
+    or None: a final binding that reads through more than one key on the arm
+    the run took (``_keys_on_the_arm_the_run_took``), one the module body
+    does not decide (its undecided key), or a read that owes or holds no one
+    completed value.  What ``stated_global_values`` states, and what
+    ``global_may_change`` asks the type of."""
+    from sugar_source_tree.nodes import undecided_module_binding_key
+
+    keys = global_input_keys(unit, name)
+    if len(keys) != 1:
+        keys = _keys_on_the_arm_the_run_took(unit, name)
+    if len(keys) != 1:
+        return None
+    if keys[0] == undecided_module_binding_key(unit, name):
+        return None
+    read = ModuleFinalValue(unit, keys[0]).read()
+    if read is None or read.owed_items():
+        return None
+    return read.completed_value()
+
+
+def global_may_change(unit, name: str, value) -> bool:
+    """Whether a call handed the module global ``name`` of ``unit``, bound
+    to ``value`` where the call runs (``global_read_at_call``; None where the
+    call reads no one value), may leave the global's object changed: the
+    exposure rule's test for an actual (``builtin_container_call_sugar.
+    _immutable``), asked of the object the global holds.
+
+    In a function's own contract the global is its free input
+    (``bind_global_inputs``, a ``SymbolicValue`` carrying its input
+    coordinate), whose type nothing at the call decides: the object is the
+    one the module's run left (``_module_final_global``), since only a body
+    that declares it ``global`` rebinds it, and such a callee is labelled by
+    its declaration (``lambda_callable._after_labels``).  An object of an
+    immutable type is the same object after any call; any other, or one the
+    run does not decide, may have changed (#7757 H7, step 7)."""
+    from sugar_lift_py_tests.contract_input import (
+        GLOBAL_INPUT,
+        ContractInputCoordinateV1,
+    )
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _immutable
+
+    if value is None:
+        return True
+    coordinate = getattr(value, "formal_coordinate", None)
+    if (
+        type(value) is SymbolicValue
+        and isinstance(coordinate, ContractInputCoordinateV1)
+        and coordinate.input_kind == GLOBAL_INPUT
+    ):
+        value = _module_final_global(unit, name)
+        if value is None:
+            return True
+    return not _immutable(value)
+
+
+def _global_after_call(ctx, name: str, keys):
+    """The module global ``name`` as the last call that may have changed it
+    left it, where that call completed in the caller's frame after the
+    binding the call reads the global through (``keys``) was made, or None
+    where no such call ran after it.
+
+    A function's own contract binds each global it reads to its free input
+    at its entry (``bind_global_inputs``), and nothing rebinds that key when
+    a call changes the global's object in place (a same-file callee that
+    stores into it, ``G[0] = 2``).  So a later call of a function that reads
+    the global carried the entry's input, and prove joined that reader on
+    the contents the caller was handed at its entry: ``bump(); return h()``
+    with ``h`` returning ``G[0]`` read ``1`` and refuted the true
+    ``f() == 2`` (#7757 H7).
+
+    Each same-file call that may change it names the global's formal in its
+    completed record (``CallSiteValue.after_labels``, bound by
+    ``bind_after_call`` on the call's completed face only).  The temporal
+    holds its bindings in the order they were made (``bind_value``: a
+    rebind is the newest), so the newest record that names it, made after
+    the newest binding of its keys, is the call that left the object as
+    this call finds it: ``python:after(<that call's result>,
+    "global:<name>")`` (``source_call_resolution.object_after_call``), the
+    one spelling of an object after a call, decided at prove where that
+    callee's contract states it and free anywhere else -- never contents
+    the object may no longer hold.  It is the object the binding holds, in
+    another state: it keeps that binding's input coordinate, so the alias
+    rule (``object_identity._objects``) still finds it one object with an
+    actual read of the same global."""
+    temporal = getattr(ctx, "temporal", None)
+    if temporal is None or not keys:
+        return None
+    from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.source_call_resolution import object_after_call
+
+    slot = ("global", name)
+    keys = frozenset(keys)
+    record = None
+    for binding in reversed(temporal.bindings):
+        if binding.name in keys:
+            if record is None:
+                return None
+            held = bound_value_read(binding.value)
+            return SymbolicValue(
+                object_after_call(record.result, record.formal_of(slot)),
+                formal_coordinate=getattr(held, "formal_coordinate", None),
+            )
+        value = binding.value
+        if (
+            record is None
+            and isinstance(value, AfterCallRecordValue)
+            and value.formal_of(slot) is not None
+        ):
+            record = value
+    return None
 
 
 def _keys_on_the_arm_the_run_took(unit, name: str) -> tuple:
@@ -1691,6 +1796,12 @@ def global_read_at_call(callee, name: str, ctx, *, module_site, call_site):
 
     unit = callee.unit
     keys = global_input_keys(unit, name, _site_where_called(unit, module_site))
+    # A call that ran after the binding and may have changed the global's
+    # object left it in another state: the reader is handed that state,
+    # never the binding's contents (``_global_after_call``, #7757 H7).
+    after = _global_after_call(ctx, name, keys)
+    if after is not None:
+        return after
     values = []
     for key in keys:
         bound = None if ctx is None else ctx.temporal.value_if_bound(key)

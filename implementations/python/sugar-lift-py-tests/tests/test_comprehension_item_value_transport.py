@@ -86,6 +86,18 @@ def test_swapped_finite_members_preserve_each_object_identity() -> None:
 
 
 def test_filtered_out_member_never_reaches_element_binding() -> None:
+    """``item.keep`` on an instance whose class no term decides is the
+    dispatched read alone (#9092: a recorded field reads as that field only
+    under prove's ``python:plain_read``, and with no class term there is no
+    such face).  So the filter is undecided: the comprehension completes
+    only under the read's completes atom, and no completed arm states a
+    list holding the member whose recorded ``keep`` is false -- the filter
+    never admits a member on a field read it did not decide.  (Before #9092
+    the recorded field answered outright and this pinned the decided
+    ``[second]``: the deleted way.)"""
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
     first = ObjectValue(
         "_NamedIntConstant",
         (ObjectField("keep", FalseBoolLiteralSugar(site="first.keep")),),
@@ -105,10 +117,13 @@ def test_filtered_out_member_never_reaches_element_binding() -> None:
         _context_with_items(source, fresh(ListValue, (first, second)))
     )
 
-    assert outcome.completed_value() is not None
-    assert outcome.completed_value().finite_elements == (second,)
-    assert outcome.completed_value().finite_elements[0] is second
-    assert all(value is not first for value in outcome.completed_value().finite_elements)
+    assert outcome.completed_value() is None, outcome
+    assert "python:attribute_op.completes" in repr(outcome), outcome
+    for arm in outcome.exits:
+        if not isinstance(arm, Completed):
+            continue
+        elements = getattr(peel_walrus_binds(arm.value)[1], "finite_elements", None)
+        assert elements is None or all(value is not first for value in elements), arm
 
 
 def test_a_subscript_of_an_arrived_items_field_keeps_its_halt_undecided() -> None:

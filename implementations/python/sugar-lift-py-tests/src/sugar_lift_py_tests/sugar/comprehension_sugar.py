@@ -433,7 +433,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.sugar.loop_recurrence_sugar import loop_item
 
         owner = "ComprehensionSugar"
-        member = loop_item(generator.binding_coordinate_cid, iterable)
+        member = loop_item(generator.binding_coordinate_cid, iterable, self.site)
         segment = loop_symbolic_item_segment(generator.binding_coordinate_cid)
 
         def item():

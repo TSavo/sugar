@@ -147,7 +147,7 @@ def recurrence_head(target_cid: str, key: str):
     )
 
 
-def loop_item(target_cid: str, iterable):
+def loop_item(target_cid: str, iterable, site=None):
     """The recurrence's one symbolic item of ``iterable`` (None: a
     ``while``, which iterates nothing): ``python:loop.item(<target>,
     <iterable>)``, the value every item of a recurrence over an iterable
@@ -156,7 +156,15 @@ def loop_item(target_cid: str, iterable):
     generator's (``ComprehensionSugar._recurrence``), ``target_cid`` the
     loop's owned target or the generator's binding coordinate.  No equation
     ties it to a member of the iterable: a read of it owes
-    (``holds_recurrence_value``)."""
+    (``holds_recurrence_value``).
+
+    The iterable is named as the loop at ``site`` finds it
+    (``object_identity.identity_term``): a container whose contents are not
+    current -- one that arrived by binding, the recurrence's own reason for
+    running -- by its identity, never by contents it may no longer hold
+    (#7757 H7); a current one by its display."""
+    from sugar_lift_py_tests.floor.object_identity import identity_term
+
     return SymbolicValue(
         ctor(
             LOOP_ITEM,
@@ -165,7 +173,11 @@ def loop_item(target_cid: str, iterable):
                 *(
                     ()
                     if iterable is None
-                    else (iterable.to_term(owner="LoopRecurrenceSugar"),)
+                    else (
+                        identity_term(
+                            iterable, site, "iterable", owner="LoopRecurrenceSugar"
+                        ),
+                    )
                 ),
             ],
             symbol_kind="coordinate",
@@ -1856,7 +1868,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             return ExitSet.completed(()), lambda _projections: (header_ctx, ()), item
         # The item is free: a read of it through the target's key owes the
         # undecided member (``read_of_bound_value``).
-        element = loop_item(self.target_cid, iterable)
+        element = loop_item(self.target_cid, iterable, self.site)
         with item():
             header_ctx = self._enter_header(runtime, ctx, starts, decide=False)
             projected = self._project_iteration_target(

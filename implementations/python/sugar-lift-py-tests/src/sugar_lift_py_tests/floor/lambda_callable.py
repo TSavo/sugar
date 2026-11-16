@@ -666,6 +666,17 @@ def definition_edge_call(
                 keywords,
                 captured,
                 implicit,
+                (
+                    ()
+                    if signature is None
+                    else tuple(
+                        (
+                            item.coordinate.name,
+                            dict(globals_read).get(item.coordinate.name),
+                        )
+                        for item in _global_inputs(signature)
+                    )
+                ),
             )
         ),
         **testimony,
@@ -682,6 +693,7 @@ def _after_labels(
     keywords,
     captured,
     implicit,
+    read_globals=(),
 ):
     """``((slot, formal), ...)``: for each operand of a same-file
     definition's call whose object the call may change, the formal of the
@@ -704,13 +716,23 @@ def _after_labels(
     - ``("global", name)``: each module global the callee declares
       ``global`` (it may rebind it), bound to the contract formal
       ``global:<name>`` its post states the global after the call over
-      (``FunctionDef._cells_where_the_body_ends``)."""
+      (``FunctionDef._cells_where_the_body_ends``); and each other global
+      the callee reads (``read_globals``: ``(name, value)``, its contract's
+      ``global:`` inputs with the value the call carries for each, None
+      where it carries no one value) whose object a call may change
+      (``call_site_sugar.global_may_change``), as for a closure cell that
+      holds such a value: a body that stores into it (``G[0] = 2``) leaves
+      the object changed though it never rebinds the name.  A later call
+      that reads the global is handed it as this call left it
+      (``call_site_sugar._global_after_call``), never the contents the
+      caller held before (#7757 H7)."""
     from sugar_lift_py_tests.contract_input import (
         CELL_INPUT,
         GLOBAL_INPUT,
         input_formal,
     )
     from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _immutable
+    from sugar_lift_py_tests.sugar.call_site_sugar import global_may_change
 
     labels = []
     if signature is symbol_definition and not packed:
@@ -726,8 +748,12 @@ def _after_labels(
     for name, _cid, value in captured:
         if name in rebound or not _immutable(value):
             labels.append((("cell", name), input_formal(CELL_INPUT, name)))
-    for name in _declared_global(symbol_definition):
+    declared = _declared_global(symbol_definition)
+    for name in declared:
         labels.append((("global", name), input_formal(GLOBAL_INPUT, name)))
+    for name, value in read_globals:
+        if name not in declared and global_may_change(signature.unit, name, value):
+            labels.append((("global", name), input_formal(GLOBAL_INPUT, name)))
     return tuple(labels)
 
 
