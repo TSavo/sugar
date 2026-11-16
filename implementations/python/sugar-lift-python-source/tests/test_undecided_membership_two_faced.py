@@ -100,10 +100,12 @@ def test_a_formal_container_discharged_onto_a_call_result_is_two_faced(tmp_path)
         "def f():\n    return g(textwrap.dedent('b'))\n"
     )
     returns, halts = _split(tmp_path, source)
-    # g's return is its own call result (#7619); the membership inside g's
-    # body raises from g's frame under the caller's occurrence.
+    # g's return is its own call result (#7619).  A same-file call is its
+    # coordinate and edge, joined at prove (#7757 step 6): g's body is not
+    # reduced in f's frame, so f keeps the halts of its own two calls, and
+    # the membership's two faces are g's own, stated in g's universe.
     assert len(returns) == 1
-    assert "UndecidedCompare:In" in _owners(halts)
+    assert _owners(halts) == ["UnknownCallee:e.g", "UnknownCallee:textwrap.dedent"]
 
 
 def test_decided_builtin_containers_keep_their_laws(tmp_path):

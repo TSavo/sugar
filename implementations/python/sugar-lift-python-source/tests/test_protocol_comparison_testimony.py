@@ -45,6 +45,23 @@ def _operands(outcome):
     return Operand(make_var("left")), Operand(make_var("right"))
 
 
+def _retains(result, native):
+    """``result`` is ``native``'s halts, each as the floor answered it.
+
+    ``!=``, ``in`` and ``not in`` reach the law through the one composition
+    (``ExitSet.and_then`` over each operand's receiver, then the negated
+    truth), which rebuilds the set: the halts bypass every tail and keep
+    their effect and state objects, and the guard is the same formula.  No
+    exit is invented, negated or retyped."""
+    assert isinstance(result, ExitSet)
+    assert result.halts() == result.exits
+    assert len(result.exits) == len(native.exits)
+    for kept, answered in zip(result.exits, native.exits):
+        assert kept.effect is answered.effect
+        assert kept.state is answered.state
+        assert kept.guard == answered.guard
+
+
 @pytest.mark.parametrize("operator", ["==", "!=", "in", "not in"])
 @pytest.mark.parametrize("exception", ["ValueError", "LookupError"])
 @pytest.mark.parametrize("shape", ["raise-value", "exit-set"])
@@ -70,10 +87,10 @@ def test_native_comparison_exception_testimony_survives_undecided_operands(
         native = ExitSet((Halted(guard, effect, state=state),))
     left, right = _operands(native)
     result = comparison.sugar().apply_reduced(left, right)
-    assert result is native
+    _retains(result, native)
     if shape == "exit-set":
         assert result.exits[0].effect is effect
-        assert result.exits[0].guard is guard
+        assert result.exits[0].guard == guard
         assert result.exits[0].state is state
     else:
         (result_halt,) = result.halts()
@@ -144,7 +161,6 @@ def test_comparison_sugar_preserves_native_raise_without_negating_or_retyping(op
     left = NativeOperand(make_var("left"))
     right = NativeOperand(make_var("right"))
     result = comparison.sugar().apply_reduced(left, right)
-    assert result is native
-    assert result.halts() == result.exits
+    _retains(result, native)
     (halt,) = result.halts()
     assert halt.effect.exception_name == "LookupError"

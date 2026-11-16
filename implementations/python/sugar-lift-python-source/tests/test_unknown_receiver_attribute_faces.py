@@ -42,24 +42,34 @@ def _owners(halts):
     )
 
 
+# A dotted read off an imported head is the import member's own read (step 3:
+# the import table names it): ``ImportMemberValue.read_faces``, the same
+# keyed two faces, completing with the import reference (``ref:<target>``,
+# which the join answers) and halting undetermined, owed under the import's
+# target symbol (#7757, #9034).
+
+
 @pytest.mark.parametrize(
     "module,attribute", [("sys", "maxsize"), ("math", "pi"), ("errno", "ENOENT")]
 )
 def test_an_imported_module_attribute_completes_or_raises(tmp_path, module, attribute):
+    from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
+
     returns, halts = _split(
         tmp_path, f"import {module}\ndef f():\n    return {module}.{attribute}\n"
     )
     (value,) = returns
-    assert getattr(value.term, "name", None) == "python:attribute_result"
-    assert value.term.args[0].value == attribute
-    assert _owners(halts) == ["SymbolicValue.attribute"]
+    assert type(value) is ImportMemberValue
+    assert value.qualified_name == f"{module}.{attribute}"
+    assert _owners(halts) == ["ImportMemberValue.read"]
+    assert all(halt.exception_name is None for halt in halts)
 
 
 def test_two_reads_are_two_raise_faces(tmp_path):
     _returns, halts = _split(
         tmp_path, "import sys\ndef f():\n    return (sys.maxsize, sys.maxsize)\n"
     )
-    assert _owners(halts) == ["SymbolicValue.attribute"] * 2
+    assert _owners(halts) == ["ImportMemberValue.read"] * 2
 
 
 def test_the_raise_reaches_an_except_arm(tmp_path):
@@ -77,13 +87,16 @@ def test_the_raise_reaches_an_except_arm(tmp_path):
 
 
 def test_a_dotted_read_is_two_reads(tmp_path):
+    from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
+
     returns, halts = _split(tmp_path, "import os\ndef f():\n    return os.path.sep\n")
     (value,) = returns
-    assert getattr(value.term, "name", None) == "python:attribute_result"
-    assert value.term.args[0].value == "sep"
-    # ``os.path`` is the one undecided read, and so is ``.sep`` on its
-    # result: one builder, whatever the receiver (#7757 NEW-3).
-    assert _owners(halts) == ["SymbolicValue.attribute"] * 2
+    # The static chain names the export path; the read is the import
+    # member's two faces, never a completion with no halt kept.
+    assert type(value) is ImportMemberValue
+    assert value.qualified_name.endswith(".sep")
+    assert halts
+    assert set(_owners(halts)) == {"ImportMemberValue.read"}
 
 
 def test_a_formal_receiver_reads_by_the_same_law(tmp_path):

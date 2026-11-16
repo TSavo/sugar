@@ -43,19 +43,6 @@ def _unknown_after_call(value):
     )
 
 
-def test_an_attribute_receiver_append_is_seen_by_the_attribute_read(tmp_path):
-    source = (
-        "class C:\n"
-        "    def __init__(self):\n"
-        "        self.items = []\n"
-        "def f():\n"
-        "    c = C()\n"
-        "    c.items.append(1)\n"
-        "    return c.items\n"
-    )
-    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
-
-
 def test_a_subscript_receiver_append_is_seen_through_the_dict(tmp_path):
     source = "def f():\n    d = {'k': []}\n    d['k'].append(1)\n    return d\n"
     assert _only_return(tmp_path, source) == fresh(
@@ -99,44 +86,6 @@ def test_a_list_held_twice_by_the_root_leaves_the_root_unknown(tmp_path):
     assert first == fresh(ListValue, _ints(1))
     # 'j' holds that same object; a one-member update would claim it stayed [].
     assert _unknown_after_call(second)
-
-
-def test_an_object_whose_fields_may_alias_is_unknown_after(tmp_path):
-    source = (
-        "class C:\n"
-        "    def __init__(self):\n"
-        "        self.items = []\n"
-        "        self.view = self.items\n"
-        "def f():\n"
-        "    c = C()\n"
-        "    c.items.append(1)\n"
-        "    return c\n"
-    )
-    assert _unknown_after_call(_only_return(tmp_path, source))
-
-
-def test_repeated_calls_through_one_path_thread_one_object(tmp_path):
-    source = (
-        "class C:\n"
-        "    def __init__(self):\n"
-        "        self.items = []\n"
-        "        self.n = 0\n"
-        "def f():\n"
-        "    c = C()\n"
-        "    a = c.items\n"
-        "    c.items.append(1)\n"
-        "    c.items.append(2)\n"
-        "    x = c.items.pop()\n"
-        "    return (a, c.items, x, c.n)\n"
-    )
-    assert _only_return(tmp_path, source) == TupleValue(
-        (
-            fresh(ListValue, _ints(1)),
-            fresh(ListValue, _ints(1)),
-            TermValue(2),
-            TermValue(0),
-        )
-    )
 
 
 def test_a_nested_list_element_append(tmp_path):
@@ -186,28 +135,27 @@ def test_a_symbolic_loop_leaves_the_root_unknown(tmp_path):
         "        d['k'].append(x)\n"
         "    return d\n"
     )
-    assert _unknown_after_call(_only_return(tmp_path, source))
+    # The loop over a formal is its recurrence: iterating ``xs`` may raise
+    # (``iter``/``next`` on an undecided operand), and so may the body's
+    # read and append on the recurrence's ``d``.  Every halt is kept, and no
+    # return is the pre-loop ``{'k': []}``.
+    returns, halts = _returns(tmp_path, source)
+    assert returns
+    stale = fresh(DictValue, ((StringValue("k"), fresh(ListValue, ())),))
+    assert all(value != stale for value in returns)
+    owners = {getattr(halt, "producer_node_owner", None) for halt in halts}
+    assert {"SymbolicValue.iter", "SymbolicValue.next"} <= owners
 
 
-def test_a_source_method_through_a_path_never_keeps_the_old_root(tmp_path):
-    # ``c.h.add(1)`` runs ``H.add``, which appends to ``c.h.s``; the lift used
-    # to answer ``c.h.s`` as the pre-call ``[]``. The root is now unknown
-    # after the call, so its later reads are refusals, never ``[]``.
-    source = (
-        "class H:\n"
-        "    def __init__(self):\n"
-        "        self.s = []\n"
-        "    def add(self, x):\n"
-        "        self.s.append(x)\n"
-        "class C:\n"
-        "    def __init__(self):\n"
-        "        self.h = H()\n"
-        "def f():\n"
-        "    c = C()\n"
-        "    c.h.add(1)\n"
-        "    return c\n"
-    )
-    assert _unknown_after_call(_only_return(tmp_path, source))
+# The same-file class tests that stood here (``c = C()`` then a mutation
+# through ``c.items``, ``c.h.add(1)``, ``c.d.setdefault``, an initializer
+# that stores, rebinds or hands ``self`` on, an object a list or dict holds)
+# read the class's ``__init__`` and methods at lift.  A class call is its
+# coordinate and edge, joined at prove (#7757 step 6, #8738): no initializer
+# or method body is reduced in the caller, so no field the initializer
+# stored is held at lift and no holder of the instance can read it stale.
+# They are deleted; the honest face is pinned once, below
+# (``test_the_class_call_never_returns_its_initializer_s_stores``).
 
 
 # -- A name bound to a value the source does not type (#7757) ---------------
@@ -553,23 +501,6 @@ def test_an_item_store_through_a_nested_list_is_seen_by_the_inner_alias(tmp_path
     )
 
 
-def test_an_item_store_through_an_attribute_path_is_seen_by_the_alias(tmp_path):
-    source = (
-        "class C:\n"
-        "    def __init__(self):\n"
-        "        self.items = [0]\n"
-        "        self.n = 0\n"
-        "def f():\n"
-        "    c = C()\n"
-        "    a = c.items\n"
-        "    c.items[0] = 7\n"
-        "    return (a, c.items, c.n)\n"
-    )
-    assert _only_return(tmp_path, source) == TupleValue(
-        (fresh(ListValue, _ints(7)), fresh(ListValue, _ints(7)), TermValue(0))
-    )
-
-
 def test_an_item_delete_through_a_path_is_seen_by_the_alias(tmp_path):
     source = (
         "def f():\n"
@@ -823,20 +754,6 @@ def test_a_source_method_named_append_leaves_aliases_at_the_door_post_state():
     assert [read.kind for read in reads] == ["PathAfterCall"] * 2
 
 
-def test_a_source_method_named_append_is_not_the_list_rule(tmp_path):
-    # ``C.append`` is the source's method: the value (an ``ObjectValue``)
-    # takes the ordinary call, and the alias is the object after it, which
-    # the call may have changed -- never a list's cited append.
-    source = _SOURCE_APPEND + (
-        "def f():\n"
-        "    c = C()\n"
-        "    alias = c\n"
-        "    c.append(1)\n"
-        "    return alias\n"
-    )
-    assert _unknown_after_call(_only_return(tmp_path, source))
-
-
 def test_any_method_spelling_takes_the_same_door():
     source = _SOURCE_APPEND + (
         "def f():\n"
@@ -970,11 +887,10 @@ def test_self_handed_to_an_opaque_call_in_init_is_rebound_by_the_one_rule():
     assert after.prior.kind == "ReceiverFieldStoreState"
 
 
-# The object a class call returns is ``self`` as ``__init__`` left it: the
-# value a read of ``self`` after the initializer's last statement gives, in
-# the context its end record left.  It was rebuilt from the initializer's
-# field stores, so after ``g(self)`` the call returned the fields stored
-# before the call -- a wrong answer.
+# What a class call returns is joined at prove: the call is its coordinate
+# and edge (#7757 step 6), ``__init__`` is not reduced in the caller, so a
+# field the initializer stored is never read in the caller as the stored
+# value -- not before ``g(self)`` (the old wrong answer) and not after.
 
 
 _RESET_IN_INIT = (
@@ -985,13 +901,6 @@ _RESET_IN_INIT = (
 )
 
 
-def test_self_exposed_in_init_is_the_object_the_class_call_returns(tmp_path):
-    source = _RESET_IN_INIT + "def f(g):\n    return C(g)\n"
-    returns, _halts = _returns(tmp_path, source)
-    assert returns
-    assert all(_unknown_after_call(value) for value in returns)
-
-
 def test_a_field_of_self_exposed_in_init_is_undecided_not_the_stored_one(tmp_path):
     source = _RESET_IN_INIT + "def f(g):\n    return C(g).x\n"
     returns, _halts = _returns(tmp_path, source)
@@ -999,7 +908,10 @@ def test_a_field_of_self_exposed_in_init_is_undecided_not_the_stored_one(tmp_pat
     assert TermValue(1) not in returns
 
 
-def test_the_class_call_returns_every_store_of_its_initializer(tmp_path):
+def test_the_class_call_never_returns_its_initializer_s_stores(tmp_path):
+    # The class call is its coordinate and edge (#7757 step 6): ``__init__``
+    # is not reduced in ``f``, so a field it stores is never read here as
+    # the stored value.  The call's halt and each field read's are kept.
     source = (
         "class C:\n"
         "    def __init__(self):\n"
@@ -1009,47 +921,15 @@ def test_the_class_call_returns_every_store_of_its_initializer(tmp_path):
         "    c = C()\n"
         "    return (c.x, c.y)\n"
     )
-    assert _only_return(tmp_path, source) == TupleValue(_ints(1, 2))
-
-
-def test_the_class_call_returns_self_after_a_method_call_on_it(tmp_path):
-    # ``self.helper()`` takes the one door, and the method the receiver's
-    # class binds runs on it.  Every effect it has on its ``self`` is a field
-    # store it carries to its caller, so the door's receiver after the call
-    # is the receiver with that store: the instance holds ``z``, and still
-    # ``x``.
-    source = (
-        "class C:\n"
-        "    def __init__(self):\n"
-        "        self.x = 1\n"
-        "        self.helper()\n"
-        "    def helper(self):\n"
-        "        self.z = 3\n"
-        "def f():\n"
-        "    c = C()\n"
-        "    return (c.x, c.z)\n"
-    )
-    assert _only_return(tmp_path, source) == TupleValue(_ints(1, 3))
-
-
-def test_a_method_that_hands_self_on_leaves_the_instance_unknown(tmp_path):
-    # ``helper`` hands its ``self`` to ``g``: what it did to the object is
-    # not its stores alone, so the receiver after ``self.helper(g)`` is
-    # unknown -- never ``x`` and ``z`` read as if nothing else happened.
-    source = (
-        "class C:\n"
-        "    def __init__(self, g):\n"
-        "        self.x = 1\n"
-        "        self.helper(g)\n"
-        "    def helper(self, g):\n"
-        "        self.z = 3\n"
-        "        g(self)\n"
-        "def f(g):\n"
-        "    return C(g)\n"
-    )
-    returns, _halts = _returns(tmp_path, source)
+    returns, halts = _returns(tmp_path, source)
     assert returns
-    assert all(_unknown_after_call(value) for value in returns)
+    for value in returns:
+        assert value != TupleValue(_ints(1, 2))
+        assert TermValue(1) not in getattr(value, "elements", ())
+        assert TermValue(2) not in getattr(value, "elements", ())
+    owners = [getattr(halt, "producer_node_owner", None) for halt in halts]
+    assert "UnknownCallee:e.C" in owners
+    assert owners.count("CallSiteValue.attribute") == 2
 
 
 # -- The leftovers of #8130 (#7757) -----------------------------------------
@@ -1231,22 +1111,6 @@ def test_a_setdefault_through_a_subscript_path_is_seen_by_every_alias(tmp_path):
     )
 
 
-def test_a_setdefault_through_an_attribute_path_changes_the_held_list(tmp_path):
-    # ``L`` is the object at ``c.d['k']``; the ordinary call left it ``[1]``.
-    source = (
-        "class C:\n"
-        "    def __init__(self):\n"
-        "        self.d = {'k': [1]}\n"
-        "def f():\n"
-        "    c = C()\n"
-        "    L = c.d['k']\n"
-        "    c.d.setdefault('k', []).append(2)\n"
-        "    return (L, c.d['k'])\n"
-    )
-    after = fresh(ListValue, _ints(1, 2))
-    assert _only_return(tmp_path, source) == TupleValue((after, after))
-
-
 def test_a_bound_setdefault_pop_through_a_path_changes_every_alias(tmp_path):
     source = (
         "def f():\n"
@@ -1264,178 +1128,3 @@ def test_a_bound_setdefault_pop_through_a_path_changes_every_alias(tmp_path):
             fresh(ListValue, (fresh(DictValue, ((StringValue("x"), after),)),)),
         )
     )
-
-
-def test_a_method_storing_under_a_guard_leaves_the_instance_unknown(tmp_path):
-    # A store under the method's own guard is not carried to its caller, so
-    # the carried stores are not all the method did: unknown, never ``z``
-    # missing or present on every path.
-    source = (
-        "class C:\n"
-        "    def __init__(self, flag):\n"
-        "        self.x = 1\n"
-        "        self.helper(flag)\n"
-        "    def helper(self, flag):\n"
-        "        if flag:\n"
-        "            self.z = 3\n"
-        "def f(flag):\n"
-        "    return C(flag)\n"
-    )
-    returns, _halts = _returns(tmp_path, source)
-    assert returns
-    assert all(_unknown_after_call(value) for value in returns)
-
-
-# ``self = other`` rebinds the name, never the object: the class call returns
-# the receiver ``__init__`` ran on, read by its identity where the
-# initializer ends.
-
-
-def test_rebinding_the_receiver_name_never_returns_the_other_object(tmp_path):
-    source = (
-        "class C:\n"
-        "    def __init__(self, other):\n"
-        "        self.x = 1\n"
-        "        self = other\n"
-        "def f(o):\n"
-        "    return C(o).x\n"
-    )
-    assert _only_return(tmp_path, source) == TermValue(1)
-
-
-def test_another_name_still_holding_the_receiver_is_read_where_it_ends(tmp_path):
-    source = (
-        "class C:\n"
-        "    def __init__(self, other):\n"
-        "        me = self\n"
-        "        self = other\n"
-        "        me.x = 1\n"
-        "def f(o):\n"
-        "    return C(o).x\n"
-    )
-    assert _only_return(tmp_path, source) == TermValue(1)
-
-
-# A store through any name holding the receiver stores into the one object:
-# every name bound to it reads the post-state.
-
-
-def test_a_store_through_an_alias_of_self_is_the_objects_store(tmp_path):
-    source = (
-        "class C:\n"
-        "    def __init__(self):\n"
-        "        s = self\n"
-        "        s.x = 1\n"
-        "def f():\n"
-        "    return C().x\n"
-    )
-    assert _only_return(tmp_path, source) == TermValue(1)
-
-
-def test_every_alias_of_self_reads_the_stores_made_through_another(tmp_path):
-    source = (
-        "class C:\n"
-        "    def __init__(self):\n"
-        "        s = self\n"
-        "        self.x = 1\n"
-        "        s.y = s.x + 1\n"
-        "def f():\n"
-        "    c = C()\n"
-        "    return (c.x, c.y)\n"
-    )
-    assert _only_return(tmp_path, source) == TupleValue(_ints(1, 2))
-
-
-# A field store reaches every holder of the object exactly as the one door's
-# mutation does: a name whose value holds the object inside another value
-# reads the opaque post-state after ``o.x = v``, never the old state.
-
-_PLAIN_OBJECT = "class O:\n    def __init__(self):\n        self.x = 0\n"
-
-
-def test_a_list_holding_an_object_is_not_stale_after_a_field_store(tmp_path):
-    source = _PLAIN_OBJECT + (
-        "def f():\n"
-        "    o = O()\n"
-        "    lst = [o]\n"
-        "    o.x = 1\n"
-        "    return lst\n"
-    )
-    assert _unknown_after_call(_only_return(tmp_path, source))
-
-
-def test_a_dict_holding_an_object_is_not_stale_after_a_field_store(tmp_path):
-    source = _PLAIN_OBJECT + (
-        "def f():\n"
-        "    o = O()\n"
-        "    d = {'k': o}\n"
-        "    o.x = 1\n"
-        "    return d\n"
-    )
-    assert _unknown_after_call(_only_return(tmp_path, source))
-
-
-def test_a_tuple_holding_an_object_is_not_stale_after_a_field_store(tmp_path):
-    source = _PLAIN_OBJECT + (
-        "def f():\n"
-        "    o = O()\n"
-        "    t = (o,)\n"
-        "    o.x = 1\n"
-        "    return t\n"
-    )
-    assert _unknown_after_call(_only_return(tmp_path, source))
-
-
-def test_an_object_whose_field_holds_another_is_not_stale_after_its_store(
-    tmp_path,
-):
-    source = _PLAIN_OBJECT + (
-        "def f():\n"
-        "    o = O()\n"
-        "    p = O()\n"
-        "    p.f = o\n"
-        "    o.x = 1\n"
-        "    return p\n"
-    )
-    assert _unknown_after_call(_only_return(tmp_path, source))
-
-
-def test_a_list_holding_self_is_not_stale_after_a_store_on_self(tmp_path):
-    source = (
-        "class C:\n"
-        "    def __init__(self):\n"
-        "        box = [self]\n"
-        "        self.x = 1\n"
-        "        self.box = box\n"
-        "def f():\n"
-        "    return C().box\n"
-    )
-    assert _unknown_after_call(_only_return(tmp_path, source))
-
-
-def test_the_exact_alias_still_reads_the_store_beside_a_holder(tmp_path):
-    source = _PLAIN_OBJECT + (
-        "def f():\n"
-        "    o = O()\n"
-        "    s = o\n"
-        "    lst = [o]\n"
-        "    o.x = 1\n"
-        "    return s.x\n"
-    )
-    assert _only_return(tmp_path, source) == TermValue(1)
-
-
-def test_a_value_the_object_only_holds_keeps_its_state_after_a_field_store(
-    tmp_path,
-):
-    # A field store is the plain store of one field: what the object holds
-    # is not changed by it (no ordinary call's ``sharer`` rule).
-    source = _PLAIN_OBJECT + (
-        "def f():\n"
-        "    o = O()\n"
-        "    items = [1]\n"
-        "    o.items = items\n"
-        "    o.x = 1\n"
-        "    return items\n"
-    )
-    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))

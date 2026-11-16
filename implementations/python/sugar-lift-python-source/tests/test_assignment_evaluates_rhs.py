@@ -28,7 +28,6 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect, UndeterminedRaiseEffect
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import _Atomic, _Connective, and_
 from sugar_lift_py_tests.outcome import ExitSet, Halted
 
@@ -254,26 +253,47 @@ def test_a_try_catches_the_assignment_division(tmp_path):
     ]
 
 
-def test_a_formal_division_is_the_same_carrier_as_its_expression_statement(tmp_path):
-    """``b = 1 // x`` over a formal awaits caller actuals, exactly like ``1 // x``."""
-    messages = []
+def test_a_formal_division_is_the_same_operation_as_its_expression_statement(
+    tmp_path,
+):
+    """``b = 1 // x`` over a formal is the same operation as ``1 // x``.
+
+    No reduction defers a native operation to a caller any more (#9011,
+    #9014, #9016-#9018): an operation on a formal is the dispatched edge or
+    the undecided two faces, its halt kept at the statement, and the
+    function goes on to ``return 3`` on the completed face.  The assignment
+    and the expression statement leave by the same faces."""
+    shapes = []
     for statement in ("b = 1 // x", "1 // x"):
-        root = tmp_path / str(len(messages))
+        root = tmp_path / str(len(shapes))
         root.mkdir()
-        with pytest.raises(ConstructionPanic) as caught:
-            _exits(root, f"def f(x):\n    {statement}\n    return 3\n")
-        assert "undischarged native operation demand" in str(caught.value)
-        messages.append(str(caught.value).split("blame=")[0])
-    assert messages[0] == messages[1]
+        rows = _rows(_exits(root, f"def f(x):\n    {statement}\n    return 3\n"))
+        halts = [payload for kind, payload, _ in rows if kind == "halt"]
+        returns = [payload for kind, payload, _ in rows if kind == "return"]
+        assert halts
+        assert {repr(value) for value in returns} == {"TermValue(value=3)"}
+        shapes.append(
+            sorted(
+                (
+                    type(halt).__name__,
+                    getattr(halt, "producer_node_owner", None),
+                    getattr(halt, "exception_name", None),
+                )
+                for halt in halts
+            )
+        )
+    assert shapes[0] == shapes[1]
 
 
 def test_a_display_unpack_evaluates_every_member_before_any_target(tmp_path):
+    # The store target is an item of a dict the frame built (a same-file
+    # class call would be its coordinate and edge, #7757 step 6, adding its
+    # own faces before the unpack).
     source = (
         "import textwrap\n"
-        "class O: pass\n"
         "def f():\n"
-        "    o = O()\n"
-        "    o.a, y = textwrap.dedent('p'), textwrap.dedent('q')\n"
+        "    o = {}\n"
+        "    o['a'], y = textwrap.dedent('p'), textwrap.dedent('q')\n"
         "    return y\n"
     )
     atoms, worlds = _worlds(source, tmp_path)

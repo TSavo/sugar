@@ -49,9 +49,12 @@ def test_a_default_none_is_not_equal_to_false(tmp_path):
 
     from test_undetermined_raise_except_matching import _exits
 
+    # Read in the frame that binds ``None``: a same-file call ``h()`` is its
+    # coordinate and edge, joined at prove (#7757 step 6), so a default is
+    # never read through the caller's call of ``h``.
     exits = _exits(
         tmp_path,
-        "def h(legacy=None):\n    if legacy == False:\n        raise ValueError('x')\n"
-        "    return 1\ndef f():\n    return h()\n",
+        "def f():\n    legacy = None\n    if legacy == False:\n"
+        "        raise ValueError('x')\n    return 1\n",
     )
     assert not any(isinstance(face, Halted) for face in exits.exits)

@@ -47,13 +47,16 @@ def test_a_default_none_passes_a_none_admitting_guard(tmp_path):
     from test_undetermined_raise_except_matching import _exits
     from sugar_lift_py_tests.outcome import Halted
 
+    # Read in the frame that binds ``None``: a same-file call ``h()`` is its
+    # coordinate and edge, joined at prove (#7757 step 6), so a default is
+    # never read through the caller's call of ``h``.
     exits = _exits(
         tmp_path,
-        "def h(floatmode=None):\n"
+        "def f():\n"
+        "    floatmode = None\n"
         "    modes = ['fixed', 'unique']\n"
         "    if floatmode not in modes + [None]:\n"
         "        raise ValueError('x')\n"
-        "    return 1\n"
-        "def f():\n    return h()\n",
+        "    return 1\n",
     )
     assert not any(isinstance(face, Halted) for face in exits.exits)
