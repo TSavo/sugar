@@ -11693,10 +11693,18 @@ class ClassDef(Statement):
                         unrostered.append(node.fragment.seal().cid)
             # An assignment of any target shape binds each name under its
             # projection of the statement's evaluation, as the field rows
-            # above read (``target_evaluations``).
+            # above read (``target_evaluations``).  A one-target unpack
+            # (``dt1, dt2 = "a", "b"``, ``a, *b = f()``) is the reduce-time
+            # unpack whatever its right-hand side (``_dynamic_unpack_target``,
+            # #9089: substitution no longer pairs a display's members with
+            # the targets), which keys none of its names by value
+            # (``target_evaluations`` is empty): its sugar binds each name
+            # under its projection of the evaluation, the keys
+            # ``written_keys`` names, as a function or module body reads
+            # them.
             writes = tuple(
                 item.target_evaluations()
-                if isinstance(item, Assign)
+                if isinstance(item, Assign) and item._dynamic_unpack_target() is None
                 else item.written_keys()
             )
             keyed = {name for name, _key in writes}
