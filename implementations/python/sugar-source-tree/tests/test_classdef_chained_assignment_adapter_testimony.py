@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
-from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
+from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.nodes import Assign, ClassDef
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -15,15 +17,15 @@ from sugar_source_tree.tree import SourceFile
 
 
 def _authenticated_re_source() -> tuple[SourceFile, ClassDef]:
-    graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
-    module = graph.modules["re"]
-    assert graph.distribution_version == "cpython-312"
-    assert module.source_seat == "re/__init__.py"
-    assert module.source.splitlines()[145] == (
+    # CPython's ``re/__init__.py`` minted through the one path door
+    # (``source_oracle.path_source``), seated as ``re/__init__.py``.
+    text, _path, source_cid = path_source(re.__file__)
+    assert text.splitlines()[145] == (
         "    IGNORECASE = I = _compiler.SRE_FLAG_IGNORECASE # ignore case"
     )
     source = SourceFile(
-        (module.source, module.source_seat, module.source_cid), construction_context=TreeConstructionContextV1.for_test_without_workspace()
+        (text, "re/__init__.py", source_cid),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
     regex_flag = next(
         node

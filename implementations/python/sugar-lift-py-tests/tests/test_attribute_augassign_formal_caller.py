@@ -539,13 +539,16 @@ def test_enum_attribute_augassign_owner_reads_its_undecided_global_as_its_input(
     a source whose globals the module decides
     (``test_unrelated_source_attribute_augassign_uses_the_same_projection``).
     """
-    from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
+    import enum
+
+    from sugar_lift_python_source.source_oracle import path_source
     from sugar_source_tree.panic import SugarNotWritten
 
-    graph = DependencyArtifactGraph.authenticate_stdlib_module("enum")
-    module = graph.modules["enum"]
+    # CPython's ``enum.py`` minted through the one path door
+    # (``source_oracle.path_source``), seated as ``enum.py``.
+    text, _path, source_cid = path_source(enum.__file__)
     source = SourceFile(
-        (module.source, module.source_seat, module.source_cid),
+        (text, "enum.py", source_cid),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     owner = min(

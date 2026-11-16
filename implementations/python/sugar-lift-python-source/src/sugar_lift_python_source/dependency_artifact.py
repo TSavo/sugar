@@ -11,11 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from email.parser import BytesParser
-import importlib.machinery
 import importlib.metadata
 from pathlib import Path, PurePosixPath
-import sys
-import sysconfig
 from typing import Literal, Mapping
 
 from .canonical import blake3_512_of, cid_of_json
@@ -168,18 +165,9 @@ class _DistributionGraphInputs:
     located: tuple[tuple[AuthenticatedArtifactFileV1, str], ...]
 
 
-@dataclass(frozen=True)
-class _StdlibGraphInputs:
-    located: tuple[tuple[AuthenticatedArtifactFileV1, str], ...]
-    requested_module_name: str
-
-
-_DependencyArtifactGraphInputs = _DistributionGraphInputs | _StdlibGraphInputs
-
-
 @dataclass(frozen=True, init=False)
 class DependencyArtifactGraph:
-    artifact_kind: Literal["distribution", "stdlib"]
+    artifact_kind: Literal["distribution"]
     distribution_name: str
     distribution_version: str
     distribution_artifact_cid: str
@@ -194,7 +182,7 @@ class DependencyArtifactGraph:
 
     @classmethod
     def _construct_from_authenticated_inputs(
-        cls, inputs: _DependencyArtifactGraphInputs
+        cls, inputs: _DistributionGraphInputs
     ) -> "DependencyArtifactGraph":
         """The only allocation path from authenticated artifact testimony."""
         located = inputs.located
@@ -261,46 +249,27 @@ class DependencyArtifactGraph:
             )
             diagnostic_paths[module_name] = diagnostic_path
 
-        if isinstance(inputs, _DistributionGraphInputs):
-            metadata_files = [
-                item
-                for item in files
-                if item.source_seat.endswith(".dist-info/METADATA")
-            ]
-            if len(metadata_files) != 1:
-                raise DependencyArtifactAuthenticationError(
-                    "distribution graph must retain one METADATA preimage"
-                )
-            metadata = BytesParser().parsebytes(metadata_files[0].content)
-            name = metadata.get("Name")
-            version = metadata.get("Version")
-            if not isinstance(name, str) or not name or not version:
-                raise DependencyArtifactAuthenticationError(
-                    "installed distribution lacks name or version metadata"
-                )
-            artifact_kind: Literal["distribution", "stdlib"] = "distribution"
-            distribution_name = name
-            distribution_version = str(version)
-            artifact_preimage_kind = "python-dependency-artifact"
-        elif isinstance(inputs, _StdlibGraphInputs):
-            if inputs.requested_module_name not in modules:
-                raise DependencyArtifactAuthenticationError(
-                    "requested stdlib module is not projected from authenticated source"
-                )
-            artifact_kind = "stdlib"
-            distribution_name = f"{sys.implementation.name}-stdlib"
-            distribution_version = (
-                sys.implementation.cache_tag or sys.version.split()[0]
+        metadata_files = [
+            item for item in files if item.source_seat.endswith(".dist-info/METADATA")
+        ]
+        if len(metadata_files) != 1:
+            raise DependencyArtifactAuthenticationError(
+                "distribution graph must retain one METADATA preimage"
             )
-            artifact_preimage_kind = "python-stdlib-artifact"
-        else:
-            raise DependencyArtifactConstructionError(
-                "dependency artifact graph inputs have an unknown variant"
+        metadata = BytesParser().parsebytes(metadata_files[0].content)
+        name = metadata.get("Name")
+        version = metadata.get("Version")
+        if not isinstance(name, str) or not name or not version:
+            raise DependencyArtifactAuthenticationError(
+                "installed distribution lacks name or version metadata"
             )
+        artifact_kind: Literal["distribution"] = "distribution"
+        distribution_name = name
+        distribution_version = str(version)
 
         artifact_cid = cid_of_json(
             {
-                "kind": artifact_preimage_kind,
+                "kind": "python-dependency-artifact",
                 "schemaVersion": "1",
                 "distributionName": distribution_name,
                 "distributionVersion": distribution_version,
@@ -375,70 +344,6 @@ class DependencyArtifactGraph:
         # memo only lets an unchanged installation answer with one object.
         return _AUTHENTICATE_GRAPH_CACHE.setdefault(
             constructed.distribution_artifact_cid, constructed
-        )
-
-    @classmethod
-    def authenticate_stdlib_module(cls, module_name: str) -> "DependencyArtifactGraph":
-        """Authenticate source reached through the running Python's stdlib root."""
-        if not module_name or not all(
-            part.isidentifier() for part in module_name.split(".")
-        ):
-            raise DependencyArtifactAuthenticationError("invalid stdlib module name")
-        root = Path(sysconfig.get_path("stdlib")).resolve()
-        top_level = module_name.split(".", 1)[0]
-        spec = importlib.machinery.PathFinder.find_spec(top_level, [str(root)])
-        if spec is None or spec.origin is None:
-            raise DependencyArtifactAuthenticationError(
-                "module has no source in the authenticated stdlib root"
-            )
-        return cls.authenticate_stdlib_path(
-            top_level, Path(spec.origin), stdlib_root=root
-        )
-
-    @classmethod
-    def authenticate_stdlib_path(
-        cls, module_name: str, path: Path, *, stdlib_root: Path
-    ) -> "DependencyArtifactGraph":
-        """Content-address one stdlib module/package after root containment."""
-        root = stdlib_root.resolve()
-        source_path = path.resolve()
-        if (
-            not source_path.is_relative_to(root)
-            or any(
-                part in {"site-packages", "dist-packages"} for part in source_path.parts
-            )
-            or source_path.suffix != ".py"
-        ):
-            raise DependencyArtifactAuthenticationError(
-                "module source is outside the authenticated stdlib root"
-            )
-        paths = (
-            sorted(source_path.parent.rglob("*.py"))
-            if source_path.name == "__init__.py"
-            else [source_path]
-        )
-        located: list[tuple[AuthenticatedArtifactFileV1, str]] = []
-        for candidate in paths:
-            relative = PurePosixPath(candidate.relative_to(root).as_posix())
-            try:
-                content, _seat, content_cid = dependency_artifact_file(str(candidate))
-            except (
-                SourceUnavailable,
-                ValueError,
-            ) as exc:
-                raise DependencyArtifactAuthenticationError(
-                    f"cannot authenticate stdlib source {relative}"
-                ) from exc
-            located.append(
-                (
-                    AuthenticatedArtifactFileV1(
-                        relative.as_posix(), content_cid, content
-                    ),
-                    str(candidate),
-                )
-            )
-        return cls._construct_from_authenticated_inputs(
-            _StdlibGraphInputs(tuple(located), module_name)
         )
 
 

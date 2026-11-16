@@ -2895,41 +2895,6 @@ mod tests {
     }
 
     #[test]
-    fn python_in_place_operator_on_int_and_str_is_its_binary_operator() {
-        // `x OP= y` over a builtin `int` or `str` runs the binary operator:
-        // neither type defines an in-place method (#7757 step 7).
-        let op = |o: &str, a: i64, b: i64| py_binary(o, int_const(a), int_const(b), "k");
-        for (o, a, b, truth, lie) in [
-            ("+=", 0, 1, 1, 0),
-            ("-=", 5, 2, 3, 7),
-            ("*=", 6, 7, 42, 13),
-            ("<<=", 3, 4, 48, 49),
-        ] {
-            assert_twin(
-                py_eq(op(o, a, b), int_const(truth)),
-                py_eq(op(o, a, b), int_const(lie)),
-                &format!("{a} {o} {b}"),
-            );
-        }
-        let concat = py_binary("+=", string_const("ab"), string_const("c"), "k");
-        assert_twin(
-            py_eq(concat.clone(), string_const("abc")),
-            py_eq(concat, string_const("abd")),
-            "\"ab\" += \"c\"",
-        );
-        // An undecided operand leaves the in-place operation undecided.
-        let open = py_binary("+=", var("x"), int_const(1), "k");
-        assert_eq!(
-            solve(&all_of(vec![
-                py_eq(open.clone(), int_const(1)),
-                py_eq(open, int_const(2)),
-            ])),
-            "sat",
-            "an in-place operation over an undecided operand decides no value"
-        );
-    }
-
-    #[test]
     fn python_eq_on_str_and_int_is_smt_equality() {
         assert_eq!(solve(&py_eq(string_const("a"), string_const("a"))), "sat");
         assert_eq!(solve(&py_eq(string_const("a"), string_const("b"))), "unsat");

@@ -743,7 +743,7 @@ fn lift_report_auto_mint_dir(project_root: &Path) -> PathBuf {
     project_root
         .join(".sugar")
         .join("runs")
-        .join(format!("lift-report-prove-{}-{nanos}", std::process::id()))
+        .join(format!("lift-report-mint-{}-{nanos}", std::process::id()))
         .join("proofs")
 }
 

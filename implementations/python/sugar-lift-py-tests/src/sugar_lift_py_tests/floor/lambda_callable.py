@@ -190,7 +190,7 @@ class LambdaCallable(FloorValue):
         whose edge carries the callee's join symbol (``_edge_call``).  What
         the callee may do to the caller's objects takes the one exposure rule
         every unanswered call takes.  A generator function's or an ``async
-        def``'s value keeps its frame's own application (``_applied_body``).
+        def``'s value takes the same edge: no body is applied here.
         """
         from sugar_source_tree.panic import SugarNotWritten
 

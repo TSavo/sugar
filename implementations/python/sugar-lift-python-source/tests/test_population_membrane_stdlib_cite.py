@@ -45,7 +45,7 @@ def _stdlib_seat(filename: str, *, stdlib_root: Path) -> bool:
         return False
     if seat.startswith("numpy/") or "/site-packages/numpy/" in seat:
         return False
-    # Relative seats minted by authenticate_stdlib_path (enum.py, re/__init__.py, …)
+    # Relative stdlib seats (enum.py, re/__init__.py, …)
     candidate = (stdlib_root / seat).resolve()
     try:
         candidate.relative_to(stdlib_root)
