@@ -116,6 +116,25 @@ def _halts(outcome, owner):
     ]
 
 
+def _call_halts(outcome, callee):
+    """The halts of the unanswered call of ``callee``: owner
+    ``UnknownCallee:<target>``, the target the call's spelling where no
+    workspace names a join symbol, as here."""
+    found = []
+    for face in _halts_of(outcome):
+        owner = str(getattr(face.effect, "producer_node_owner", ""))
+        prefix, _, target = owner.partition(":")
+        if prefix == "UnknownCallee" and target.rsplit(".", 1)[-1] == callee:
+            found.append(face)
+    return found
+
+
+def _halts_of(outcome):
+    from sugar_lift_py_tests.outcome import Halted
+
+    return [face for face in outcome.exits if isinstance(face, Halted)]
+
+
 def _owners(outcome):
     from sugar_lift_py_tests.outcome import Halted
 
@@ -164,7 +183,7 @@ def _own(post):
 def _call_args(outcome, callee):
     """The argument terms of the one call of ``callee`` the comprehension
     made, read off the completes atom its halt's guard negates."""
-    (halt,) = _halts(outcome, f"UnknownCallee:{callee}")
+    (halt,) = _call_halts(outcome, callee)
     calls = _terms_named(halt.guard, f"call:{callee}")
     assert calls, halt.guard
     assert all(call.args == calls[0].args for call in calls), calls
@@ -261,8 +280,8 @@ def test_a_symbolic_condition_is_reduced_at_lift_rather_than_decided():
     # halt kept, and the element runs on the face it completes on -- over the
     # same member the condition read.
     outcome = _outcome_of("def f(xs):\n    return [g(x) for x in xs if p(x)]\n")
-    (p_halt,) = _halts(outcome, "UnknownCallee:p")
-    (g_halt,) = _halts(outcome, "UnknownCallee:g")
+    (p_halt,) = _call_halts(outcome, "p")
+    (g_halt,) = _call_halts(outcome, "g")
     assert _terms_named(g_halt.guard, "call:p"), g_halt.guard
     assert not _terms_named(p_halt.guard, "call:g"), p_halt.guard
     (member,) = _call_args(outcome, "p")
@@ -274,8 +293,8 @@ def test_symbolic_conditions_run_in_source_order():
     # The second condition runs only where the first completed -- the
     # conjunction Python actually performs, short-circuit and all.
     outcome = _outcome_of("def f(xs):\n    return [x for x in xs if p(x) if q(x)]\n")
-    (p_halt,) = _halts(outcome, "UnknownCallee:p")
-    (q_halt,) = _halts(outcome, "UnknownCallee:q")
+    (p_halt,) = _call_halts(outcome, "p")
+    (q_halt,) = _call_halts(outcome, "q")
     assert _terms_named(q_halt.guard, "call:p"), q_halt.guard
     assert not _terms_named(p_halt.guard, "call:q"), p_halt.guard
 
@@ -428,7 +447,7 @@ def test_the_unpack_precedes_every_condition():
     # completed; the unpack's halt is a raise, a condition's exclusion is not.
     outcome = _outcome_of("def f(xs):\n    return [a for a, b in xs if p(b)]\n")
     (unpack,) = _halts(outcome, _UNPACK)
-    (p_halt,) = _halts(outcome, "UnknownCallee:p")
+    (p_halt,) = _call_halts(outcome, "p")
     assert _terms_named(p_halt.guard, "python:unpack.destructure"), p_halt.guard
     assert not _terms_named(unpack.guard, "call:p"), unpack.guard
     member = _unpacked_member(outcome, 2)
@@ -466,7 +485,7 @@ def test_an_unresolved_element_call_stays_its_call_not_omitted():
     # construction keeps the call -- two-faced, owed -- never drops the
     # element and never invents a value for it.
     outcome = _outcome_of("def f(xs):\n    return [g(x) for x in xs]\n")
-    assert _halts(outcome, "UnknownCallee:g"), _owners(outcome)
+    assert _call_halts(outcome, "g"), _owners(outcome)
     assert outcome.owed_items(), outcome
 
 
@@ -491,8 +510,8 @@ def test_a_raising_filter_propagates_rather_than_deciding_membership():
         outcome = _outcome_of(source)
     except SugarNotWritten:
         return
-    assert _halts(
-        outcome, "UnknownCallee:raise_it"
+    assert _call_halts(
+        outcome, "raise_it"
     ), "an undecided condition keeps its halt rather than choosing a side"
 
 
@@ -539,7 +558,7 @@ def test_a_generator_expression_stays_lazy_rather_than_becoming_a_list():
     assert "py.listcomp" not in names and "array" not in names, names
     outcome = _outcome_of(source)
     assert not _halts(outcome, _UNPACK), _owners(outcome)
-    assert not _halts(outcome, "UnknownCallee:g"), _owners(outcome)
+    assert not _call_halts(outcome, "g"), _owners(outcome)
 
 
 def test_a_dict_comprehension_reads_key_and_value_off_one_member():
@@ -550,7 +569,7 @@ def test_a_dict_comprehension_reads_key_and_value_off_one_member():
     member = _unpacked_member(outcome, 2)
     assert _call_args(outcome, "g") == (_project(member, 0, 2),)
     assert _call_args(outcome, "h") == (_project(member, 1, 2),)
-    (h_halt,) = _halts(outcome, "UnknownCallee:h")
+    (h_halt,) = _call_halts(outcome, "h")
     assert _terms_named(h_halt.guard, "call:g"), h_halt.guard
 
 
@@ -609,7 +628,7 @@ def test_a_name_target_carries_no_unpack():
     for face in outcome.exits:
         assert not _terms_named(face.guard, "python:unpack.destructure"), face
         assert not _terms_named(face.guard, "python:unpack.project"), face
-    assert _halts(outcome, "UnknownCallee:p"), _owners(outcome)
+    assert _call_halts(outcome, "p"), _owners(outcome)
 
 
 # -- a nested comprehension is just another sugar in that position -----------
