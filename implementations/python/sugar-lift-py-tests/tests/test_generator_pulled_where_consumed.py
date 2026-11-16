@@ -58,7 +58,27 @@ def _element_halts(outcome) -> list:
     return found
 
 
-_H = "def h(x):\n    raise ValueError(x)\n\n\n"
+def _described(outcome) -> str:
+    """Every exit of ``outcome``, one line each: a halt's owner and effect,
+    a completion's value type, and what the outcome owes, so a failure names
+    what the pull left by instead of a truncated ``ExitSet`` repr."""
+    lines = []
+    for exit_ in outcome.exits:
+        effect = getattr(exit_, "effect", None)
+        if effect is None:
+            value = getattr(exit_, "value", None)
+            lines.append(f"{type(exit_).__name__}: value={type(value).__name__}")
+        else:
+            owner = getattr(effect, "producer_node_owner", None)
+            lines.append(
+                f"{type(exit_).__name__}: owner={owner!r} "
+                f"effect={type(effect).__name__} {effect!r}"
+            )
+    lines.append(f"owed={outcome.owed_items()!r}")
+    return "\n".join(lines)
+
+
+_H ="def h(x):\n    raise ValueError(x)\n\n\n"
 
 
 def test_a_generator_never_pulled_states_no_member_halt() -> None:
@@ -70,7 +90,7 @@ def test_a_generator_never_pulled_states_no_member_halt() -> None:
         "    return 1\n",
         "f",
     )
-    assert not _element_halts(outcome), outcome
+    assert not _element_halts(outcome), _described(outcome)
 
 
 def test_a_generator_pulled_by_a_for_states_the_member_halt_there() -> None:
@@ -84,7 +104,7 @@ def test_a_generator_pulled_by_a_for_states_the_member_halt_there() -> None:
         "    return 1\n",
         "f",
     )
-    assert _element_halts(outcome), outcome
+    assert _element_halts(outcome), _described(outcome)
 
 
 def test_a_generator_made_in_a_list_call_halts_there() -> None:

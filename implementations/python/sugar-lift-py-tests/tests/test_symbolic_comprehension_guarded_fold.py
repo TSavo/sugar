@@ -390,26 +390,28 @@ def test_list_shaped_target_destructures_like_a_tuple_target():
 
 def test_nested_destructuring_unpacks_a_projection_after_its_outer_unpack():
     # `for a, (b, c) in xs`: the outer unpack runs first, because the member
-    # must unpack before position 1 exists to unpack again.  Each unpack is
-    # its own halt; the inner one runs only where the outer one completed.
+    # must unpack before position 1 exists to unpack again.  Each unpack
+    # raises the one undetermined raise at the target's site, so the two
+    # halts are one destination: one arm whose guard is the disjunction of
+    # the outer unpack failing and, where it completed, the inner one failing
+    # (``ExitSet.normalize`` merges equal halts by disjoining their guards;
+    # neither face is dropped).  The guard names both unpacks: the outer of
+    # the member, the inner of its position 1.
     outcome = _outcome_of("def f(xs):\n    return [g(a, b, c) for a, (b, c) in xs]\n")
-    halts = _halts(outcome, _UNPACK)
-    assert len(halts) == 2, _owners(outcome)
-    outer, inner = sorted(
-        halts,
-        key=lambda halt: len(_terms_named(halt.guard, "python:unpack.destructure")),
-    )
-    (outer_destructure,) = _terms_named(outer.guard, "python:unpack.destructure")
+    (halt,) = _halts(outcome, _UNPACK)
+    destructures = set(_terms_named(halt.guard, "python:unpack.destructure"))
+    (outer_destructure,) = {
+        destructure
+        for destructure in destructures
+        if not _terms_named(destructure.args[0], "python:unpack.project")
+    }
     member, arity = outer_destructure.args
     assert arity == num(2)
     position = _project(member, 1, 2)
     inner_destructure = _ctor(
         "python:unpack.destructure", [position, num(2)], symbol_kind="coordinate"
     )
-    assert set(_terms_named(inner.guard, "python:unpack.destructure")) == {
-        outer_destructure,
-        inner_destructure,
-    }
+    assert destructures == {outer_destructure, inner_destructure}, halt.guard
     assert _call_args(outcome, "g") == (
         _project(member, 0, 2),
         _project(position, 0, 2),
