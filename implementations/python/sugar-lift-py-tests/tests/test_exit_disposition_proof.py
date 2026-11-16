@@ -120,6 +120,11 @@ def test_with_constructs_from_its_head_and_reads_no_contract():
         "RuntimeSelectedContextManager",
         "_require_narrow_cm_ref",
         "contract_refs",
+        # One way (#7757 new 7): a phi head is the reduced manager, never
+        # an ``if`` split into one ``with`` per arm.
+        "_selected_manager_sugar",
+        "selected_manager_calls",
+        "IfSugar",
     ):
         assert gone not in with_body, gone
     assert "prove_exit" not in with_body

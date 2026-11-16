@@ -330,9 +330,25 @@ def _project_manager_receiver(value, ctx, seen=frozenset()):
     A factory may return another call (including its class constructor). Each
     floor projects its own retained completion; only the fixed-point receiver
     reaches enter. ExitSet sequencing keeps every exceptional/guarded face.
+
+    A head that reduced to a value selected by a guard (``with ctx:`` after
+    ``if c: ctx = A() else: ctx = B()``: the phi ``IfExpSugar`` joins, read
+    by the ``if``'s own test) is the manager of each arm under its own
+    polarity, as every operation on a ``GuardedValue`` distributes into its
+    arms: Python entered exactly one of them, so each arm is its own manager
+    face, entered and exited through its own type's protocol, and every face
+    of each (its halts included) is kept beside the other's (``_siblings``).
     """
     from sugar_source_tree.panic import SugarNotWritten
 
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue, _siblings
+
+    if isinstance(value, GuardedValue):
+        return _siblings(
+            value.guard,
+            _project_manager_receiver(value.when_true, ctx, seen),
+            _project_manager_receiver(value.when_false, ctx, seen),
+        )
     if id(value) in seen:
         raise SugarNotWritten(
             blame="WithReducedManagerSugar.manager",
