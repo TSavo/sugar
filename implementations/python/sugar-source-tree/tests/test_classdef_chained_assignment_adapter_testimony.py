@@ -6,6 +6,7 @@ import re
 
 import pytest
 
+from sugar_lift_py_tests.canonicalizer import blake3_512_of
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
@@ -96,15 +97,23 @@ def test_re_regexflag_chained_names_retain_targets_and_one_evaluated_floor(
         for field in fields
     ) == ((146, 4, 146, 14), (146, 17, 146, 18))
 
-    constructed = sugar.desugar().completed_value()
-    values = tuple(
-        field.value
-        for field in constructed.class_fields
-        if field.name in {"IGNORECASE", "I"}
-    )
+    # The class body is a block whose other statements may halt (a halt is
+    # never dropped), so the class completes on a guarded face, never as one
+    # unconditional value: every completed face holds the one evaluation.
+    from sugar_lift_py_tests.outcome import Completed
+
+    outcome = sugar.desugar()
+    completed = [face for face in outcome.normalize().exits if isinstance(face, Completed)]
+    assert completed, outcome
     assert evaluations == 1
-    assert values == (exact_floor, exact_floor)
-    assert values[0] is values[1]
+    for face in completed:
+        values = tuple(
+            field.value
+            for field in face.value.class_fields
+            if field.name in {"IGNORECASE", "I"}
+        )
+        assert values == (exact_floor, exact_floor)
+        assert values[0] is values[1]
 
 
 def test_removing_class_chained_assign_arm_restores_exact_re_failure(
@@ -146,6 +155,9 @@ def test_removing_class_chained_assign_arm_restores_exact_re_failure(
     assert error.blame.line_col_span.start_col == 4
 
 
+_FLAGS = "class Flags:\n    I = holder.IGNORECASE = 7\n"
+
+
 def test_class_chained_assignment_with_a_non_name_target_runs_as_python_does() -> None:
     """``I = holder.IGNORECASE = 7`` is an assignment, a statement the class
     body's block reduces like any other (``ClassDef._require_class_members``
@@ -155,7 +167,8 @@ def test_class_chained_assignment_with_a_non_name_target_runs_as_python_does() -
     from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
     source = SourceFile(
-        ("class Flags:\n    I = holder.IGNORECASE = 7\n", "lying.py", "cid"), construction_context=TreeConstructionContextV1.for_test_without_workspace()
+        (_FLAGS, "lying.py", blake3_512_of(_FLAGS.encode("utf-8"))),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
 

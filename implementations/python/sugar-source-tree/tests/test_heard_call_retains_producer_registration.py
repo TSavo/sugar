@@ -30,9 +30,30 @@ from sugar_source_tree.binding_state import (
     ConstructionTestimonyReporterV1,
     SubstitutionTraceBuilderV1,
 )
-from sugar_source_tree.nodes import Call
+from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.panic import ConstructedValueTestimonyNotWritten
 from sugar_source_tree.reporter import NULL_REPORTER, CollectingReporter
+
+
+def _seated(call, definition):
+    """The call-site sugar that names its definition occurrence.
+
+    Its one producer is a call at its definition's recursion seat
+    (``Call._recursion_seat_call``): a call of a same-file ``def`` anywhere
+    else is that function value's application (``Call._function_value_call``,
+    #8958) and names no definition occurrence, so ``call.sugar()`` no longer
+    hands one over.  The seat's sugar is built here at the call's own
+    occurrence, the coordinate its construction minted, so what the hearing
+    roll is asked is exactly what a seated call presents."""
+    from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+    return CallSiteSugar(
+        target_name=call.func.id,
+        args=(),
+        site=call.fragment,
+        call_occurrence=call._construct_sugar().call_occurrence,
+        expected_definition_ref=definition,
+    )
 
 
 def _computing_and_hearing_rolls(tmp_path):
@@ -64,14 +85,18 @@ def _computing_and_hearing_rolls(tmp_path):
     hearing = ConstructionTestimonyReporterV1(
         collector, SubstitutionTraceBuilderV1(source.unit.source_cid)
     )
-    return source, call, hearing
+    definition = next(
+        node
+        for node in root.walk()
+        if isinstance(node, FunctionDef) and node.name == "helper"
+    )
+    return source, call, hearing, _seated(call, definition)
 
 
 def test_a_heard_call_testifies_through_the_computing_rolls_registration(
     tmp_path,
 ) -> None:
-    _source, call, hearing = _computing_and_hearing_rolls(tmp_path)
-    sugar = call.sugar()
+    _source, call, hearing, sugar = _computing_and_hearing_rolls(tmp_path)
     definition = sugar.expected_definition_ref
     # The hearing roll built neither occurrence.
     assert hearing.materialized_node_for_ref(call.ref) is None
@@ -108,8 +133,7 @@ def test_a_heard_occurrence_is_retained_through_the_one_retention_door(
     """One writer of a registration a roll did not construct: the hearing
     roll's two retentions are writes of ``retain_registered_node_from``, the
     door a call's construction writes its definition through."""
-    _source, call, hearing = _computing_and_hearing_rolls(tmp_path)
-    sugar = call.sugar()
+    _source, call, hearing, sugar = _computing_and_hearing_rolls(tmp_path)
     definition = sugar.expected_definition_ref
     seen = _retentions(monkeypatch)
 
@@ -123,8 +147,7 @@ def test_a_heard_occurrence_is_retained_through_the_one_retention_door(
 def test_a_definition_no_roll_registered_stays_refused_by_name(
     tmp_path, monkeypatch
 ) -> None:
-    source, call, hearing = _computing_and_hearing_rolls(tmp_path)
-    sugar = call.sugar()
+    source, call, hearing, sugar = _computing_and_hearing_rolls(tmp_path)
     # The same definition, born under a reporter that owns no registration.
     unregistered = materialize(
         source.unit, sugar.expected_definition_ref.ref, NULL_REPORTER

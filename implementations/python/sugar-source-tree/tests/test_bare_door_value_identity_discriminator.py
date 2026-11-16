@@ -540,7 +540,13 @@ def test_an_absolute_locus_REFUSES_under_a_workspace_context(tmp_path) -> None:
         "callers, so migrating them WOULD silently drop enrichment -- the "
         "byte-identical trap the campaign refusal was built on. STOP and report."
     )
-    assert any(o == "FunctionDef.bridge_source_symbol" for _, o, _ in refused), (
+    # The bridge-symbol door (``_definition_bridge_source_symbol``) refuses
+    # under the owner its caller names (``FunctionDef.contract_name``); the
+    # door is told by what it observed, not by that owner.
+    assert any(
+        o.startswith("FunctionDef.") and "absolute source locus" in text
+        for _, o, text in refused
+    ), (
         f"refused, but not at the bridge-symbol door: {refused}"
     )
 

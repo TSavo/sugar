@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_python_source.canonical import cid_of_json
+from sugar_lift_py_tests.canonicalizer import blake3_512_of
 from sugar_lift_py_tests.floor import ConstructedClassFieldV1
 from sugar_lift_py_tests.sugar.class_definition_sugar import ClassDefinitionSugar
 from sugar_lift_py_tests.sugar.if_sugar import IfSugar
@@ -18,7 +18,9 @@ from sugar_source_tree.tree import SourceFile
 
 def _class(src: str, name: str = "C") -> ClassDef:
     seat = f"{name}.py"
-    cid = cid_of_json({"source": src, "seat": seat})
+    # The content address of the text itself, as the source oracle mints it
+    # (``path_source``): the lexical import pass refuses any other CID.
+    cid = blake3_512_of(src.encode("utf-8"))
     source = SourceFile((src, seat, cid), construction_context=TreeConstructionContextV1.for_test_without_workspace())
     return next(
         node

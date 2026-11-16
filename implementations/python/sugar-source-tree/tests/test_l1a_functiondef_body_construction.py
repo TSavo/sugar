@@ -65,7 +65,9 @@ def test_method_sugar_is_function_universe_door() -> None:
     method = next(b for b in cls.body if isinstance(b, FunctionDef))
     sugar = method.sugar()
     assert isinstance(sugar, FunctionUniverseSugar)
-    assert sugar.name == "m"
+    # Its universe is named as its contract row is: its name in the file
+    # (``SourceUnit.definition_name``), the class-qualified ``C.m``.
+    assert sugar.name == "C.m"
     assert type(sugar.statements[0]).__name__ == "ReturnSugar"
 
 
@@ -90,9 +92,10 @@ def test_async_functiondef_construct_sugar_delegates_to_functiondef_door() -> No
 
 
 def test_body_statement_door_is_stmt_sugar_only() -> None:
-    """``_sugar_body_statement`` constructs only via the statement's sugar()."""
+    """``_sugar_body_statement`` constructs only through the one body-statement
+    rule (``_body_statement_sugar``), the rule a module body uses too."""
     src = inspect.getsource(FunctionDef._sugar_body_statement)
-    assert "stmt.sugar()" in src
+    assert "_body_statement_sugar(stmt)" in src
     # No kind ladder / isinstance bag on the body statement at this door.
     assert "isinstance" not in src
     assert "match " not in src

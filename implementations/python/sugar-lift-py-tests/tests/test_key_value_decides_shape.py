@@ -86,7 +86,7 @@ def _outcome(tmp_path: Path, source: str, stem: str, name: str = "f"):
     path.write_text(source, encoding="utf-8")
     functions = SourceFile(
         workspace_path_source(str(path), root=str(tmp_path)),
-        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(workspace_root=str(tmp_path)),
     ).functions()
     function = next(node for node in functions if node.name == name)
     return function.sugar().desugar(None)

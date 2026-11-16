@@ -601,9 +601,23 @@ def audit_sourcefile_construction_door(
             if edge.caller in semantic_slice and not set(edge.targets) <= semantic_slice:
                 semantic_slice.update(edge.targets)
                 changed = True
+    def _class_allocation(edge: CallEdge) -> bool:
+        # ``object.__new__(<class>)`` with its one operand a class this graph
+        # resolves (``SourceFile._prepare_uncached``'s ``object.__new__(cls)``)
+        # allocates that class and runs no source: what it constructs is the
+        # operand, which the graph names, so it is no unresolved edge. The
+        # backend door's producer roster reads the same shape (below).
+        return (
+            edge.expression == "object.__new__"
+            and len(edge.argument_producers) == 1
+            and bool(edge.argument_producers[0])
+            and set(edge.argument_producers[0]) <= graph.class_symbols
+        )
+
     relevant_dynamic = tuple(
         edge for edge in graph.calls
         if edge.dynamic
+        and not _class_allocation(edge)
         and any(
             set(producers) & semantic_roots
             for producers in edge.argument_producers
