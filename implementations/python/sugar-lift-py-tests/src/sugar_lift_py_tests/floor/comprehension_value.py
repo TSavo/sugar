@@ -197,6 +197,16 @@ class ComprehensionValue(GuardStableValue):
             PredicateValue(py_truthy(self.term), site, operand_callsites=())
         )
 
+    def equals(self, other, site, ctx):
+        """A list or set decided whole (``display``) compares as that display
+        (``ListValue.equals``: member by member wherever every pair it reads
+        is decided), as its truth, ``+`` and ``*`` are that display's; any
+        other comprehension is the one undecided equality over its own
+        coordinate (``FloorValue.equals``)."""
+        if self.display is not None:
+            return self.display.equals(other, site, ctx)
+        return super().equals(other, site, ctx)
+
     def append_with(self, value, site):
         """Construct the post-state of a list comprehension append.
 
