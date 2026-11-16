@@ -7369,7 +7369,154 @@ def _loop_header_bindings(loop, names, scope, kept=frozenset()) -> dict:
     return headers
 
 
-def _uncarried_item_changes(net, carried, exposed) -> tuple:
+#: The kinds of binding no write key holds: an ``import``'s
+#: (``_module_import_binding``), a nested definition's
+#: (``_local_definition_binding``), an ``except ... as``'s and a ``with ...
+#: as``'s (``_make_effect_ref``, ``_make_observation_ref``).  A loop's latch
+#: never reads one (``live_loop_construction._carried_writes``).
+_UNKEYED_BINDING_KINDS = frozenset(
+    {
+        "AsyncFunctionDef",
+        "ClassDef",
+        "DecoratedDefinitionRef",
+        "EffectRef",
+        "FunctionDef",
+        "ImportBindingRef",
+        "ObservationRef",
+        "TypeAlias",
+    }
+)
+
+
+def _item_latch_reads(body, names) -> dict:
+    """Per name in ``names``: ``(keys, states)``, what the latch of a live
+    loop whose substituted body is ``body`` can hand the next item.  ``keys``
+    are the write keys it reads the name through
+    (``live_loop_construction._carried_writes``, the latch's own answer);
+    ``states`` the backend handles of the binding each mutation or field
+    store of the body binds the name to under one of those keys
+    (``ContainerMutationStatement.written_keys``,
+    ``ReceiverFieldStoreStatement.written_keys``): a state that is not a
+    read of a key, held by a key all the same.  Read where the latch reads:
+    at any depth, never in a nested frame, a nested live loop through its
+    publication alone."""
+    from .live_loop_construction import _carried_writes
+
+    keys = _carried_writes(body, names)
+    states: dict = {name: set() for name in names}
+    stack = list(reversed(body))
+    seen: set = set()
+    while stack:
+        node = stack.pop()
+        if id(node) in seen or not isinstance(node, Node):
+            continue
+        seen.add(id(node))
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)):
+            continue
+        if node.kind == "ContainerMutationStatement":
+            written = {name for name, _key in node.written_keys()}
+            bound = zip(
+                tuple(getattr(node, "names", None) or ()),
+                tuple(getattr(node, "states", None) or ()),
+            )
+        elif node.kind == "ReceiverFieldStoreStatement":
+            written = {name for name, _key in node.written_keys()}
+            bound = node._states().items()
+        else:
+            written, bound = (), ()
+        for name, state in bound:
+            if name in states and name in written:
+                states[name].add(id(_state_handle(state)))
+        if isinstance(node, LoopRecurrenceStatement):
+            continue
+        stack.extend(reversed([child for _f, _i, child in node.children()]))
+        halted_finally = getattr(node, "try_finalbody_halted", None)
+        if isinstance(halted_finally, tuple):
+            stack.extend(reversed(halted_finally))
+    return {
+        name: (frozenset(keys[name]), frozenset(states[name])) for name in names
+    }
+
+
+def _state_handle(state):
+    """The one object a binding state is, through its entry: a node's
+    backend handle (a join's arm is a fresh shell over it), any other state
+    itself."""
+    state = unwrap_binding_state(state)
+    return getattr(state, "ref", state) if isinstance(state, Node) else state
+
+
+def _left_unlatched(state, start, keys, keyed_states) -> bool:
+    """Whether some path through the threading's end state ``state`` of one
+    name ends in a binding the latch does not read: the item hands the next
+    a stale write there.
+
+    ``state`` is what the threading of the item left the name (``net``);
+    ``start`` what it began with (the loop header's binding); ``keys`` and
+    ``keyed_states`` the latch's reads of the name (``_item_latch_reads``).
+    A join (``If._make_ifexp``'s phi over a branch slot, a
+    ``GuardedBinding``) is read arm by arm, and each arm ends in:
+
+    - the start: no write on that path, the latch reads the header;
+    - a read through a key the latch reads, or a state a mutation binds
+      under one: the latch reads it;
+    - a read through any other key (a ``match`` capture's, an assignment no
+      key holds), a call's rebinding (``ReceiverAfterCall`` no write binds,
+      the one exposure rule's state at any depth), an ``import``, a
+      definition, an ``except``/``with`` ``as`` binding, a ``del``: no key
+      the latch reads holds it -- True.
+
+    Any other state is a write's own (an object place an assignment
+    refined, a nested loop's publication)."""
+    start_state = unwrap_binding_state(start)
+    start_handle = _state_handle(start_state)
+    start_key = (
+        getattr(start_state, "evaluation", None)
+        if getattr(start_state, "kind", None) == "EvaluationRef"
+        else None
+    )
+    stack = [state]
+    seen: set = set()
+    while stack:
+        current = unwrap_binding_state(stack.pop())
+        handle = _state_handle(current)
+        if handle is start_handle or id(handle) in seen:
+            continue
+        seen.add(id(handle))
+        if current is UNDECIDED_MODULE_BINDING or isinstance(
+            current, UnboundBinding
+        ):
+            return True
+        if isinstance(current, GuardedBinding):
+            stack.extend((current.when_true, current.when_false))
+            continue
+        if not isinstance(current, Node):
+            continue
+        kind = current.kind
+        if (
+            kind == "IfExp"
+            and getattr(getattr(current, "test", None), "kind", None)
+            == "BranchResultRef"
+        ):
+            stack.extend((current.body, current.orelse))
+            continue
+        if kind == "EvaluationRef":
+            key = getattr(current, "evaluation", None)
+            if key not in keys and key != start_key:
+                return True
+            continue
+        if kind == "ReceiverAfterCall":
+            if id(handle) not in keyed_states:
+                return True
+            continue
+        if kind in _UNKEYED_BINDING_KINDS:
+            return True
+    return False
+
+
+def _uncarried_item_changes(
+    net, carried, exposed, *, start=None, body=()
+) -> tuple:
     """``(uncarried, unkeyed)``: the names one item of a live loop leaves
     changed that the latch does not hand the next item, and among them the
     ones the item bound, each in name order.
@@ -7388,10 +7535,17 @@ def _uncarried_item_changes(net, carried, exposed) -> tuple:
       may rebind (``container_mutation.havoc_after``: a global, a cell, an
       object the caller holds), a ``match`` capture, a nested ``def``, an
       ``import``, a ``del``;
-    - every carried name whose last change in the item is a call's
-      rebinding (``net[name] is exposed[name]``): that binds no write key,
-      so the latch would hand the next item the name's last keyed write,
-      written before the call.
+    - every carried name the item's threading LEFT, on some path, in a
+      binding the latch does not read: its last change there is a call's
+      rebinding (``net[name] is exposed[name]`` at the item's own level, a
+      ``ReceiverAfterCall`` arm of a nested statement's join at any depth:
+      ``if c: token = i; bump()``), or an unkeyed binding after a keyed write
+      (``m = None; import os as m``, ``n = 0; case n:``) -- read off the
+      threading's end state by ``_left_unlatched`` against the latch's own
+      reads (``body``, ``_item_latch_reads``) and the item's start
+      (``start``, the header scope the body was threaded from).  Each binds
+      no write key the latch reads, so the latch would hand the next item the
+      name's last keyed write, written before it.
 
     A later item run in hand would read either as it was not.  A loop with
     such a name does not run its items in hand
@@ -7415,11 +7569,28 @@ def _uncarried_item_changes(net, carried, exposed) -> tuple:
     def rebound_last(name) -> bool:
         return name in exposed and net[name] is exposed[name]
 
+    held = sorted(
+        name
+        for name in net
+        if named(name) and name in carried and not rebound_last(name)
+    )
+    reads = _item_latch_reads(body, held) if held and start is not None else {}
+
+    def unlatched(name) -> bool:
+        if rebound_last(name):
+            return True
+        if name not in reads:
+            return False
+        keys, keyed_states = reads[name]
+        return _left_unlatched(
+            net[name], start.get(name, _MISSING), keys, keyed_states
+        )
+
     uncarried = tuple(
         sorted(
             name
             for name in net
-            if named(name) and (name not in carried or rebound_last(name))
+            if named(name) and (name not in carried or unlatched(name))
         )
     )
     unkeyed = tuple(
@@ -17020,7 +17191,13 @@ class For(Statement):
                         changed[f] = new
                 return _with_item_carry(
                     self,
-                    _uncarried_item_changes(body_net, bound, body_exposed),
+                    _uncarried_item_changes(
+                        body_net,
+                        bound,
+                        body_exposed,
+                        start=body_scope,
+                        body=new_body,
+                    ),
                     changed,
                 )
 
@@ -17401,7 +17578,11 @@ class While(Statement):
             if d:
                 changed[f] = new
         return _with_item_carry(
-            self, _uncarried_item_changes(body_net, bound, body_exposed), changed
+            self,
+            _uncarried_item_changes(
+                body_net, bound, body_exposed, start=body_scope, body=new_body
+            ),
+            changed,
         )
 
     def _ground_truth(self, test):
