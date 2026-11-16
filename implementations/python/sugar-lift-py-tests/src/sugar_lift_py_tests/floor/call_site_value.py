@@ -647,23 +647,18 @@ class CallSiteValue(FloorValue):
         )
 
     def length(self, site):
-        # A callsite length stays the call:len coordinate over this value's term.
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import ExitSet
+        """``len(<call result>)``: no callee body is applied at lift (#7757
+        step 6), so the result's type and its ``__len__`` are undecided:
+        the builtin's one unanswered call (``floor_value.unanswered_length``),
+        two faces, owed, the halt face kept.  Never a completed ``call:len``
+        with no halt."""
+        from .floor_value import unanswered_length
 
-        return ExitSet.completed(
-            CallSiteValue(
-                target_name="len",
-                arg_values=(self,),
-                parameters=(),
-                term=ctor(
-                    call_symbol("len"),
-                    [self.to_term(owner=str(site))],
-                    symbol_kind="builtin",
-                ),
-                body=None,
-                site=site,
-            )
+        return unanswered_length(
+            self,
+            lambda at: self.to_term(owner=str(at)),
+            site,
+            owner="CallSiteValue.length",
         )
 
     def contains(self, item, site):

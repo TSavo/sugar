@@ -127,31 +127,20 @@ class ObjectValue(FloorValue):
         halts undetermined under the complement, owed either way.  No
         ``__len__`` is dispatched here (#7757 S4).  The instance is named by
         ``object_identity.identity_term``; a siteless read is the lifter's
-        own gap and refuses by name."""
-        if site is None:
-            from .floor_value import _siteless_undecided_read
-
-            _siteless_undecided_read("ObjectValue.length", "len(object)", "Call")
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        own gap and refuses by name (``floor_value.unanswered_length``, the
+        one form ``len`` of every undecided operand takes)."""
         from sugar_lift_py_tests.floor.object_identity import identity_term
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
-        from sugar_source_tree.nodes import LanguageCallee
 
-        callsite = CallSiteValue(
-            target_name="len",
-            arg_values=(self,),
-            parameters=(),
-            term=ctor(
-                call_symbol("len"),
-                [identity_term(self, site, "argument0", owner="ObjectValue.length")],
-                symbol_kind="builtin",
+        from .floor_value import unanswered_length
+
+        return unanswered_length(
+            self,
+            lambda at: identity_term(
+                self, at, "argument0", owner="ObjectValue.length"
             ),
-            body=None,
-            site=site,
-            language_callee=LanguageCallee.BUILTIN_LEN,
+            site,
+            owner="ObjectValue.length",
         )
-        return UnknownCalleeCallV1("len").faces(callsite, site)
 
     def contains(self, item, site):
         """``k in o``: membership whose container dispatch (``__contains__``,

@@ -337,8 +337,9 @@ class FloorValue:
 
     def length(self, site):
         # Default: this value does not stand on the length floor -- it cannot
-        # answer len(...). Values that CAN implement length (concrete folds,
-        # symbolic stays the call:len coordinate); absence here is the honest "no".
+        # answer len(...). Values that CAN implement length (concrete folds;
+        # an undecided operand is len's one unanswered call,
+        # ``unanswered_length``); absence here is the honest "no".
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
@@ -1461,6 +1462,49 @@ def _siteless_undecided_read(owner: str, read: str, node: str) -> NoReturn:
         requested="the read's source site, to key its two faces and its debt",
         fix=f"carry the {node} node's fragment to the receiver floor",
     )
+
+
+def unanswered_length(operand, operand_term, site, *, owner: str):
+    """``len(<operand>)`` over an operand whose type is not a decided
+    builtin: the builtin's one unanswered call (#7757).
+
+    ``len(c)`` runs ``type(c).__len__``, which is not CPython's own here
+    (``builtin_dunder_call``): Python raises ``TypeError`` when the type has
+    no ``__len__``, and checks what it returns (``__index__``, else
+    ``TypeError``; ``>= 0``, else ``ValueError``; ``<= sys.maxsize``, else
+    ``OverflowError``).  Nothing here decides any of that, so the call is
+    ``UnknownCalleeCallV1("len")``'s two faces: it completes with
+    ``python:call_result(call:len(<operand>), <occurrence>)`` under
+    ``python:unknown_callee_call.completes`` and halts undetermined under
+    the complement, owed either way.  One form for every undecided operand
+    (a formal, a call's result, a source-class instance); a completed
+    ``call:len`` with no halt face is never stated.
+
+    ``operand_term(site)`` names the operand (its term, or
+    ``object_identity.identity_term`` for an instance).  A siteless read is
+    the lifter's own gap and refuses by name."""
+    if site is None:
+        _siteless_undecided_read(owner, "len(operand)", "Call")
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+    from sugar_source_tree.nodes import LanguageCallee
+
+    callsite = CallSiteValue(
+        target_name="len",
+        arg_values=(operand,),
+        parameters=(),
+        term=ctor(
+            call_symbol("len"),
+            [operand_term(site)],
+            symbol_kind="builtin",
+        ),
+        body=None,
+        site=site,
+        language_callee=LanguageCallee.BUILTIN_LEN,
+    )
+    return UnknownCalleeCallV1("len").faces(callsite, site)
 
 
 def undecided_binary_terms(operator: str, left_term, right_term, key: str):

@@ -220,24 +220,18 @@ class SymbolicValue(FloorValue):
         return self
 
     def length(self, site):
-        # A symbolic length stays the call:len coordinate -- the vendor's stated address.
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import ExitSet
+        """``len(self)``: nothing decides this value's type, a formal's
+        included, so its ``__len__`` (and Python's checks of what it
+        returns) is not CPython's own: the builtin's one unanswered call
+        (``floor_value.unanswered_length``), two faces, owed, the halt face
+        kept (#7757).  Never a completed ``call:len`` with no halt."""
+        from .floor_value import unanswered_length
 
-        return ExitSet.completed(
-            CallSiteValue(
-                target_name="len",
-                arg_values=(self,),
-                parameters=(),
-                term=ctor(
-                    call_symbol("len"),
-                    [self.to_term(owner=str(site))],
-                    symbol_kind="builtin",
-                ),
-                body=None,
-                site=site,
-            )
+        return unanswered_length(
+            self,
+            lambda at: self.to_term(owner=str(at)),
+            site,
+            owner="SymbolicValue.length",
         )
 
     def append_with(self, value, site):

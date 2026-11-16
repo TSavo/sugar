@@ -183,9 +183,13 @@ class BuiltinSemanticCallable(FloorValue):
         return unanswered.faces(callsite, operation.site)
 
     def _len(self, operation):
-        """``len(container)`` over an operand that is not ground, whose floor
-        knows its size by its shape (a list of symbolic members, a
-        comprehension); a ground operand is the cited fold's (``_ground_call``)."""
+        """``len(container)`` over an operand that is not ground: its floor's
+        ``length``.  A floor that knows its size by its shape (a list of
+        symbolic members, a comprehension) answers it; an operand whose type
+        is undecided (a formal, a call's result, an instance) is the
+        builtin's one unanswered call, halt face kept
+        (``floor_value.unanswered_length``).  A ground operand is the cited
+        fold's (``_ground_call``)."""
         if operation.keyword_names or len(operation.arguments) != 1:
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
