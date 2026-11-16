@@ -144,12 +144,15 @@ def test_completed_element_completes_with_its_own_coordinate_exporting_nothing()
     assert owners == ["SymbolicValue.iter", "SymbolicValue.next"], result.halts()
     assert all(_iteration_halt(halted) for halted in result.halts())
     # What it accumulates is its own coordinate, its kind over its
-    # occurrence: neither the element nor the target's binding is stated in
-    # it, and reading it owes (#7757).
+    # occurrence and this evaluation of it (no loop item, no unrolled
+    # iteration around it: the bare site): neither the element nor the
+    # target's binding is stated in it, and reading it owes (#7757).
+    from sugar_lift_py_tests.occurrence import occurrence_term
+
     term = _the_completed_value(result).to_term(owner="test")
     assert term == ctor(
         "py.listcomp",
-        [comprehension.occurrence_term(owner="test")],
+        [comprehension.occurrence_term(owner="test"), occurrence_term(site, ())],
         symbol_kind="coordinate",
     )
     assert "outer_x" not in repr(term)

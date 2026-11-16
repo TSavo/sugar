@@ -228,10 +228,10 @@ class UniverseValue(FloorValue):
 # (``builtin_container_call_sugar._unknown_after``, ``_opaque_pair``,
 # ``NativeOperationExitCarrierV1._unanswered_exits``), and what a comprehension
 # over an iterable whose members are not in hand made, its kind over its
-# occurrence (``ComprehensionSugar._own_coordinate``), with the last write a
-# walrus in it carries out (``ComprehensionSugar._symbolic_writes``).  A
-# contract instantiated at two calls would state one such term for both, so it
-# never states one.
+# occurrence and evaluation (``ComprehensionSugar._own_coordinate``), with the
+# last write a walrus in it carries out (``ComprehensionSugar._symbolic_writes``).
+# A contract instantiated at two calls would state one such term for both, so
+# it never states one as an ``after`` or field value.
 UNDETERMINED_STATES = frozenset(
     {
         "python:receiver_after_call",

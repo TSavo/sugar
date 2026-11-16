@@ -419,24 +419,66 @@ class ComprehensionSugar(ConstructedTermSugar):
         caller's actuals is not an outcome yet, and stays where it is.
 
         The generator's term is the comprehension's own coordinate at this
-        occurrence (``_own_coordinate``), the one term every symbolic
+        evaluation (``_own_coordinate``), the one term every symbolic
         comprehension states.
+
+        The generator object itself is never consumed here: what reaches
+        the proof is that coordinate, which prove does not interpret, so the
+        generator's making owes the undecided member, by the one rule a value
+        nothing decides owes by (``undecided_slot_debt``,
+        ``read_of_bound_value``).  A claim over the object -- ``g() is g()``
+        -- is never decided by the solver choosing it.  That holds for a
+        generator whose members are all in hand (``_finite_map``) as for one
+        whose are not: neither is a list.
         """
+        from sugar_lift_py_tests.floor.branch_result_coordinate import (
+            undecided_slot_debt,
+        )
         from sugar_lift_py_tests.floor.generator_value import GeneratorValue
 
         if not isinstance(pulled, ExitSet):
             return pulled
-        if not pulled.halts() and not pulled.owed_items():
-            return pulled
-        return ExitSet.completed(
-            GeneratorValue(term=self._own_coordinate(), pulled=pulled, site=self.site)
+        made = pulled
+        if pulled.halts() or pulled.owed_items():
+            made = ExitSet.completed(
+                GeneratorValue(
+                    term=self._own_coordinate(), pulled=pulled, site=self.site
+                )
+            )
+        return made.and_then(
+            lambda generator: ExitSet.completed(
+                generator, owed=undecided_slot_debt(self.site)
+            )
         )
+
+    def _evaluation_key(self):
+        """Which evaluation of this comprehension runs now, as a term:
+        ``python:occurrence(<site coordinate CID>, <path>...)``
+        (``occurrence.occurrence_term``), the site and the occurrence path
+        of the reduction running now -- each enclosing unrolled iteration and
+        live item.  The one key every opaque term keyed on a site carries
+        (``occurrence.py``), as a call's result does
+        (``python:call_result``), so two evaluations of one comprehension
+        are never one value: an object is the evaluation that made it, as
+        ``constructionEvaluation`` keys a constructed object (#8592).
+
+        A function's contract is reduced once for every caller (path ``()``):
+        the call it is evaluated in is joined at prove, which keys the
+        comprehension by that call's evaluation where it instantiates the
+        contract (``consistency::at_its_call``)."""
+        from sugar_lift_py_tests.occurrence import occurrence_term
+
+        return occurrence_term(self.site)
 
     def _own_coordinate(self):
         """What a comprehension over an iterable whose members are not in
-        hand states in the proof: its kind over its occurrence,
-        ``<kind>(<occurrence>)`` (``py.listcomp``, ``py.setcomp``,
-        ``py.dictcomp`` or ``py.generatorexp``), and nothing else.
+        hand states in the proof: its kind over its occurrence and this
+        evaluation of it, ``<kind>(<occurrence>, <evaluation key>)``
+        (``py.listcomp``, ``py.setcomp``, ``py.dictcomp`` or
+        ``py.generatorexp``; ``_evaluation_key``), and nothing else.  Two
+        calls of one function, or two items of one loop, make two lists: a
+        term keyed on the occurrence alone named one value for both, and a
+        true ``f(a) is not f(b)`` read ``unsat``.
 
         Prove does not interpret what such a comprehension accumulates (or
         what a generator yields): reading it owes the undecided member
@@ -452,13 +494,13 @@ class ComprehensionSugar(ConstructedTermSugar):
         list, a set, a dict and a generator never share a term, and every
         reader of a comprehension's kind (``ComprehensionValue.length``,
         ``source_call_resolution._builtin_container``) reads it as before.
-        A term keyed on an occurrence alone names no value a contract's
-        inputs determine (``universe_value.UNDETERMINED_STATES``)."""
+        Such a term names no value a contract's inputs determine
+        (``universe_value.UNDETERMINED_STATES``)."""
         from sugar_lift_py_tests.ir import ctor
 
         return ctor(
             self.kind,
-            [self.occurrence_term(owner=str(self.site))],
+            [self.occurrence_term(owner=str(self.site)), self._evaluation_key()],
             symbol_kind="coordinate",
         )
 
@@ -506,12 +548,6 @@ class ComprehensionSugar(ConstructedTermSugar):
     def _finite_map(self, generator, iterable, ctx):
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
         from sugar_lift_py_tests.floor.dict_value import DictValue
-        from sugar_lift_py_tests.ir import (
-            PrimitiveSort,
-            _Lambda,
-            _intern_term,
-            ctor,
-        )
         from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.finite_projection import (
             FiniteProjectionNonSuccessV1,
@@ -563,8 +599,6 @@ class ComprehensionSugar(ConstructedTermSugar):
             plain_completed_value,
         )
 
-        owner = str(self.site)
-
         # A walrus in the element (``[(last := v) for v in xs]``) or a
         # condition binds the enclosing scope on every member that reaches
         # it: each member's conditions, then its element, write their keys,
@@ -587,12 +621,14 @@ class ComprehensionSugar(ConstructedTermSugar):
         # thread through that order: ``carried`` passes from each member to
         # the next at every depth.
         def finish(projected, binds, _carried):
+            from sugar_lift_py_tests.floor.list_value import ListValue
+            from sugar_lift_py_tests.floor.object_identity import made_at
+            from sugar_lift_py_tests.sugar.collection_sugar import _built_set
+
             binds = (
                 () if self.kind == "py.generatorexp" else self._carried_out(binds, ctx)
             )
             if self.key is not None:
-                from sugar_lift_py_tests.floor.object_identity import made_at
-
                 # The dict comprehension makes a new dict here.
                 return ExitSet.completed(
                     carry_walrus_binds(
@@ -600,29 +636,44 @@ class ComprehensionSugar(ConstructedTermSugar):
                         DictValue(tuple(projected), allocation=made_at(self.site)),
                     )
                 )
-            if projected:
-                element_term = projected[0].to_term(owner=owner)
-            else:
-                element_term = ctor("python:loop.latch", [], symbol_kind="coordinate")
-            term = ctor(
-                self.kind,
-                [
-                    iterable.to_term(owner=owner),
-                    _intern_term(
-                        _Lambda(
-                            generator.binding_coordinate_cid,
-                            PrimitiveSort("Value"),
-                            element_term,
+            # Every member is in hand.  The value is still this evaluation's
+            # own coordinate (``_own_coordinate``), so every reader of its
+            # kind reads it as before; no member binder (a lambda) is ever
+            # in a term, since no term table carries one and the mint
+            # failed.  A list or set is decided whole here: what the proof
+            # states for it is its display (``ComprehensionValue.display``),
+            # a set's built by the one set display rule (``_built_set``: an
+            # equal member collapses into the first, an unhashable one
+            # raises ``TypeError``).  A generator is never consumed here: it
+            # states its own coordinate, and its making owes
+            # (``_generator``).
+            own = self._own_coordinate()
+            if self.kind == "py.generatorexp":
+                return ExitSet.completed(
+                    carry_walrus_binds(
+                        binds, ComprehensionValue(own, finite_elements=tuple(projected))
+                    )
+                )
+            if self.kind == "py.setcomp":
+                return _built_set(tuple(projected), self.site).and_then(
+                    lambda display: ExitSet.completed(
+                        carry_walrus_binds(
+                            binds,
+                            ComprehensionValue(
+                                own,
+                                finite_elements=tuple(display.elements),
+                                display=display,
+                            ),
                         )
-                    ),
-                    ctor("python:loop.exhaustion", [], symbol_kind="coordinate"),
-                ],
-                symbol_kind="coordinate",
-            )
+                    )
+                )
+            display = ListValue(tuple(projected), allocation=made_at(self.site))
             return ExitSet.completed(
                 carry_walrus_binds(
                     binds,
-                    ComprehensionValue(term, finite_elements=tuple(projected)),
+                    ComprehensionValue(
+                        own, finite_elements=tuple(projected), display=display
+                    ),
                 )
             )
 
@@ -1262,8 +1313,9 @@ class ComprehensionSugar(ConstructedTermSugar):
         some member wrote it, and its prior binding (``_walrus_prior``, read
         in ``ctx``) when none did: ``python.comprehension.wrote`` and
         ``python:comprehension.last_write``, each the comprehension's
-        occurrence and the name, as the comprehension's own value is its
-        occurrence (``_own_coordinate``).  They ride beneath the
+        occurrence, this evaluation of it (``_evaluation_key``) and the name,
+        as the comprehension's own value is (``_own_coordinate``): two
+        evaluations write two last writes.  They ride beneath the
         comprehension's own read (``_complete``), which owes.
 
         No write is carried (a read after the comprehension is refused by
@@ -1277,6 +1329,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.ir import atomic, ctor, str_const
 
         occurrence = self.occurrence_term(owner=owner)
+        this_evaluation = self._evaluation_key()
         carried = []
         for name in dict.fromkeys(bind.name for bind in writes):
             prior = self._walrus_prior(name, ctx)
@@ -1285,12 +1338,15 @@ class ComprehensionSugar(ConstructedTermSugar):
             last = SymbolicValue(
                 ctor(
                     "python:comprehension.last_write",
-                    [occurrence, str_const(name)],
+                    [occurrence, this_evaluation, str_const(name)],
                     symbol_kind="coordinate",
                 )
             )
             value = GuardedValue(
-                atomic("python.comprehension.wrote", [occurrence, str_const(name)]),
+                atomic(
+                    "python.comprehension.wrote",
+                    [occurrence, this_evaluation, str_const(name)],
+                ),
                 last,
                 prior,
             )

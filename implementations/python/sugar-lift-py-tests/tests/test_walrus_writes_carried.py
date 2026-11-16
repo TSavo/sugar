@@ -491,9 +491,10 @@ def test_two_walruses_of_one_name_over_a_symbolic_iterable_carry_one_write() -> 
     last = written.when_true.to_term(owner="walrus-two-symbolic")
     assert last.name == "python:comprehension.last_write"
     # The name's last write, whichever walrus made it: the comprehension's
-    # occurrence and the name, as its own value is its occurrence.
-    occurrence, name = last.args
+    # occurrence, this evaluation of it and the name, as its own value is.
+    occurrence, evaluation, name = last.args
     assert occurrence.name == "python:source-occurrence"
+    assert evaluation.name == "python:occurrence"
     assert name == str_const("n")
 
 
