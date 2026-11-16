@@ -34,15 +34,23 @@ from sugar_lift_py_tests.witness_harness import (
 # ``str.format`` template.
 _SHAPES = {
     # A source ``__delattr__`` swallows the delete: the constructor
-    # completes.
+    # completes.  It is stored on the class by the module, not defined in
+    # its body: a ``def __delattr__`` in the body keeps the class out of the
+    # constructor frame (``SourceUnit.source_class_admits_source_
+    # constructor_frame``), so ``Box()`` would be the unanswered call and
+    # the delete would never reach ``ObjectValue._dispatched_delattr``.
     "source-delattr-swallows-missing": (
+        "def _swallow(self, name):\n"
+        "    pass\n"
+        "\n"
+        "\n"
         "class Box:\n"
         "    def __init__(self):\n"
         "        self.x = 1\n"
         "        del self.y\n"
         "\n"
-        "    def __delattr__(self, name):\n"
-        "        pass\n"
+        "\n"
+        "Box.__delattr__ = _swallow\n"
         "\n"
         "\n"
         "def test_box():\n"
