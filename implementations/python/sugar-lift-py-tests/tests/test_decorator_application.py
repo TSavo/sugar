@@ -1767,27 +1767,45 @@ def test_a_property_setter_is_the_property_copy() -> None:
         PropertyAccessorValue,
     )
 
+    # The sites are the decorators' own fragments, as the one decorator
+    # application passes them: a ground ``TypeError`` cites the source it
+    # was raised at, which a bare string cannot state.
+    tree = _tree(
+        "class Box:\n"
+        "    @property\n"
+        "    def size(self):\n"
+        "        return 1\n"
+        "\n"
+        "    @size.setter\n"
+        "    def size(self, value):\n"
+        "        pass\n"
+    )
+    property_def, setter_def = [
+        node for node in tree.nodes() if isinstance(node, FunctionDef)
+    ]
+    call_site = property_def.decorators[0].fragment
+    setter_site = setter_def.decorators[0].fragment
     # Functions, whose ``__doc__`` the copy reads without raising.
     getter = LambdaCallable(("self",), None, "getter")
     setter = LambdaCallable(("self", "value"), None, "setter")
     prop = BuiltinDescriptorValue("property", getter)
-    accessor = prop.attribute("setter", "setter-site", None).completed_value()
+    accessor = prop.attribute("setter", setter_site, None).completed_value()
     assert accessor == PropertyAccessorValue(prop, "setter")
     copied = accessor.callable_application_with(
-        CallableApplication((setter,), (), "setter-site"), None
+        CallableApplication((setter,), (), setter_site), None
     ).completed_value()
     assert copied == BuiltinDescriptorValue("property", getter, setter=setter)
-    assert copied.attribute("fset", "fset-site", None).completed_value() is setter
+    assert copied.attribute("fset", setter_site, None).completed_value() is setter
     for kind in ("property", "classmethod"):
         called = BuiltinDescriptorValue(kind, getter).callable_application_with(
-            CallableApplication((), (), "call-site"), None
+            CallableApplication((), (), call_site), None
         )
         assert _halt_names(called) == ["TypeError"]
     # A getter that is no function: its ``__doc__`` read may run code, so
     # the copy is not decided here -- never a completion.
     opaque = BuiltinDescriptorValue("property", TermValue("opaque"))
     unanswered = PropertyAccessorValue(opaque, "setter").callable_application_with(
-        CallableApplication((setter,), (), "setter-site"), None
+        CallableApplication((setter,), (), setter_site), None
     )
     assert unanswered.completed_value() is None
     assert unanswered.halts()

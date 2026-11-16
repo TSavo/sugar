@@ -490,7 +490,7 @@ def test_decided_ordering_completes_or_halts_on_its_floor() -> None:
     assert isinstance(completed.exits[0], Completed)
     assert len(halted.exits) == 1
     assert isinstance(halted.exits[0], Halted)
-    assert halted.exits[0].effect.exception_name is None
+    assert halted.exits[0].effect.exception_name == "TypeError"
     assert halted.exits[
         0
     ].effect.exception_type_coordinate == _builtin_exception_identity("TypeError")
@@ -533,7 +533,7 @@ def test_formal_ordering_rejects_a_lying_exception_identity() -> None:
 
     assert len(projected.exits) == 1
     assert isinstance(projected.exits[0], Halted)
-    assert projected.exits[0].effect.exception_name is None
+    assert projected.exits[0].effect.exception_name == "TypeError"
     assert projected.exits[
         0
     ].effect.exception_type_coordinate == _builtin_exception_identity("TypeError")

@@ -233,21 +233,44 @@ def test_the_guard_is_not_dropped_by_the_stable_category(corpus: Path) -> None:
 
 
 def test_every_halt_of_the_guarded_obligation_carries_its_record(corpus: Path) -> None:
-    """RECORDED: no halt of ``if flag: assert claim`` leaves record-less.
+    """RECORDED: no halt of ``if flag: assert claim``'s body leaves
+    record-less.
 
-    Both truths wait on a caller's actual. With none, ``bool(claim)`` is the
-    unanswered operation's two faces, and the assert takes the truth of the
-    unanswered result on its completed face: that truth's raise face is
-    minted by the assert's continuation while the deferred operation
-    discharges, not by the operation. It leaves from the state the suite's
-    block enrolled, as the operation's own halt does
-    (``NativeOperationExitCarrierV1._halts_leave_enrolled_state``), so the
+    Neither truth waits on a caller (#9018): ``bool(flag)`` and
+    ``bool(claim)`` on a parameter are the one truth rule's two faces
+    (``_unanswered_truth``), each halt with no record of its own, recorded
+    at the head of the statement that tests it (``halts_recorded`` for the
+    ``if`` test, ``halts_at_statement_head`` for the ``assert``), so the
     ``if`` join reads a record on every suite halt.
+
+    The assert's failure is no halt of the body's block: the assert states
+    its test as a fact, and the function's own universe splits each
+    completed arm on it (``halts_where_its_asserts_fail``, #8961), past the
+    block, into the ``AssertionError`` its panic locus states and the arm
+    that goes on.  That split leaves the function, never a statement, so no
+    block reads a record off it; it is checked here by its site and guard.
     """
     from sugar_lift_py_tests.outcome import Halted
+    from sugar_source_tree.nodes import Assert
 
     outcome = _own_proof(_functions(corpus)["guarded_obligation"])
     halts = [exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)]
     assert halts, outcome
-    recordless = [halt for halt in halts if halt.state is None]
+
+    def _raised_at_the_assert(halt) -> bool:
+        raised = getattr(halt.effect, "raised_value", None)
+        return halt.effect.exception_name == "AssertionError" and isinstance(
+            getattr(getattr(raised, "site", None), "node", None), Assert
+        )
+
+    failures = [halt for halt in halts if _raised_at_the_assert(halt)]
+    assert len(failures) == 1, halts
+    (failure,) = failures
+    assert failure.effect.producer_node_owner == "ground_assertion_error", failure
+    assert "py.truthy" in str(failure.guard), failure
+    body_halts = [halt for halt in halts if halt is not failure]
+    # Both truths' halts: ``flag``'s at the ``if`` test, ``claim``'s at the
+    # ``assert``.
+    assert len(body_halts) >= 2, halts
+    recordless = [halt for halt in body_halts if halt.state is None]
     assert not recordless, f"halts with no record: {recordless!r}"
