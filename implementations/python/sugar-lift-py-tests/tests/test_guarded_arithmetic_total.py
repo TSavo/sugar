@@ -8,7 +8,6 @@ from sugar_lift_py_tests.floor import GuardedValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
-from sugar_source_tree.panic import SugarNotWritten
 
 
 @pytest.mark.parametrize(
@@ -72,18 +71,29 @@ def test_guarded_right_operand_preserves_both_dispatch_faces_on_each_branch() ->
     assert "right_false" in rendered
 
 
-def test_guarded_unary_minus_preserves_an_undecided_arm_as_a_named_refusal() -> None:
+def test_guarded_unary_minus_keeps_each_undecided_arm_two_faced() -> None:
+    """A free symbol is an operand whose type is undecided, formal or not:
+    each arm is the one undecided unary's two faces, its halt the
+    undetermined raise owned by the operand's floor (#7757 NEW-8)."""
     guard = atomic("choose", [])
     value = GuardedValue(
         guard,
         SymbolicValue(make_var("left")),
         SymbolicValue(make_var("right")),
     )
-    with pytest.raises(SugarNotWritten) as raised:
-        value.unary_minus("t.py:1")
+    outcome = value.unary_minus("t.py:1")
 
-    assert raised.value.owner == "unary_operation_exception_floor"
-    assert raised.value.observed == "SymbolicValue -"
+    assert isinstance(outcome, ExitSet)
+    halted = tuple(face for face in outcome.exits if isinstance(face, Halted))
+    completed = tuple(face for face in outcome.exits if isinstance(face, Completed))
+    assert halted
+    assert completed
+    assert all(
+        type(face.effect) is UndeterminedRaiseEffect
+        and face.effect.producer_node_owner == "SymbolicValue.unary_minus"
+        for face in halted
+    )
+    assert all("python:unary_result" in repr(face.value) for face in completed)
 
 
 def test_guarded_bitwise_or_distributes_exact_set_union_to_both_faces() -> None:

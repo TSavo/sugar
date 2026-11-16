@@ -546,21 +546,6 @@ class CallSiteValue(FloorValue):
             )
         return _unanswered_truth(self, site, owner="CallSiteValue.truth")
 
-    def bitwise_invert(self, site):
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-
-        return SymbolicValue(self.result_term()).bitwise_invert(site)
-
-    def unary_minus(self, site):
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-
-        return SymbolicValue(self.result_term()).unary_minus(site)
-
-    def unary_plus(self, site):
-        from sugar_lift_py_tests.effect import runtime_unary_plus
-
-        return runtime_unary_plus(self, site)
-
     def python_isinstance(self, type_name: str, type_term, site):
         """``type(x)`` always returns a type object.
 

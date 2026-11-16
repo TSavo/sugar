@@ -256,15 +256,6 @@ class SymbolicValue(FloorValue):
             )
         )
 
-    def unary_minus(self, site):
-        # A formal operand: ``-p`` is the undecided two faces (#7757 NEW-1),
-        # owed, its halt kept -- no single dunder prove states decides it for
-        # a class nothing here decided.  A free/open symbol still cannot
-        # invent success vs TypeError: the undecided refusal on the base law.
-        if self.formal_coordinate is not None:
-            return self.undecided_unary("-", site, owner="SymbolicValue.unary_minus")
-        return super().unary_minus(site)
-
     def multiply(self, other, site, ctx):
         # Symbolic numeric multiplication keeps the native coordinate. A symbolic
         # value used as a sequence repetition count has not proved Python's
@@ -353,24 +344,6 @@ class SymbolicValue(FloorValue):
 
     def matrix_multiply(self, other, site, ctx):
         return self._runtime_bitwise_dispatch(other, site, ctx, "@")
-
-    def unary_plus(self, site):
-        # A formal operand: ``+p`` is the undecided two faces (#7757 NEW-1),
-        # owed, its halt kept -- no single dunder prove states decides it for
-        # a class nothing here decided.  A free/open symbol still cannot
-        # invent success vs TypeError: the undecided refusal on the base law.
-        if self.formal_coordinate is not None:
-            return self.undecided_unary("+", site, owner="SymbolicValue.unary_plus")
-        return super().unary_plus(site)
-
-    def bitwise_invert(self, site):
-        # A formal operand: ``~p`` is the undecided two faces (#7757 NEW-1),
-        # owed, its halt kept -- no single dunder prove states decides it for
-        # a class nothing here decided.  A free/open symbol still cannot
-        # invent success vs TypeError: the undecided refusal on the base law.
-        if self.formal_coordinate is not None:
-            return self.undecided_unary("~", site, owner="SymbolicValue.bitwise_invert")
-        return super().bitwise_invert(site)
 
     def subscript(self, index, site):
         # Nothing here decides a symbolic receiver's type or its

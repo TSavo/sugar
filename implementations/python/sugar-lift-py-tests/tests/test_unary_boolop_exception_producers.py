@@ -31,7 +31,6 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.context import ReduceContext
-from sugar_source_tree.panic import SugarNotWritten
 
 from sugar_lift_py_tests.repo_root import resolve_repo_root
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -102,16 +101,34 @@ def test_verified_pandas_303_reproducers_are_content_pinned() -> None:
         ("unary_plus", "+"),
     ),
 )
-def test_undecided_unary_operand_is_named_refusal(method: str, operator: str) -> None:
-    """Success versus TypeError is undecidable without the operand's runtime type."""
-    with pytest.raises(SugarNotWritten) as caught:
-        getattr(SymbolicValue(make_var("ser")), method)(_Site())
+def test_undecided_unary_operand_is_the_two_faces(method: str, operator: str) -> None:
+    """Success versus TypeError is undecidable without the operand's runtime
+    type, formal or not: the one undecided unary's two faces (#7757 NEW-8)."""
+    outcome = getattr(SymbolicValue(make_var("ser")), method)(_FragmentSite())
 
-    refusal = caught.value
-    assert refusal.owner == "unary_operation_exception_floor"
-    assert refusal.observed == f"SymbolicValue {operator}"
-    assert "authenticated exceptional exit" in refusal.requested
-    assert "TypeError" not in str(refusal)
+    _assert_two_faced_unary(outcome, method, operator)
+
+
+def _assert_two_faced_unary(outcome, method: str, operator: str) -> None:
+    """``-x`` / ``+x`` / ``~x`` over an operand whose type is undecided: the
+    one undecided unary (``FloorValue.undecided_unary``).  It completes only
+    under ``python:unary_op.completes`` with the per-evaluation
+    ``python:unary_result``; the complement halts with an
+    UndeterminedRaiseEffect naming no exception type."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    assert isinstance(outcome, ExitSet)
+    halted = [edge for edge in outcome.exits if isinstance(edge, Halted)]
+    assert len(halted) == 1
+    assert type(halted[0].effect) is UndeterminedRaiseEffect
+    assert halted[0].effect.producer_node_owner == f"SymbolicValue.{method}"
+    assert "TypeError" not in repr(halted[0].effect)
+    completed = [edge for edge in outcome.exits if isinstance(edge, Completed)]
+    assert len(completed) == 1
+    assert "python:unary_op.completes" in repr(completed[0].guard)
+    assert completed[0].value.term.name == "python:unary_result"
+    assert completed[0].value.term.args[0].value == operator
 
 
 def test_unary_invert_concrete_integer_truthful_twin_folds() -> None:
@@ -470,7 +487,7 @@ def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
 
 
 def test_pandas_unary_sites_stay_source_undecided() -> None:
-    """Truthful pandas unary raises at runtime; producer refuses without inventing.
+    """Truthful pandas unary raises at runtime; producer invents neither face.
 
     Sites under authenticated pandas 3.0.3:
     - ``tests/extension/base/ops.py`` ``~ser`` / ``~data`` (TypeError)
@@ -478,10 +495,10 @@ def test_pandas_unary_sites_stay_source_undecided() -> None:
     - ``tests/generic/test_generic.py`` ``not obj1`` (ValueError)
     - ``tests/scalar/test_na_scalar.py`` ``not NA`` (TypeError)
     Source does not state the operand runtime type at the UnaryOp, so the
-    producer cannot mint the exception identity.  The arithmetic operators
-    stay the named refusal; ``not obj1`` and ``not NA`` are the one truth
-    rule's two faces, the raise standing only as the UndeterminedRaiseEffect
-    face.
+    producer cannot mint the exception identity.  The arithmetic operators are
+    the one undecided unary (#7757 NEW-8); ``not obj1`` and ``not NA`` are the
+    one truth rule's two faces; each raise stands only as the
+    UndeterminedRaiseEffect face.
     """
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -533,19 +550,7 @@ def test_pandas_unary_sites_stay_source_undecided() -> None:
                 matches[0].sugar().desugar(None), two_faced[(rel, line)]
             )
             continue
-        with pytest.raises(SugarNotWritten) as raised:
-            matches[0].sugar().desugar(None)
-        refusal = raised.value
-        assert refusal.owner == "unary_operation_exception_floor", (
-            rel,
-            line,
-            refusal.owner,
-        )
-        assert refusal.observed == f"SymbolicValue {operator}", (
-            rel,
-            line,
-            refusal.observed,
-        )
-        assert "authenticated exceptional exit" in refusal.requested
-        assert "TypeError" not in str(refusal)
-        assert "ValueError" not in str(refusal)
+        method = {"~": "bitwise_invert", "-": "unary_minus", "+": "unary_plus"}[
+            operator
+        ]
+        _assert_two_faced_unary(matches[0].sugar().desugar(None), method, operator)

@@ -488,10 +488,9 @@ class FloorValue:
         under ``python:unary_op.completes``, the complement halts with an
         ``UndeterminedRaiseEffect`` (producer ``owner``), and both arms owe
         the ``undecided`` member at the operation's site.  No ``TypeError``
-        is guessed and no result is folded.  A formal operand takes it
-        (``SymbolicValue.unary_minus``, #7757 NEW-1); an operand that is no
-        formal and whose type is undecided still refuses by name
-        (:meth:`_undecided_unary_law`).
+        is guessed and no result is folded.  Every operand whose type is
+        undecided takes it, formal or not (:meth:`_unary_operand_undecided`,
+        #7757 NEW-8).
         """
         from sugar_lift_py_tests.ir import str_const
 
@@ -881,46 +880,23 @@ class FloorValue:
         )
         construction_panic(info)
 
-    def _undecided_unary_law(self, site, operator: str):
-        """The ONE law for a unary operation with an undecided operand type.
-
-        ``-x``, ``+x``, and ``~x`` select ``__neg__`` / ``__pos__`` / ``__invert__``
-        (or raise TypeError) from the operand's runtime type.  When that type is
-        undecided, inventing a success coordinate (``py.neg``, identity, ``py.invert``)
-        erases the exceptional face, and inventing TypeError invents an exception
-        identity.  Both stay refused until source-visible type testimony decides.
-        """
-        denotes = getattr(self, "denotes_value", None)
-        decided = getattr(self, "runtime_type_is_decided", None)
-        if not callable(denotes) or not callable(decided):
-            return None
-        if not denotes() or decided():
-            return None
-
-        from sugar_source_tree.panic import SugarNotWritten
-
-        raise SugarNotWritten(
-            blame=site,
-            owner="unary_operation_exception_floor",
-            observed=f"{type(self).__name__} {operator}",
-            requested=(
-                "source-visible native unary-operator testimony selecting "
-                "completion or an authenticated exceptional exit"
-            ),
-            fix=(
-                "preserve the undecided third value at the UnaryOp producer; "
-                "resolve the operand's runtime type and its unary operator body "
-                "from source, or retain this named refusal without inventing an "
-                "exception identity"
-            ),
-        )
+    def _unary_operand_undecided(self) -> bool:
+        """``-x``, ``+x`` and ``~x`` select ``__neg__`` / ``__pos__`` /
+        ``__invert__`` (or raise) from the operand's runtime type.  A value
+        whose type nothing here decided -- a formal, a free symbol, a call's
+        result (``+f()`` included), an import member -- takes the one
+        undecided unary (:meth:`undecided_unary`): both faces, keyed per
+        evaluation, owed.  No success is folded and no ``TypeError`` is
+        guessed (#7757 NEW-8)."""
+        return self.denotes_value() and not self.runtime_type_is_decided()
 
     def unary_minus(self, site):
-        # Default: no arithmetic negation floor. TermValue folds; an undecided
-        # operand type refuses (success versus TypeError is not source-decidable).
-        refused = self._undecided_unary_law(site, "-")
-        if refused is not None:
-            return refused
+        # Default: no arithmetic negation floor. TermValue folds; an operand
+        # whose type is undecided is the one undecided unary's two faces.
+        if self._unary_operand_undecided():
+            return self.undecided_unary(
+                "-", site, owner=f"{type(self).__name__}.unary_minus"
+            )
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
@@ -937,10 +913,12 @@ class FloorValue:
         construction_panic(info)
 
     def unary_plus(self, site):
-        # Default: no unary-plus floor. TermValue folds; undecided types refuse.
-        refused = self._undecided_unary_law(site, "+")
-        if refused is not None:
-            return refused
+        # Default: no unary-plus floor. TermValue folds; an operand whose type
+        # is undecided is the one undecided unary's two faces.
+        if self._unary_operand_undecided():
+            return self.undecided_unary(
+                "+", site, owner=f"{type(self).__name__}.unary_plus"
+            )
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
@@ -958,11 +936,12 @@ class FloorValue:
 
     def bitwise_invert(self, site):
         # Default: no bitwise-not floor. TermValue decides concrete operands;
-        # an untyped symbol refuses because success versus TypeError is not
-        # source-decidable.
-        refused = self._undecided_unary_law(site, "~")
-        if refused is not None:
-            return refused
+        # an operand whose type is undecided is the one undecided unary's two
+        # faces.
+        if self._unary_operand_undecided():
+            return self.undecided_unary(
+                "~", site, owner=f"{type(self).__name__}.bitwise_invert"
+            )
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 

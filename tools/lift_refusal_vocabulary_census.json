@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 2137,
+  "lift_output_backlog": 2122,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -1395,36 +1395,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:014ed6ca2eb38b70:1",
-      "line": 1011,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "if refused is not None:",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:014ed6ca2eb38b70:2",
-      "line": 1031,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "if refused is not None:",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:014ed6ca2eb38b70:3",
-      "line": 1053,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "if refused is not None:",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:097a6f3b9574f919:1",
       "line": 782,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
@@ -1432,16 +1402,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "\"\"\"Refuse membership when container dispatch is not source-decided.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:0c4a488cb49b6fb9:1",
-      "line": 1030,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "refused = self._undecided_unary_law(site, \"+\")",
       "wire_marker": "internal-only"
     },
     {
@@ -1462,16 +1422,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "Named refusal, not construction panic and not ``Complete(py.in)``.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:223fedce4813d3cd:1",
-      "line": 1029,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# Default: no unary-plus floor. TermValue folds; undecided types refuse.",
       "wire_marker": "internal-only"
     },
     {
@@ -1505,16 +1455,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:79e1af0c73cca3c6:1",
-      "line": 1002,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"from source, or retain this named refusal without inventing an \"",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:8400f9d7c8e3699a:1",
       "line": 1195,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
@@ -1525,46 +1465,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:8b57d4a8c516d4cb:1",
-      "line": 1012,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return refused",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:8b57d4a8c516d4cb:2",
-      "line": 1032,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return refused",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:8b57d4a8c516d4cb:3",
-      "line": 1054,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return refused",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:9085c0f961c575f9:1",
-      "line": 1009,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# operand type refuses (success versus TypeError is not source-decidable).",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:9ca6e3b40ba1c89b:1",
       "line": 1204,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
@@ -1572,16 +1472,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "left._refuse_ordering_meaning(",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:9f8fb782071e5eff:1",
-      "line": 1010,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "refused = self._undecided_unary_law(site, \"-\")",
       "wire_marker": "internal-only"
     },
     {
@@ -1615,26 +1505,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:bad65eb6fc982e50:1",
-      "line": 980,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "identity. Both stay refused until source-visible type testimony decides.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:bd6f605a6726dc83:1",
-      "line": 1050,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# an untyped symbol refuses because success versus TypeError is not",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:be2d66f5d5448455:1",
       "line": 1128,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
@@ -1642,16 +1512,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "source-decided): named third-value refusal (``SugarNotWritten``).",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:d23f6b298ecf0095:1",
-      "line": 1052,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "refused = self._undecided_unary_law(site, \"~\")",
       "wire_marker": "internal-only"
     },
     {
@@ -1972,16 +1832,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "if refused is not None:",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/symbolic_value.py:7088ff30703d0b15:1",
-      "line": 293,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/symbolic_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# TypeError \u2014 that remains the undecided refusal on the base law.",
       "wire_marker": "internal-only"
     },
     {
@@ -22339,10 +22189,10 @@
   "speaker_counts": {
     "emitter-provenance-guard": 3,
     "instrument-prose": 8,
-    "lift-output-backlog": 2137,
+    "lift-output-backlog": 2122,
     "provenance-oracle-guard": 57,
     "vendor-language-identifier": 2,
     "verifier-verdict-quote": 32
   },
-  "total_occurrences": 2239
+  "total_occurrences": 2224
 }

@@ -245,6 +245,9 @@ def test_a_formals_unary_operator_is_two_faced_and_owes_it(
     assert halt.effect.occurrence == key
     assert faces.completed_value() is None
     assert "TypeError" not in repr(faces)
+    # One way, formal or not (#7757 NEW-8): a free symbol's unary is the
+    # same two faces.
+    assert faces == getattr(SymbolicValue(make_var("p")), method)(_Site())
 
 
 def test_two_evaluations_of_one_formal_operation_are_two_unknowns() -> None:

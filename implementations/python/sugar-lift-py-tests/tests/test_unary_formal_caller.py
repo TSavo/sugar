@@ -7,7 +7,7 @@ Law (#7757 NEW-1):
     under the complement, owed either way; no carrier waits on a caller
   - production caller (positional / keyword / default) → the call is its
     coordinate and edge, joined at prove
-  - open (non-formal) SymbolicValue still refuses inventing success vs TypeError
+  - open (non-formal) SymbolicValue: the same two faces (#7757 NEW-8)
   - ground production folds
   - ``not x`` is the truth rule's two faces, then negation, never ``-x``
 """
@@ -27,7 +27,6 @@ from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef, UnaryOp
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -318,22 +317,27 @@ def test_a_formal_unary_completes_only_under_its_undecided_atom() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Open symbol still refuses inventing success
+# An open symbol takes the same two faces as a formal (#7757 NEW-8)
 # ---------------------------------------------------------------------------
 
 
-def test_open_symbolic_unary_still_refuses() -> None:
-    """Non-formal SymbolicValue must not invent py.neg / identity completion."""
+def test_open_symbolic_unary_is_the_undecided_two_faces() -> None:
+    """A non-formal SymbolicValue's type is undecided as a formal's is: the
+    one undecided unary, owed, its halt kept -- never ``py.neg``, identity,
+    or a guessed ``TypeError``."""
     site = _site_from()
     open_sym = SymbolicValue(make_var("xs"))
-    with pytest.raises(SugarNotWritten, match="unary_operation_exception_floor"):
-        UnaryOpSugar("USub", _FloorSugar(open_sym), site).desugar(None)
+    outcome = UnaryOpSugar("USub", _FloorSugar(open_sym), site).desugar(None)
+    _two_faced(outcome, "SymbolicValue.unary_minus")
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert "python:unary_op.completes" in repr(done.guard)
+    assert done.value.term.name == "python:unary_result"
 
 
 def test_discrimination_open_symbol_is_not_silent_neg_coordinate() -> None:
     site = _site_from()
     open_sym = SymbolicValue(make_var("xs"))
-    with pytest.raises(SugarNotWritten):
-        out = UnaryOpSugar("USub", _FloorSugar(open_sym), site).desugar(None)
-        # Lying claim: open symbol completed as a success coordinate.
+    out = UnaryOpSugar("USub", _FloorSugar(open_sym), site).desugar(None)
+    # Lying claim: open symbol completed as a sole success coordinate.
+    with pytest.raises(AssertionError):
         assert out.completed_value() is not None
