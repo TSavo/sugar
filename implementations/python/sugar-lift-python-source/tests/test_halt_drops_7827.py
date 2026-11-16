@@ -248,25 +248,95 @@ def test_the_linear_projection_of_a_boundary_is_gone() -> None:
 # ---------------------------------------------------------------------------
 # 5. sugar/match_sugar.py linear-halt converters: struck, then deleted
 #    (#7825). A guarded case is built now; a guard whose truth is not one
-#    decided value where the match is reduced (a formal's, which waits on its
-#    caller's actual) is refused by name, ``MatchSugar.guard``. A halting
-#    subject is handed back as its own arms.
+#    decided value where the match is reduced (a formal's, a call result's)
+#    takes its truth through the one truth rule: each completed truth face
+#    selects the case under its own guard and the truth's halt is kept
+#    (#7757 NEW-5; before, it was refused by name, ``MatchSugar.guard``). A
+#    halting subject is handed back as its own arms.
 # ---------------------------------------------------------------------------
 
 
-def test_a_case_guard_on_a_formal_refuses_by_name() -> None:
-    """``case 5 if c`` with ``c`` a formal: the guard's truth waits on the
-    caller's actual, and the match selects its cases by formula, so the guard
-    is refused by name. Before, it left as ``truth_formula``'s bare
-    ``NotImplementedError``, which names nothing."""
-    from sugar_source_tree.panic import SugarNotWritten
+@pytest.mark.parametrize(
+    "guard", ["c", "c.ready()"], ids=["formal", "call-result"]
+)
+def test_a_case_guard_whose_truth_is_undecided_keeps_its_halt(guard: str) -> None:
+    """``case 5 if c`` (a formal) or ``case 5 if c.ready()`` (a call result): the
+    guard's ``bool`` may run ``__bool__`` / ``__len__``, so its truth is the
+    one truth rule's two faces.  The case is selected on the completed face
+    and the truth's undetermined halt (``MatchSugar.truth``) is kept, owed;
+    never a halt-less completion (a direct ``.truth`` used to drop it for a
+    call result) and no longer a refusal."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
 
-    with pytest.raises(SugarNotWritten, match="MatchSugar.guard") as refusal:
-        _function(
-            "def test_f(c):\n    match 5:\n        case 5 if c:\n"
-            "            a = 1\n    return 3\n"
-        )
-    assert "not one decided value" in refusal.value.observed
+    outcome = _function(
+        f"def test_f(c):\n    match 5:\n        case 5 if {guard}:\n"
+        "            a = 1\n    return 3\n"
+    )
+    truth_halts = [
+        face
+        for face in outcome.exits
+        if isinstance(face, Halted)
+        and isinstance(face.effect, UndeterminedRaiseEffect)
+        and face.effect.producer_node_owner == "MatchSugar.truth"
+    ]
+    assert truth_halts, outcome
+    assert all(face.owed for face in truth_halts)
+    assert any(isinstance(face, Completed) for face in outcome.exits), outcome
+
+
+# ``x`` holds a call result (not a parameter) whose ``__bool__`` raises.  The
+# call completes (``make``'s contract, joined at prove, states it), so the
+# only raise left in ``choose`` is the guard's ``bool(x)``.  A direct
+# ``.truth`` used to complete it with a halt-less ``py.truthy``: ``choose``
+# then stated "returns 1 or 2" with no panic locus, and the lie
+# ``choose() != 3`` could read ``sat``.  Python raises ``ValueError`` there.
+_GUARD_OVER_A_RAISING_TRUTH = (
+    "import pytest\n"
+    "\n"
+    "\n"
+    "class Boom:\n"
+    "    def __bool__(self):\n"
+    "        raise ValueError('boom')\n"
+    "\n"
+    "\n"
+    "def make():\n"
+    "    return Boom()\n"
+    "\n"
+    "\n"
+    "def choose():\n"
+    "    x = make()\n"
+    "    match 1:\n"
+    "        case 1 if x:\n"
+    "            return 1\n"
+    "        case _:\n"
+    "            return 2\n"
+    "\n"
+    "\n"
+    "def test_choose():\n"
+    "{claim}"
+)
+
+
+@pytest.mark.parametrize(
+    ("claim", "half"),
+    [
+        (
+            "    with pytest.raises(ValueError):\n        choose()\n",
+            "truthful",
+        ),
+        ("    assert choose() != 3\n", "lying"),
+    ],
+    ids=["truthful", "lying"],
+)
+def test_a_match_guards_truth_halt_twin(claim: str, half: str, tmp_path: Path) -> None:
+    """#7757 NEW-5 twin: the lie reads ``sat`` only if the guard's truth
+    halt were dropped; the truth never reads ``unsat``."""
+    verdict = _verdict(tmp_path, _GUARD_OVER_A_RAISING_TRUTH.format(claim=claim))
+    if half == "lying":
+        assert verdict != "sat"
+    else:
+        assert verdict != "unsat"
 
 
 @pytest.mark.parametrize(

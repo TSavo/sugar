@@ -527,14 +527,17 @@ class CallSiteValue(FloorValue):
         return operation.apply(projected, ctx)
 
     def truth(self, site):
-        # A callsite EMITS py.truthy over its term, carrying itself as an operand.
+        # A call result's truth is the one truth rule's two faces
+        # (``bool_op_sugar._unanswered_truth``): its type is not decided, so
+        # its ``__bool__`` / ``__len__`` may raise, and the truth completes
+        # with ``python:truth_result(<result>, <key>)`` only under
+        # ``python:truth.completes``, the halt kept, as ``truth_of`` answers
+        # for it (#7757 NEW-5).
         # Ground (lift-time-decidable) coordinates must construct, never mint
         # RuntimeEffect authority via py.truthy (#4993 / #5147).
         from sugar_lift_py_tests.effect import is_lift_time_decidable
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.bool_op_sugar import _unanswered_truth
 
         if is_lift_time_decidable(self.term):
             constructed = self._construct_decidable_truth(site)
@@ -550,11 +553,7 @@ class CallSiteValue(FloorValue):
                     "truth(); a ground coordinate cannot mint RuntimeEffect authority"
                 ),
             )
-        return ExitSet.completed(
-            PredicateValue(
-                py_truthy(self.result_term()), site, operand_callsites=(self,)
-            )
-        )
+        return _unanswered_truth(self, site, owner="CallSiteValue.truth")
 
     def _construct_decidable_truth(self, site):
         """Construct truth for a ground callsite, or return None to stay loud.

@@ -200,26 +200,22 @@ class SymbolicValue(FloorValue):
         return self.term
 
     def truth(self, site):
-        """``bool(self)`` asked of the value itself.
+        """``bool(self)`` asked of the value itself: the one truth rule's
+        two faces (``bool_op_sugar._unanswered_truth``), a formal's or not.
 
-        A formal's truth is the undecided member's two faces, the one truth
-        rule's (``bool_op_sugar._unanswered_truth``): its ``__bool__`` /
-        ``__len__`` is a protocol with a fallback that no one dispatched
-        method states, so it completes under ``python:truth.completes`` and
-        halts undetermined under the complement, owed either way (#7757
-        NEW-1).  It waits on no caller's actual: a caller's actual joined on
-        the formal at prove decides the completes atom where its type is a
+        Nothing decides this value's type, so its ``__bool__`` / ``__len__``
+        is a protocol with a fallback that no one dispatched method states:
+        it completes with ``python:truth_result(<term>, <key>)`` under
+        ``python:truth.completes`` and halts undetermined under the
+        complement, owed either way (#7757 NEW-1, NEW-5).  This is what
+        ``truth_of`` answers for it, so a direct ``.truth`` caller
+        (``predicate_formula``, a ``match`` guard) cannot read a halt-less
+        truth.  It waits on no caller's actual: a caller's actual joined on a
+        formal at prove decides the completes atom where its type is a
         builtin's."""
-        if self.formal_coordinate is not None:
-            from sugar_lift_py_tests.sugar.bool_op_sugar import _unanswered_truth
+        from sugar_lift_py_tests.sugar.bool_op_sugar import _unanswered_truth
 
-            return _unanswered_truth(self, site, owner="SymbolicValue.truth")
-        # A symbolic value EMITS the Python truth relation; the sort adjudicates later.
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(PredicateValue(py_truthy(self.term), site))
+        return _unanswered_truth(self, site, owner="SymbolicValue.truth")
 
     def guarded(self, formula):
         """Keep one symbolic value coordinate unchanged beneath control.

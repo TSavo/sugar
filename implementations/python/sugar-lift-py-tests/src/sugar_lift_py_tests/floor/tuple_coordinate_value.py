@@ -70,6 +70,26 @@ class TupleLengthValue(CallSiteValue):
     def runtime_type_is_decided(self) -> bool:
         return True
 
+    def truth(self, site):
+        """``bool(len(xs))``: the truth of an ``int``, which runs no code and
+        never raises, so it is the one predicate ``py.truthy(<length>)`` with
+        no halt.  A call result whose type is not decided takes the one truth
+        rule's two faces (``CallSiteValue.truth``, #7757 NEW-5); this one's
+        type is decided.  A ground length constructs its truth, as any ground
+        call result does (``CallSiteValue.truth``)."""
+        from sugar_lift_py_tests.effect import is_lift_time_decidable
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import py_truthy
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        if is_lift_time_decidable(self.term):
+            return super().truth(site)
+        return ExitSet.completed(
+            PredicateValue(
+                py_truthy(self.result_term()), site, operand_callsites=(self,)
+            )
+        )
+
 
 @dataclass(frozen=True)
 class TupleCoordinateValue(FloorValue):

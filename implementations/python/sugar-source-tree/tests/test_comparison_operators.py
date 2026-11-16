@@ -45,25 +45,30 @@ def _compares(outcome):
 def test_not_equal_is_equals_negated():
     inv = _inv("def A(z):\n    assert z != 2\n    return z\n", "UndecidedCompare:NotEq")
     assert inv.kind == "not"
-    assert inv.operands[0].name == "py.eq"
+    # The undecided ``==``, keyed per evaluation (#7757 NEW-1).
+    assert inv.operands[0].name == "python:compare_result"
+    assert inv.operands[0].args[0].value == "Eq"
 
 
 def test_ordering_operators_emit_their_atoms():
-    """A formal ordering is the undecided ordering: its atom completes only
-    under ``python:compare.completes`` over the formal and the literal."""
-    for spelling, kind, atom, right_value in (
-        ("<", "Lt", "py.lt", 10),
-        ("<=", "LtE", "py.le", 10),
-        (">", "Gt", "py.gt", 0),
-        (">=", "GtE", "py.ge", 0),
+    """A formal ordering is the undecided ordering: its value, keyed per
+    evaluation (``python:compare_result("<kind>", z, <literal>, <key>)``,
+    #7757 NEW-1), completes only under ``python:compare.completes`` over
+    the formal and the literal."""
+    for spelling, kind, right_value in (
+        ("<", "Lt", 10),
+        ("<=", "LtE", 10),
+        (">", "Gt", 0),
+        (">=", "GtE", 0),
     ):
         function = _fn(f"def A(z):\n    assert z {spelling} {right_value}\n    return z\n")
         inv = undecided_function_value(
             function, owner=f"UndecidedCompare:{kind}"
         ).invs()[0]
-        assert inv.name == atom
-        assert inv.args[0].name == "z"
-        assert inv.args[1].value == right_value
+        assert inv.name == "python:compare_result"
+        assert inv.args[0].value == kind
+        assert inv.args[1].name == "z"
+        assert inv.args[2].value == right_value
         compares = _compares(undecided_outcome(function))
         assert {op for op, _left, _right in compares} == {kind}
         assert {(left.name, right.value) for _op, left, right in compares} == {

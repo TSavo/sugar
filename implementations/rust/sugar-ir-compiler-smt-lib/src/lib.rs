@@ -20,7 +20,7 @@ mod isinstance_encoding;
 mod literal_encoding;
 pub mod regex_regln;
 
-pub use emitter::PYTHON_VALUE_BUILTIN;
+pub use emitter::{PYTHON_COMPARE_RESULT, PYTHON_TRUTH_RESULT, PYTHON_VALUE_BUILTIN};
 
 pub const DIALECT: &str = "smt-lib-v2.6";
 pub const COMPILER_NAME: &str = "smt-lib-reference";
@@ -2687,6 +2687,107 @@ mod tests {
             solve(&not_formula(py_eq(read("k#1"), read("k#2")))),
             "sat",
             "two evaluations of an undecided read may differ"
+        );
+    }
+
+    #[test]
+    fn python_keyed_compare_and_truth_results_are_the_same_read_per_evaluation() {
+        // The kit's undecided comparison and truth values are keyed per
+        // evaluation (#7757 NEW-1): `python:compare_result("<Kind>", l, r,
+        // <key>)` and `python:truth_result(x, <key>)`. Over operands whose
+        // builtin type is decided or stated they are read exactly as
+        // `py.eq` / the integer order / `py.truthy` are.
+        let compare = |kind: &str, left: serde_json::Value, right: serde_json::Value, key: &str| {
+            atomic(
+                PYTHON_COMPARE_RESULT,
+                vec![string_const(kind), left, right, string_const(key)],
+            )
+        };
+        let truth = |operand: serde_json::Value, key: &str| {
+            atomic(PYTHON_TRUTH_RESULT, vec![operand, string_const(key)])
+        };
+        assert_twin(
+            compare("Eq", int_const(3), int_const(3), "k"),
+            compare("Eq", int_const(3), int_const(4), "k"),
+            "keyed 3 == 3",
+        );
+        assert_twin(
+            compare("Eq", string_const("a"), string_const("a"), "k"),
+            compare("Eq", string_const("a"), int_const(1), "k"),
+            "keyed \"a\" == \"a\"",
+        );
+        assert_twin(
+            compare("Lt", int_const(1), int_const(12), "k"),
+            compare("Lt", int_const(12), int_const(1), "k"),
+            "keyed 1 < 12",
+        );
+        assert_twin(
+            compare("GtE", int_const(12), int_const(12), "k"),
+            compare("Gt", int_const(12), int_const(12), "k"),
+            "keyed 12 >= 12",
+        );
+        assert_twin(
+            truth(bool_const(true), "k"),
+            not_formula(truth(bool_const(true), "k")),
+            "keyed bool(True)",
+        );
+        assert_twin(
+            not_formula(truth(string_const(""), "k")),
+            truth(string_const(""), "k"),
+            "keyed bool(\"\")",
+        );
+        // A call result a joined post states is read at its stated type.
+        let call = ctor(
+            "python:call_result",
+            vec![
+                ctor("call:f", vec![string_const("x")]),
+                ctor("python:occurrence", vec![string_const("f-site")]),
+            ],
+        );
+        let stated = eq(call.clone(), int_const(3));
+        assert_twin(
+            all_of(vec![stated.clone(), compare("Eq", call.clone(), int_const(3), "k")]),
+            all_of(vec![stated.clone(), compare("Eq", call.clone(), int_const(4), "k")]),
+            "keyed f() == 3 where f() returns 3",
+        );
+        assert_twin(
+            all_of(vec![stated.clone(), compare("Lt", call.clone(), int_const(12), "k")]),
+            all_of(vec![stated.clone(), compare("Gt", call.clone(), int_const(12), "k")]),
+            "keyed f() < 12 where f() returns 3",
+        );
+        assert_twin(
+            all_of(vec![stated.clone(), truth(call.clone(), "k")]),
+            all_of(vec![stated, not_formula(truth(call, "k"))]),
+            "keyed bool(f()) where f() returns 3",
+        );
+        // Over undecided operands two evaluations are two unknowns: a
+        // counting `__eq__` / `__bool__` asked twice may answer differently.
+        let differ = |a: serde_json::Value, b: serde_json::Value| {
+            serde_json::json!({"kind": "or", "operands": [
+                all_of(vec![a.clone(), not_formula(b.clone())]),
+                all_of(vec![not_formula(a), b])
+            ]})
+        };
+        assert_eq!(
+            solve(&differ(
+                compare("Eq", var("p"), var("q"), "k#1"),
+                compare("Eq", var("p"), var("q"), "k#2"),
+            )),
+            "sat",
+            "two evaluations of an undecided p == q may differ"
+        );
+        assert_eq!(
+            solve(&differ(
+                compare("LtE", var("p"), var("q"), "k#1"),
+                compare("LtE", var("p"), var("q"), "k#2"),
+            )),
+            "sat",
+            "two evaluations of an undecided p <= q may differ"
+        );
+        assert_eq!(
+            solve(&differ(truth(var("p"), "k#1"), truth(var("p"), "k#2"))),
+            "sat",
+            "two evaluations of an undecided bool(p) may differ"
         );
     }
 

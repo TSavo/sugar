@@ -260,8 +260,9 @@ def _publish_undecided_dispatch_edges(
     # Undecided dispatch: the operands' runtime types select ``__eq__`` /
     # ``__contains__`` (and their reflections), which this frame did not look
     # at, so the comparison may raise anything -- the #7585 law.  It completes
-    # with the undecided comparison predicate only under
-    # ``python:compare.completes(python:compare(op, left, right, site))`` and
+    # with the undecided comparison result, keyed per evaluation
+    # (``python:compare_result(<kind>, left, right, <key>)``), only under
+    # ``python:compare.completes(python:compare(op, left, right, <key>))`` and
     # halts with an
     # ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
     # complement.  No exception type is named: the halt is undetermined.
@@ -316,8 +317,16 @@ def undecided_dispatch_faces(predicate, site, op_kind: str):
         (str_const(op_kind), *compared_terms(predicate), str_const(key)),
     )
     completes = atomic("python:compare.completes", [dispatch])
+    # The completed value is keyed per evaluation, as the completes atom and
+    # the halt are (#7757 NEW-1, the owner's key rule): two evaluations of
+    # one comparison over the same operand terms (a counting ``__eq__``
+    # asked twice) are two unknowns, so a truthful ``(p == q) != (p == q)``
+    # cannot read ``unsat``.  Prove reads the keyed result over operands
+    # whose builtin type it decides exactly as the unkeyed atom.
+    from dataclasses import replace
+
     return ExitSet.two_faced(
-        predicate,
+        replace(predicate, formula=keyed_comparison(predicate.formula, key)),
         UndeterminedRaiseEffect(
             blame=str(site),
             occurrence=key,
@@ -327,6 +336,46 @@ def undecided_dispatch_faces(predicate, site, op_kind: str):
         guard=completes,
         site=site,
     )
+
+
+# The undecided Python comparison atoms a floor states (``py.eq``,
+# ``py.lt``, ... ``py.in``), by the operator kind their keyed result names.
+# The theory atoms (``=``, ``<``, ...) a sort warrant decides are not here:
+# their operands' type is stated, and they stay as they are.
+_KEYED_COMPARISON_KINDS: dict[str, str] = {
+    "py.eq": "Eq",
+    "py.lt": "Lt",
+    "py.le": "LtE",
+    "py.gt": "Gt",
+    "py.ge": "GtE",
+    "py.in": "In",
+}
+
+
+def keyed_comparison(formula, key: str):
+    """``formula`` with each undecided comparison atom in it keyed per
+    evaluation: ``py.<op>(<left>, <right>)`` becomes
+    ``python:compare_result("<Kind>", <left>, <right>, <key>)``
+    (``floor_value.undecided_predicate_result``), the operands in the
+    atom's own order (``py.in(item, container)`` stays item first).  Any
+    other atom is unchanged; a connective is rebuilt over its keyed
+    operands."""
+    from sugar_lift_py_tests.floor.floor_value import undecided_predicate_result
+    from sugar_lift_py_tests.ir import _Atomic, _Connective, connective, str_const
+
+    if isinstance(formula, _Atomic):
+        kind = _KEYED_COMPARISON_KINDS.get(formula.name)
+        if kind is None or len(formula.args) != 2:
+            return formula
+        return undecided_predicate_result(
+            "compare", (str_const(kind), *formula.args), key
+        )
+    if isinstance(formula, _Connective):
+        return connective(
+            formula.kind,
+            [keyed_comparison(operand, key) for operand in formula.operands],
+        )
+    return formula
 
 
 def compared_terms(predicate) -> tuple:
@@ -360,8 +409,10 @@ def undecided_ordering_faces(left, right, site, *, operator: str):
 
     The same law as undecided ``==``: the rich method (and its reflection)
     Python selects is one this frame did not look at, so the comparison
-    completes with the undecided ``py.lt/le/gt/ge`` predicate only under
-    ``python:compare.completes(python:compare(op, left, right, site))`` and
+    completes with the undecided ``py.lt/le/gt/ge`` predicate, keyed per
+    evaluation (``python:compare_result("Lt", left, right, <key>)`` ...,
+    :func:`keyed_comparison`), only under
+    ``python:compare.completes(python:compare(op, left, right, <key>))`` and
     halts with an
     ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
     complement.  Nothing is folded and no ``TypeError`` is invented.

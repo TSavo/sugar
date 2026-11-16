@@ -83,10 +83,13 @@ def _truth_is_undecided(value) -> bool:
 def _unanswered_truth(value, site, *, owner: str):
     """``bool(value)`` not decided here: the undecided member's two faces.
 
-    The truth completes with the undecided ``py.truthy(<operand term>)`` only
-    under ``python:truth.completes(python:truth(<operand term>, <site>))``,
+    The truth completes with the undecided truth of the operand, keyed per
+    evaluation (``python:truth_result(<operand term>, <key>)``,
+    ``floor_value.undecided_predicate_result``), only under
+    ``python:truth.completes(python:truth(<operand term>, <key>))``, both
     keyed on the exact source site and its occurrence so two truth tests of
-    one term are never forced to agree, and halts with an
+    one term are never forced to agree (the owner's key rule, #7757 NEW-1),
+    and halts with an
     ``UndeterminedRaiseEffect`` (producer ``owner``) under the complement.
     No exception type is named and no truth is decided; both faces owe the
     one ``undecided`` member (reason ``unanswered``) at the site
@@ -96,16 +99,19 @@ def _unanswered_truth(value, site, *, owner: str):
     its key (``occurrence.site_coordinate_cid``).
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.floor_value import undecided_predicate_result
     from sugar_lift_py_tests.floor.object_identity import identity_term
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.ir import atomic, ctor, py_truthy, str_const
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
 
     operand = identity_term(value, site, "receiver", owner=owner)
     key = occurrence_key(site)
     return ExitSet.two_faced(
         PredicateValue(
-            py_truthy(operand), site, operand_callsites=tuple(value.callsites())
+            undecided_predicate_result("truth", (operand,), key),
+            site,
+            operand_callsites=tuple(value.callsites()),
         ),
         UndeterminedRaiseEffect(
             blame=str(site),

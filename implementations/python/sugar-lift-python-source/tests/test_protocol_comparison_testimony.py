@@ -82,7 +82,15 @@ def test_undecided_comparison_predicate_is_not_native_completion_testimony(op):
     assert isinstance(result, ExitSet)
     (completed,) = [face for face in result.exits if not isinstance(face, Halted)]
     (halted,) = [face for face in result.exits if isinstance(face, Halted)]
-    assert completed.value is unproven.completed_value()
+    # The same predicate, keyed per evaluation at the halt's key (#7757
+    # NEW-1): ``python:compare_result("Eq", left, "needle", <key>)``.
+    stated = unproven.completed_value()
+    assert type(completed.value) is type(stated)
+    assert completed.value.site is stated.site
+    assert completed.value.formula.name == "python:compare_result"
+    assert completed.value.formula.args[0].value == "Eq"
+    assert completed.value.formula.args[1:-1] == stated.formula.args
+    assert completed.value.formula.args[-1].value == halted.effect.occurrence
     assert completed.guard.name == "python:compare.completes"
     assert isinstance(halted.effect, UndeterminedRaiseEffect)
     assert halted.effect.exception_name is None

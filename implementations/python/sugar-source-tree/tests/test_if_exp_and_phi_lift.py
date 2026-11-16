@@ -96,11 +96,13 @@ def test_direct_ifexp_predicate_distributes():
 
 
 def test_direct_ifexp_bare_truthiness_distributes():
-    # return 5 if c else 6  ->  (py.truthy(c) -> out==5) AND (not truthy -> out==6)
+    # return 5 if c else 6  ->  (truth(c) -> out==5) AND (not truth -> out==6),
+    # the truth of the formal keyed per evaluation (``python:truth_result(c,
+    # <key>)``, #7757 NEW-1).
     post = _post("def A(c):\n    return 5 if c else 6\n")
     _no_py_conditional(post)
     then_imp, else_imp = post.operands
-    assert then_imp.operands[0].name == "py.truthy"
+    assert then_imp.operands[0].name == "python:truth_result"
     assert then_imp.operands[1].args[1].value == 5
     assert else_imp.operands[1].args[1].value == 6
 
@@ -115,7 +117,8 @@ def test_phi_conditional_binding_lifts_end_to_end():
     _no_py_conditional(post)
     assert post.kind == "and"
     then_imp, else_imp = post.operands
-    assert then_imp.operands[0].name == "py.truthy"  # guard is truthiness of c
+    # The guard is the truth of c, keyed per evaluation (#7757 NEW-1).
+    assert then_imp.operands[0].name == "python:truth_result"
     assert then_imp.operands[1].args[1].value == 5
     assert else_imp.operands[1].args[1].value == 6
 

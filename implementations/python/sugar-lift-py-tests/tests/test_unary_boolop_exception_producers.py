@@ -150,8 +150,8 @@ def _assert_two_faced_not(outcome, operand_term) -> None:
     halts with an UndeterminedRaiseEffect naming no exception type.
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.floor_value import undecided_predicate_result
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.ir import py_truthy
     from sugar_lift_py_tests.outcome.exit_set import Completed
 
     assert isinstance(outcome, ExitSet)
@@ -167,7 +167,12 @@ def _assert_two_faced_not(outcome, operand_term) -> None:
     assert len(completed) == 1
     assert "python:truth.completes" in repr(completed[0].guard)
     assert isinstance(completed[0].value, PredicateValue)
-    assert completed[0].value.formula == not_(py_truthy(operand_term))
+    # The truth is keyed per evaluation, at the halt's own key (#7757 NEW-1).
+    assert completed[0].value.formula == not_(
+        undecided_predicate_result(
+            "truth", (operand_term,), halted[0].effect.occurrence
+        )
+    )
 
 
 def test_undecided_not_operand_is_the_two_faced_truth() -> None:
@@ -220,8 +225,8 @@ def test_every_value_whose_truth_is_undecided_is_the_two_faced_truth(value) -> N
     exception an undetermined raise threw and its type, and the class a raise
     threw, as much as a bare symbolic value.  None of them is refused."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.floor_value import undecided_predicate_result
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.ir import py_truthy
     from sugar_lift_py_tests.outcome.exit_set import Completed
     from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
 
@@ -235,7 +240,10 @@ def test_every_value_whose_truth_is_undecided_is_the_two_faced_truth(value) -> N
     assert "python:truth.completes" in repr(completed[0].guard)
     assert repr(term) in repr(completed[0].guard)
     assert isinstance(completed[0].value, PredicateValue)
-    assert completed[0].value.formula == py_truthy(term)
+    # The truth is keyed per evaluation, at the halt's own key (#7757 NEW-1).
+    assert completed[0].value.formula == undecided_predicate_result(
+        "truth", (term,), halted[0].effect.occurrence
+    )
     assert outcome.owed_items()
 
 
