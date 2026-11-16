@@ -2,7 +2,7 @@
 leftovers of #8118).
 
 - The ``__class__`` cell is the class whose body defines the function the
-  call runs, at every application: a method (``bind_method_call``), a source
+  call runs, at every application: a method (its own frame), a source
   store through a mapping (``MappingObjectValue._source_store``) and a class
   call running an inherited ``__init__`` (``ClassConstructorBodySugar``).
   ``class A: def m(self): return super().m()`` / ``class B(A): pass`` /

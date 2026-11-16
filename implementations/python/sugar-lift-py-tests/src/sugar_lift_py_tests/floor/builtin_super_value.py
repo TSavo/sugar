@@ -130,11 +130,11 @@ class BuiltinSuperValue(FloorValue):
         class after ``__class__``), bound to the original receiver as
         ``super_getattro`` binds it (``__get__(obj, starttype)``).
 
-        - A ``def`` the holding class's body left last runs through the one
-          method door, its implicit first actual read off the descriptor kind
-          (``object_value.implicit_arguments``); its body reduces with
-          ``__class__`` seeded to the holding class (``object_method``), so a
-          further ``super()`` in it continues along the receiver's MRO.
+        - A ``def`` the order holds for ``name`` is the one dispatched call
+          (``_dispatched``): prove looks ``name`` up on the receiver's order
+          from the class after ``__class__`` and binds it by the kind its
+          namespace row states, as ``super_getattro`` binds it.  The lookup
+          here only tells that a method call is what this is.
         - A function the holding class's namespace holds as a field
           (``f = lambda self: 1``, ``m = some_def``) is bound to the receiver
           when it is an instance -- the receiver its first actual -- and is
@@ -158,30 +158,10 @@ class BuiltinSuperValue(FloorValue):
             )
 
         if method is not None:
-            from sugar_lift_py_tests.floor.object_value import (
-                method_edge_call,
-                receiver_class_decided,
-            )
-
-            if not receiver_class_decided(self.receiver):
-                # The MRO ``super()`` searches is the receiver's type's: an
-                # instance that arrived by binding may be of a subclass whose
-                # order puts another class after ``__class__``.  Which
-                # function runs is not decided here (#7757 step 6).
-                return self._unanswered(name, arguments, keywords, blame)
-            # The function the lookup selected, on a receiver whose class is
-            # decided: its coordinate and edge (#7757 step 6).
-            return method_edge_call(
-                self.receiver,
-                holder.object_method(method),
-                arguments,
-                keywords,
-                class_name=holder.class_name,
-                ctx=ctx,
-                owner=_OWNER,
-                blame=blame,
-                refuse=refuse,
-            )
+            # A ``def`` of the receiver's order after ``__class__``: the one
+            # dispatched call, looked up after ``__class__`` at prove, never
+            # the function selected here (#7757 entry 6: one MRO lookup).
+            return self._dispatched(name, arguments, keywords, blame)
         if isinstance(value, LambdaCallable):
             from sugar_lift_py_tests.callable_application import CallableApplication
 
@@ -208,6 +188,59 @@ class BuiltinSuperValue(FloorValue):
             observed=f"{holder.class_name}.{name}",
             requested="the source method zero-argument super selected",
             fix=f"construct a diggable body for `{holder.class_name}.{name}` or keep loud",
+        )
+
+    def _dispatched(self, name, arguments, keywords, site):
+        """``super().<name>(...)`` as the one dispatched call (#7757 entry 6,
+        ``receiver_dispatch.dispatch_edge_call`` with ``after``): the lookup
+        starts after ``__class__`` (its join symbol, ``py.lookup``), and
+        prove looks ``name`` up on the order the receiver's class's own
+        proof states (``consistency::dispatched_target``).
+
+        - A receiver that is a class (``super()`` in a ``classmethod``):
+          looked up on that class object, nothing bound but what its kind
+          binds (``ClassDefinitionValue._dispatched_on_class``).
+        - An instance whose class is decided here (``receiver_class_decided``
+          and ``receiver_dispatch.class_value``): the receiver is the call's
+          first operand, keyed ``"0"``, its class riding beside it, and the
+          caller reads it after the call by that key
+          (``receiver_dispatch.receiver_after_dispatch``).
+
+        Anything else -- an instance that arrived by binding (it may be of
+        a subclass whose order puts another class after ``__class__``), a
+        class that names no join symbol, a call with no site -- is the one
+        unanswered call (``_unanswered``), owed."""
+        from sugar_lift_py_tests.floor.class_definition_value import (
+            ClassDefinitionValue,
+        )
+        from sugar_lift_py_tests.floor.object_value import receiver_class_decided
+
+        definition = getattr(self.current_class, "class_definition", None)
+        after = None if definition is None else definition.bridge_source_symbol()
+        if after is None or site is None:
+            return self._unanswered(name, arguments, keywords, site)
+        if isinstance(self.receiver, ClassDefinitionValue):
+            return self.receiver._dispatched_on_class(
+                name, arguments, keywords, site, after=after
+            )
+        if not receiver_class_decided(self.receiver):
+            return self._unanswered(name, arguments, keywords, site)
+        from sugar_lift_py_tests.receiver_dispatch import (
+            class_value,
+            dispatch_edge_call,
+        )
+
+        receiver_class = class_value(self.receiver)
+        if receiver_class is None:
+            return self._unanswered(name, arguments, keywords, site)
+        return dispatch_edge_call(
+            name,
+            self.receiver,
+            receiver_class,
+            tuple(arguments),
+            tuple(keywords),
+            site,
+            after=after,
         )
 
     def _receiver_type(self):

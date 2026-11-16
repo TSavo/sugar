@@ -275,8 +275,8 @@ def apply_callee(
     value: the one routine a called value is applied by.
 
     A source class is constructor application (``cls(None)`` after a
-    classmethod binds cls); a bound method is that method's call
-    (``bind_method_call``); a lambda (``fs[0](x)``, a formal given a lambda,
+    classmethod binds cls); a bound method is that method's call (the one
+    dispatched call, ``BoundMethodValue``); a lambda (``fs[0](x)``, a formal given a lambda,
     an instance field holding one) is the lambda's call.  Each binds and
     applies through ``callable_application_with``.  Any other callee -- a
     formal, an opaque call's result, a value (``len = 5; len(x)``), an

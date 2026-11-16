@@ -3880,6 +3880,23 @@ const PYTHON_PACKED: &str = "py.packed";
 /// of that formal: the class is bound to nothing.
 const PYTHON_CLASS: &str = "py.class";
 
+/// Where a dispatched call looks its method up (step 8, #7757), when that is
+/// not the instance its first positional argument is, from the first class
+/// of that instance's order: `py.lookup(<on>, <after>)`, two string
+/// constants (the kit's `receiver_dispatch.LOOKUP_ARGUMENT`).
+///
+/// - `<on>`: the class symbol of the class object the method is read off
+///   (`Cls.m(...)`, `super()` in a `classmethod`): `type.__getattribute__`
+///   on that class, no receiver among the arguments; `""` for the instance.
+/// - `<after>`: the class symbol after which the lookup starts in the order
+///   (zero-argument `super()`, `super_getattro`); `""` for the first class.
+///
+/// It is part of the call's term, so two calls that look a method up from
+/// different places are never one term. It supplies no formal: the one
+/// binder reads past it (`read_call_arguments`), and the one resolution
+/// reads it (`dispatched_target`).
+const PYTHON_LOOKUP: &str = "py.lookup";
+
 /// The formal prefix of a receiver-class input (step 8, #7757): the class of
 /// the object a parameter binds, whose namespace a method call on that
 /// parameter reads (`dispatched_target`). The function's own proof states no
@@ -4127,6 +4144,27 @@ fn class_argument(arg: &Json) -> Option<Result<(ClassKey, Json), ()>> {
     Some(read.ok_or(()))
 }
 
+/// A call's `py.lookup(<on>, <after>)` read as a `DispatchLookup` (step 8).
+/// `None` for any other argument; `Some(Err(()))` for that ctor with an arity
+/// that is not two or a part that is not a string constant.
+fn lookup_argument(arg: &Json) -> Option<Result<DispatchLookup, ()>> {
+    match ctor_parts(arg)? {
+        (PYTHON_LOOKUP, parts) => {
+            let named = |part: &Json| -> Option<Option<String>> {
+                let value = const_str(part)?;
+                Some((!value.is_empty()).then(|| value.to_string()))
+            };
+            let read = match parts.as_slice() {
+                [on, after] => named(on).zip(named(after)),
+                _ => None,
+            };
+            let lookup = read.map(|(on_class, after)| DispatchLookup { on_class, after });
+            Some(lookup.ok_or(()))
+        }
+        _ => None,
+    }
+}
+
 /// A named argument of a call term: `(ctor, name, value)` for `py.kwarg`,
 /// `py.packed`, `py.closure`, `py.global` or `py.default` applied to a
 /// string name and a value. `None` for a positional argument.
@@ -4292,6 +4330,12 @@ fn read_call_arguments(formals: &[String], args: &[Json]) -> Option<CallArgument
                 classes.push(class);
                 continue;
             }
+            Some(Err(())) => return None,
+            None => {}
+        }
+        // Where a dispatched call looks its method up supplies no formal.
+        match lookup_argument(arg) {
+            Some(Ok(_)) => continue,
             Some(Err(())) => return None,
             None => {}
         }
@@ -5095,6 +5139,11 @@ enum DispatchReceiver {
     /// A `classmethod`: the instance's class (its `python:class_object`
     /// term) is passed in the instance's place.
     Class(Json),
+    /// A `classmethod` read off a class object (`Cls.m(...)`, `super()` in a
+    /// `classmethod`, `py.lookup`): the class object (its
+    /// `python:class_object` term) is passed before the written arguments,
+    /// none of which is an instance.
+    Prepend(Json),
     /// A call of a function value (`py.call(<callee>, <actuals>...)`) whose
     /// callee is the value stated as its join symbol
     /// (`python:function(<symbol>, <inputs>...)`): the callee is not passed,
@@ -5112,54 +5161,143 @@ struct DispatchTarget {
     receiver: DispatchReceiver,
 }
 
-/// The function a call of `method` on an instance runs -- or, `read`, the
-/// getter a read of the attribute `method` runs -- the instance's class input
-/// bound to `class` (step 8, #7757).
+/// Where a dispatched call looks its method up (`py.lookup`, step 8): the
+/// default is the instance the call's first positional argument is, from the
+/// first class of its order (`obj.m(...)`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct DispatchLookup {
+    /// The class symbol of the class object the method is read off
+    /// (`Cls.m(...)`, `super()` in a `classmethod`): no receiver among the
+    /// call's arguments. `None`: the instance.
+    on_class: Option<String>,
+    /// The class symbol after which the lookup starts in the order
+    /// (zero-argument `super()`). `None`: the first class of the order.
+    after: Option<String>,
+}
+
+/// The data descriptors `type` itself defines (`type_getsets`,
+/// `type_members`, Objects/typeobject.c): `type.__getattribute__` answers a
+/// read of one of these names off a class object before the class's own
+/// order is searched, so a method of that name is never what `Cls.<name>`
+/// reads.
+const TYPE_DATA_DESCRIPTORS: [&str; 19] = [
+    "__abstractmethods__",
+    "__annotations__",
+    "__base__",
+    "__bases__",
+    "__basicsize__",
+    "__dict__",
+    "__dictoffset__",
+    "__doc__",
+    "__flags__",
+    "__itemsize__",
+    "__module__",
+    "__mro__",
+    "__name__",
+    "__qualname__",
+    "__text_signature__",
+    "__type_params__",
+    "__weakrefoffset__",
+    "__annotate__",
+    "__class__",
+];
+
+/// THE one method resolution of a dispatched call (step 8, #7757): the
+/// function a call of `method` runs -- or, `read`, the getter a read of the
+/// attribute `method` runs -- looked up where `lookup` says, and how the
+/// call's arguments bind it (`DispatchReceiver`). `class` is the instance's
+/// class input, bound (`python:instance(<class symbol>, <field>...)`); it is
+/// not read for a lookup on a class object.
 ///
-/// `class` is read as `python:instance(<class symbol>, <field>...)`, and
-/// `method` is looked up as Python's `object.__getattribute__` looks it up:
-/// the first class of the order its own proof states that binds it; a data
-/// descriptor there (a property) wins over the instance's `__dict__`, any
-/// other value is shadowed by a field of that name. The value found binds by
-/// its kind (`DispatchReceiver`). `None` -- the call stays owed -- whenever
-/// that lookup is not decided by what the proofs state:
+/// - On an instance from its first class (`obj.m(...)`, `obj.m`): `method`
+///   is looked up as Python's `object.__getattribute__` looks it up: the
+///   first class of the order its own proof states that binds it; a data
+///   descriptor there (a property) wins over the instance's `__dict__`, any
+///   other value is shadowed by a field of that name (the fields `class`
+///   names). Not decided where a class of the order binds
+///   `__getattribute__`, or, for a read (a getter that raises
+///   `AttributeError` falls to it), `__getattr__`; for a call, where the
+///   instance's `__dict__` may hold `method`, or the value is a property
+///   (the getter's result is called, which nothing here states) or any kind
+///   but a plain function, a function field, a `staticmethod` or a
+///   `classmethod`; for a read, where the value is anything but a property.
+/// - On an instance after a class (`super().m(...)` with an instance
+///   receiver, `super_getattro`): the classes of the instance's order after
+///   that class, the instance's `__dict__` never read and no
+///   `__getattribute__` of the order consulted; the value bound as
+///   `__get__(obj, type(obj))` binds it: a plain function or a function
+///   field to the instance, a `staticmethod` to nothing, a `classmethod` to
+///   the instance's class.
+/// - On a class object (`Cls.m(...)`, and after a class for `super()` in a
+///   `classmethod`): Python's `type.__getattribute__` on a class whose
+///   metaclass is `type` (a class with a namespace row is one: a keyword or
+///   a metaclass leaves its namespace open), `type`'s own data descriptors
+///   first (`TYPE_DATA_DESCRIPTORS`: not decided here), then the class's
+///   order; the value bound as `__get__(None, cls)` binds it: a plain
+///   function, a function field or a `staticmethod` to nothing (the written
+///   arguments as they stand), a `classmethod` to the class
+///   (`DispatchReceiver::Prepend`). A property read off its class is the
+///   property object, which is not callable: not decided here.
 ///
-/// - `class` is not a decided instance (a free input, anything else);
-/// - a class of the order has no namespace row (its namespace is not
-///   closed, or no proof here states it), or two proofs state it differently;
-/// - a class of the order binds `__getattribute__`, or, for a read (a getter
-///   that raises `AttributeError` falls to it), `__getattr__`;
-/// - a builtin class comes before the class that binds `method` (it may
-///   bind it), or a builtin class other than `object` stands in the order;
-/// - no class binds `method`, or binds it with no join symbol;
-/// - a call: the instance's `__dict__` may hold `method`, or the value is a
-///   property (the getter's result is called, which nothing here states) or
-///   any kind but a plain function, a function field, a `staticmethod` or a
-///   `classmethod`; a `classmethod` of a class no proof states the object of;
-/// - a read: the value is anything but a property.
+/// `None` -- the call stays owed -- wherever the lookup is not decided by
+/// what the proofs state: `class` is not a decided instance (a free input,
+/// anything else) where an instance is read; a class of the order searched
+/// has no namespace row (its namespace is not closed, or no proof here
+/// states it) or two proofs state it differently; a builtin class comes
+/// before the class that binds `method` (it may bind it), or a builtin class
+/// other than `object` stands in the order searched; `<after>` is not in
+/// the order; no class binds `method`, or binds it with no join symbol; a
+/// `classmethod` of a class no proof states the object of; a read of
+/// anything but a property on an instance from its first class.
 fn dispatched_target(
     namespaces: &BTreeMap<String, ClassNamespace>,
     method: &str,
     read: bool,
-    class: &Json,
+    class: Option<&Json>,
+    lookup: &DispatchLookup,
 ) -> Option<DispatchTarget> {
-    if class.get("kind")?.as_str()? != "ctor" || class.get("name")?.as_str()? != PYTHON_INSTANCE {
-        return None;
-    }
-    let (subject, fields) = class.get("args")?.as_array()?.split_first()?;
-    let subject = const_str(subject)?;
     let mut shadowed = false;
-    for field in fields {
-        if const_str(field)? == method {
-            shadowed = true;
+    let subject: &str = match &lookup.on_class {
+        Some(on_class) => {
+            if read || TYPE_DATA_DESCRIPTORS.contains(&method) {
+                return None;
+            }
+            on_class.as_str()
         }
+        None => {
+            let class = class?;
+            if class.get("kind")?.as_str()? != "ctor"
+                || class.get("name")?.as_str()? != PYTHON_INSTANCE
+            {
+                return None;
+            }
+            let (subject, fields) = class.get("args")?.as_array()?.split_first()?;
+            for field in fields {
+                if const_str(field)? == method {
+                    shadowed = true;
+                }
+            }
+            const_str(subject)?
+        }
+    };
+    // `super()`'s lookup reads no instance `__dict__` and no attribute hook.
+    let plain = lookup.on_class.is_none() && lookup.after.is_none();
+    if !plain && read {
+        return None;
     }
     let order = &namespaces.get(subject)?.mro;
     if order.first().map(String::as_str) != Some(subject) {
         return None;
     }
+    let searched: &[String] = match &lookup.after {
+        Some(after) => {
+            let at = order.iter().position(|entry| entry == after)?;
+            &order[at + 1..]
+        }
+        None => order,
+    };
     let mut found: Option<(String, String)> = None;
-    for entry in order {
+    for entry in searched {
         if let Some(builtin) = entry.strip_prefix(BUILTIN_CLASS_PREFIX) {
             if found.is_none() || builtin != "object" {
                 return None;
@@ -5168,7 +5306,7 @@ fn dispatched_target(
         }
         let namespace = namespaces.get(entry)?;
         if namespace.mro.is_empty()
-            || namespace.binds.contains_key("__getattribute__")
+            || (plain && namespace.binds.contains_key("__getattribute__"))
             || (read && namespace.binds.contains_key("__getattr__"))
         {
             return None;
@@ -5183,21 +5321,34 @@ fn dispatched_target(
         }
     }
     let (kind, symbol) = found?;
-    let receiver = match kind.as_str() {
-        DISPATCH_PROPERTY_KIND if read => DispatchReceiver::AsCalled,
-        _ if read || shadowed => return None,
-        DISPATCH_FUNCTION_KIND | DISPATCH_FIELD_KIND => DispatchReceiver::AsCalled,
-        DISPATCH_STATIC_KIND => DispatchReceiver::Static,
-        DISPATCH_CLASS_KIND => DispatchReceiver::Class(namespaces.get(subject)?.object.clone()?),
-        _ => return None,
+    let class_object = || namespaces.get(subject).and_then(|namespace| namespace.object.clone());
+    let receiver = if lookup.on_class.is_some() {
+        match kind.as_str() {
+            DISPATCH_FUNCTION_KIND | DISPATCH_FIELD_KIND | DISPATCH_STATIC_KIND => {
+                DispatchReceiver::AsCalled
+            }
+            DISPATCH_CLASS_KIND => DispatchReceiver::Prepend(class_object()?),
+            _ => return None,
+        }
+    } else {
+        match kind.as_str() {
+            DISPATCH_PROPERTY_KIND if read => DispatchReceiver::AsCalled,
+            _ if read || (plain && shadowed) => return None,
+            DISPATCH_FUNCTION_KIND | DISPATCH_FIELD_KIND => DispatchReceiver::AsCalled,
+            DISPATCH_STATIC_KIND => DispatchReceiver::Static,
+            DISPATCH_CLASS_KIND => DispatchReceiver::Class(class_object()?),
+            _ => return None,
+        }
     };
     Some(DispatchTarget { symbol, receiver })
 }
 
 /// Whether `arg` is a positional argument of a call term: no named argument
-/// (`py.kwarg`, a contract input's) and no `py.class`.
+/// (`py.kwarg`, a contract input's), no `py.class` and no `py.lookup`.
 fn is_positional_argument(arg: &Json) -> bool {
-    class_argument(arg).is_none() && named_argument(arg).is_none()
+    class_argument(arg).is_none()
+        && named_argument(arg).is_none()
+        && lookup_argument(arg).is_none()
 }
 
 /// A dispatched call's arguments as the function it resolved to takes them
@@ -5210,6 +5361,9 @@ fn is_positional_argument(arg: &Json) -> bool {
 /// - `Class(term)`: the instance replaced by the class object `term`, and
 ///   the instance's class dropped (the class of a class is its metaclass,
 ///   which nothing here states: a `class:` input of that formal stays free).
+/// - `Prepend(term)`: the class object `term` before the written arguments
+///   (a lookup on a class object names no instance), every positional
+///   `py.class` key one higher.
 ///
 /// `None` when the call names no instance (no positional argument).
 fn dispatched_arguments(receiver: &DispatchReceiver, args: &[Json]) -> Option<Vec<Json>> {
@@ -5220,6 +5374,26 @@ fn dispatched_arguments(receiver: &DispatchReceiver, args: &[Json]) -> Option<Ve
         let (_callee, actuals) = args.split_first()?;
         let mut bound = actuals.to_vec();
         bound.extend(inputs.iter().cloned());
+        return Some(bound);
+    }
+    if let DispatchReceiver::Prepend(term) = receiver {
+        let mut bound = Vec::with_capacity(args.len() + 1);
+        bound.push(term.clone());
+        for arg in args {
+            match class_argument(arg) {
+                Some(Ok((ClassKey::Position(position), _))) => {
+                    let mut shifted = arg.clone();
+                    let key = shifted
+                        .get_mut("args")
+                        .and_then(|v| v.as_array_mut())
+                        .and_then(|parts| parts.first_mut())
+                        .and_then(|key| key.as_object_mut())?;
+                    key.insert("value".to_string(), json!((position + 1).to_string()));
+                    bound.push(shifted);
+                }
+                _ => bound.push(arg.clone()),
+            }
+        }
         return Some(bound);
     }
     let instance = args.iter().position(is_positional_argument)?;
@@ -5845,30 +6019,47 @@ struct DispatchEdge {
 fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
     let dispatch = post.dispatch.as_ref()?;
     let args = call.get("args")?.as_array()?;
-    let class = args.iter().find_map(|arg| match class_argument(arg) {
-        Some(Ok((ClassKey::Position(0), class))) => Some(class),
-        _ => None,
-    })?;
-    // A builtin class (#7757 step 7): its method's law, or nothing. A law
-    // states no `python:leaves`, so operands that may share stay owed.
-    if let Some(builtin) = builtin_class_name(&class) {
-        if dispatch.read || !dispatch.shares.is_empty() {
-            return None;
+    // Where the method is looked up (`py.lookup`): on the instance from the
+    // first class of its order unless the call states otherwise; a call
+    // that states it twice, or malformed, is not decided.
+    let mut lookups = args.iter().filter_map(lookup_argument);
+    let lookup = match (lookups.next(), lookups.next()) {
+        (None, _) => DispatchLookup::default(),
+        (Some(Ok(lookup)), None) => lookup,
+        _ => return None,
+    };
+    let class = if lookup.on_class.is_some() {
+        // A lookup on a class object reads no instance's class.
+        None
+    } else {
+        let class = args.iter().find_map(|arg| match class_argument(arg) {
+            Some(Ok((ClassKey::Position(0), class))) => Some(class),
+            _ => None,
+        })?;
+        // A builtin class (#7757 step 7): its method's law, or nothing. A
+        // law states no `python:leaves`, so operands that may share stay
+        // owed; a lookup after a class of a builtin's order is not stated.
+        if let Some(builtin) = builtin_class_name(&class) {
+            if dispatch.read || !dispatch.shares.is_empty() || lookup.after.is_some() {
+                return None;
+            }
+            return builtin_dispatch_answer(post, builtin, &dispatch.method, args);
         }
-        return builtin_dispatch_answer(post, builtin, &dispatch.method, args);
-    }
-    // A class call's result: the instance its class's constructor contract
-    // states it makes (#7757 step 8), never a class nothing states.
-    let constructed = constructed_class_symbol(&class).map(str::to_string);
-    let class = match constructed {
-        Some(symbol) => dispatch.table.constructed.get(&symbol)?.clone()?,
-        None => class,
+        // A class call's result: the instance its class's constructor
+        // contract states it makes (#7757 step 8), never a class nothing
+        // states.
+        let constructed = constructed_class_symbol(&class).map(str::to_string);
+        Some(match constructed {
+            Some(symbol) => dispatch.table.constructed.get(&symbol)?.clone()?,
+            None => class,
+        })
     };
     let target = dispatched_target(
         &dispatch.table.namespaces,
         &dispatch.method,
         dispatch.read,
-        &class,
+        class.as_ref(),
+        &lookup,
     )?;
     let (mut binding, answer, halt_guards, every_halt_guarded, typed_halts) =
         dispatch.table.answers.get(&target.symbol)?.clone()?;
@@ -15221,7 +15412,17 @@ mod tests {
         method: &str,
         class: &Json,
     ) -> Option<String> {
-        dispatched_target(namespaces, method, false, class).map(|target| target.symbol)
+        on_instance(namespaces, method, false, class).map(|target| target.symbol)
+    }
+
+    /// `dispatched_target` on an instance from the first class of its order.
+    fn on_instance(
+        namespaces: &BTreeMap<String, ClassNamespace>,
+        method: &str,
+        read: bool,
+        class: &Json,
+    ) -> Option<DispatchTarget> {
+        dispatched_target(namespaces, method, read, Some(class), &DispatchLookup::default())
     }
 
     fn class_object(cid: &str) -> Json {
@@ -15247,7 +15448,7 @@ mod tests {
         namespaces.insert("python:m.C".to_string(), c);
         let obj = instance("python:m.C", &[]);
         let target = |method: &str, read: bool, class: &Json| {
-            dispatched_target(&namespaces, method, read, class)
+            dispatched_target(&namespaces, method, read, Some(class), &DispatchLookup::default())
         };
         let to = |symbol: &str, receiver: DispatchReceiver| {
             Some(DispatchTarget {
@@ -15277,7 +15478,7 @@ mod tests {
         assert_eq!(target("s", false, &shadowing), None);
         // A classmethod of a class no proof states the object of.
         namespaces.get_mut("python:m.C").unwrap().object = None;
-        assert_eq!(dispatched_target(&namespaces, "k", false, &obj), None);
+        assert_eq!(on_instance(&namespaces, "k", false, &obj), None);
         // `__getattr__` answers a getter's `AttributeError`: a read is not
         // decided; a call of a method is.
         namespaces
@@ -15288,8 +15489,8 @@ mod tests {
                 "__getattr__".to_string(),
                 ("function".to_string(), "python:m.C.__getattr__".to_string()),
             );
-        assert_eq!(dispatched_target(&namespaces, "p", true, &obj), None);
-        assert!(dispatched_target(&namespaces, "s", false, &obj).is_some());
+        assert_eq!(on_instance(&namespaces, "p", true, &obj), None);
+        assert!(on_instance(&namespaces, "s", false, &obj).is_some());
     }
 
     #[test]
@@ -15329,6 +15530,110 @@ mod tests {
         assert_eq!(
             bind_call_arguments(&formals(&["n", "k"]), &[], &rebound),
             Some(vec![("n".to_string(), int(4)), ("k".to_string(), int(5))])
+        );
+        // A classmethod read off a class object: the class object before the
+        // written arguments, every positional class key one higher.
+        let e = instance("python:m.E", &[]);
+        let written = vec![int(4), named_arg("py.class", "0", e.clone())];
+        assert_eq!(
+            dispatched_arguments(&DispatchReceiver::Prepend(class_object("cid-c")), &written),
+            Some(vec![class_object("cid-c"), int(4), named_arg("py.class", "1", e)])
+        );
+    }
+
+    fn lookup(on: &str, after: &str) -> Json {
+        json!({
+            "kind": "ctor",
+            "name": PYTHON_LOOKUP,
+            "args": [string_const(on), string_const(after)],
+        })
+    }
+
+    #[test]
+    fn a_lookup_on_a_class_or_after_a_class_is_the_one_resolution() {
+        // `class A: def m(self); @classmethod def k(cls)`; `class B(A): def
+        // m(self)`; `class C(B): pass`. One order, one resolution: `C.m`,
+        // `super().m()` in `B` on a `C`, `super().k()` in a classmethod.
+        let mut a = namespace(
+            &["python:m.A", "builtins.object"],
+            &[("m", "function", "python:m.A.m"), ("k", "classmethod", "python:m.A.k")],
+        );
+        a.object = Some(class_object("cid-a"));
+        let mut c = namespace(&["python:m.C", "python:m.B", "python:m.A", "builtins.object"], &[]);
+        c.object = Some(class_object("cid-c"));
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert("python:m.A".to_string(), a);
+        namespaces.insert(
+            "python:m.B".to_string(),
+            namespace(
+                &["python:m.B", "python:m.A", "builtins.object"],
+                &[("m", "function", "python:m.B.m")],
+            ),
+        );
+        namespaces.insert("python:m.C".to_string(), c);
+        let on = |class: &str, after: Option<&str>| DispatchLookup {
+            on_class: Some(class.to_string()),
+            after: after.map(str::to_string),
+        };
+        let symbol = |target: Option<DispatchTarget>| target.map(|target| target.symbol);
+        // `C.m(obj)`: the first class of C's order that binds `m`, unbound.
+        let found = dispatched_target(&namespaces, "m", false, None, &on("python:m.C", None));
+        assert_eq!(
+            found,
+            Some(DispatchTarget {
+                symbol: "python:m.B.m".to_string(),
+                receiver: DispatchReceiver::AsCalled,
+            })
+        );
+        // `C.k()`: a classmethod read off C binds C's class object first.
+        assert_eq!(
+            dispatched_target(&namespaces, "k", false, None, &on("python:m.C", None)),
+            Some(DispatchTarget {
+                symbol: "python:m.A.k".to_string(),
+                receiver: DispatchReceiver::Prepend(class_object("cid-c")),
+            })
+        );
+        // `type`'s own data descriptors answer before the class's order.
+        assert_eq!(
+            dispatched_target(&namespaces, "__name__", false, None, &on("python:m.C", None)),
+            None
+        );
+        // `super().m()` in B on an instance of C: after B, the instance's
+        // fields never shadow it.
+        let obj = instance("python:m.C", &["m"]);
+        let after_b = DispatchLookup {
+            on_class: None,
+            after: Some("python:m.B".to_string()),
+        };
+        assert_eq!(
+            symbol(dispatched_target(&namespaces, "m", false, Some(&obj), &after_b)),
+            Some("python:m.A.m".to_string())
+        );
+        // The plain lookup on the same instance is shadowed by its field.
+        assert_eq!(on_instance(&namespaces, "m", false, &obj), None);
+        // A class not in the order decides nothing.
+        let after_x = DispatchLookup {
+            on_class: None,
+            after: Some("python:m.X".to_string()),
+        };
+        assert_eq!(dispatched_target(&namespaces, "m", false, Some(&obj), &after_x), None);
+        // `super().m()` in a classmethod of B with `cls` C: unbound.
+        assert_eq!(
+            dispatched_target(&namespaces, "m", false, None, &on("python:m.C", Some("python:m.B"))),
+            Some(DispatchTarget {
+                symbol: "python:m.A.m".to_string(),
+                receiver: DispatchReceiver::AsCalled,
+            })
+        );
+        // The term states where: the one binder reads past it.
+        let args = vec![var("obj"), int(4), lookup("python:m.C", "")];
+        assert_eq!(
+            bind_call_arguments(&formals(&["self", "n"]), &[], &args),
+            Some(vec![("self".to_string(), var("obj")), ("n".to_string(), int(4))])
+        );
+        assert_eq!(
+            lookup_argument(&lookup("python:m.C", "")),
+            Some(Ok(on("python:m.C", None)))
         );
     }
 

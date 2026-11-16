@@ -1347,7 +1347,7 @@ def test_a_module_with_enters_reading_the_binding_at_the_with() -> None:
     # ``x = 1; class M: def __enter__(self): return x; with M() as y: ...;
     # x = 2``: the with's ``__enter__`` runs where the with stands, so ``y``
     # is the ``x = 1`` binding.  The protocol binds ``__enter__`` through
-    # ``bind_method_call`` at the with's site (``_call_protocol_method``),
+    # the dispatched call at the with's site (``_call_protocol_method``),
     # which reads the method frame again there.
     tree = _source(_MODULE_WITH)
     first, second = _assignment_keys(tree, "x")
@@ -1363,7 +1363,7 @@ def test_a_module_with_enters_reading_the_binding_at_the_with() -> None:
     assert isinstance(after_import, EvaluationRef)
     assert after_import.evaluation == second
     # The method frame the class statement constructs is read again at the
-    # with, as ``bind_method_call`` reads it.
+    # with (``frame_at_current_module_execution_site``).
     frame = function.source_visible_call_frame()
     at_with = construct_at_module_execution_site(
         site, lambda: frame_at_current_module_execution_site(frame)

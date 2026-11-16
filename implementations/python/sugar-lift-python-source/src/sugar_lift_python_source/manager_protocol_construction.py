@@ -398,8 +398,9 @@ def _call_protocol_method(
     ``type(receiver).<name>(receiver, *arguments)`` the ``with`` statement
     makes, through the one door every implicit dunder call takes
     (``ObjectValue.call_method_value``).  A method the one class-namespace
-    lookup selects on a receiver whose class is decided is its coordinate and
-    edge, joined at prove (``method_edge_call``, #7757 step 6); a receiver
+    lookup selects on a receiver whose class is decided is the one dispatched
+    call, looked up and joined at prove (``ObjectValue.call_member``, #7757
+    step 8); a receiver
     that arrived by binding, or a lookup not decided, is the unanswered call.
     The method's body is never applied here: what it returns and what it
     does to the receiver are what its contract states.  ``site`` is the
