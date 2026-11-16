@@ -17,8 +17,10 @@ Here the coordinate is only the key that tells two raised objects apart, the
 same way ``python:c_extension.call_completes`` keys an opaque completion on
 its call site.
 
-Every projection stays opaque or refuses through the ``FloorValue`` defaults:
-its type, ``args``, message, and ``__cause__`` are not invented.
+Every projection stays opaque: its type is ``UndeterminedExceptionTypeValue``,
+and a read of ``args``, a message or ``__cause__`` is the one undecided read,
+never invented.  Any other operation refuses through the ``FloorValue``
+defaults.
 """
 
 from __future__ import annotations
@@ -76,6 +78,20 @@ class UndeterminedExceptionValue(FloorValue):
 
             return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
+
+    def attribute(self, name, site, ctx):
+        """``e.name``: nothing testified to the object's class, so the read
+        is the one undecided read (``floor_value.undecided_attribute_result``,
+        #7757 NEW-3), two-faced and owed, keyed per evaluation.  Its
+        ``args``, message and ``__cause__`` are never invented: the completed
+        face is ``python:attribute_result(<name>, <e>, <key>)``, which the
+        raising callee's contract answers at prove, if any does."""
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+
+        del ctx
+        return undecided_attribute_result(
+            self, name, site, owner="UndeterminedExceptionValue.attribute"
+        )
 
 
 @dataclass(frozen=True)

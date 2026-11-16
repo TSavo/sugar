@@ -1,20 +1,25 @@
-"""A constructor's guarded stores survive the ``super().__init__`` merge.
+"""A guarded store keeps its route: a completion exists only where its call did.
 
 pytest's ``AbstractRaises.__init__`` stores ``self.match = re.compile(match)``
 inside ``try``/``except re.error`` under ``isinstance(match, str)``.  Reached
 through ``super().__init__(match=match)``, the completed construction came
 back with no ``match`` under every guard: the callee's store was guarded, the
 statement splice kept only unconditional stores, and the ground ``if`` flattened
-its suite's routes into one ``true``-guarded completion.  A completed
-construction never stores ``match`` in that merge, which is false.
+its suite's routes into one ``true``-guarded completion.
+
+That splice is deleted: a class call is its coordinate and edge, and the
+``__init__`` a constructor contract dispatches is an ordinary method whose
+contract states what it leaves (#7757; #8977, #8980).  What the law guards is
+the one reduction of the body that stores: so the body is reduced here as
+``f``'s own, in the two shapes the constructor had.
 
 The law: a decided ``if`` hands back the selected suite's own faces, and each
-routed face of a ``try`` decides its own route slot.  So a completed
-construction exists only where ``re.compile`` completed, and it carries the
-compiled ``match``; the handler route halts; the unmatched raise stays an
-undetermined halt.  ``e is None`` for a raised object is decided false -- an
-exception is never the ``None`` singleton -- so the handler route of the
-``re_error`` shape is a halt, not a completed construction without ``match``.
+routed face of a ``try`` decides its own route slot.  So a completion exists
+only where ``re.compile`` completed, and it carries the compiled ``match``;
+the handler route halts; the unmatched raise stays an undetermined halt.
+``e is None`` for a raised object is decided false -- an exception is never
+the ``None`` singleton -- so the handler route of the ``re_error`` shape is a
+halt, not a completion without ``match``.
 """
 
 from __future__ import annotations
@@ -28,19 +33,36 @@ from sugar_lift_py_tests.outcome import Completed, Halted
 
 from test_undetermined_raise_except_matching import _exits
 
-RAISE_FROM = 'import re\nclass Base:\n    def __init__(self, *, match):\n        if isinstance(match, str):\n            try:\n                self.match = re.compile(match)\n            except re.error as e:\n                raise ValueError("bad") from e\n        else:\n            self.match = match\nclass Sub(Base):\n    def __init__(self, *, match=None):\n        super().__init__(match=match)\ndef f():\n    s = Sub(match="boom")\n    return s.match\n'
+RAISE_FROM = (
+    "import re\n"
+    "def f():\n"
+    "    match = 'boom'\n"
+    "    if isinstance(match, str):\n"
+    "        try:\n"
+    "            compiled = re.compile(match)\n"
+    "        except re.error as e:\n"
+    "            raise ValueError('bad') from e\n"
+    "    else:\n"
+    "        compiled = match\n"
+    "    return compiled\n"
+)
 
-RE_ERROR_FLAG = 'import re\nclass Base:\n    def __init__(self, *, match):\n        if isinstance(match, str):\n            re_error = None\n            try:\n                self.match = re.compile(match)\n            except re.error as e:\n                re_error = e\n            if re_error is not None:\n                raise ValueError("bad")\n        else:\n            self.match = match\n        self._fail_reason = None\nclass Sub(Base):\n    def __init__(self, *, match=None):\n        super().__init__(match=match)\ndef f():\n    s = Sub(match="boom")\n    return s.match\n'
-
-
-def _construction_faces(tmp_path: Path, source):
-    """The faces of ``f``: ``Sub(...)`` is a call, so its faces are ``f``'s.
-
-    A completed face returns ``s.match`` as that route's constructor stored it;
-    the constructor's halts are ``f``'s own (#7756: never packed inside a
-    completed value).
-    """
-    return _exits(tmp_path, source).exits
+RE_ERROR_FLAG = (
+    "import re\n"
+    "def f():\n"
+    "    match = 'boom'\n"
+    "    if isinstance(match, str):\n"
+    "        re_error = None\n"
+    "        try:\n"
+    "            compiled = re.compile(match)\n"
+    "        except re.error as e:\n"
+    "            re_error = e\n"
+    "        if re_error is not None:\n"
+    "            raise ValueError('bad')\n"
+    "    else:\n"
+    "        compiled = match\n"
+    "    return compiled\n"
+)
 
 
 def _returned(face):
@@ -54,13 +76,13 @@ def _returned(face):
 
 @pytest.mark.parametrize("source", [RAISE_FROM, RE_ERROR_FLAG], ids=["raise-from", "re-error-flag"])
 def test_completed_construction_keeps_the_compiled_match(tmp_path, source):
-    faces = _construction_faces(tmp_path, source)
+    faces = _exits(tmp_path, source).exits
     completed = [face for face in faces if isinstance(face, Completed)]
     halted = [face for face in faces if isinstance(face, Halted)]
 
-    # Exactly one completed construction: where re.compile completed.
+    # Exactly one completion: where re.compile completed.
     (face,) = completed
-    assert getattr(face.guard, "name", None) == "python:unknown_callee_call.completes"
+    assert "python:unknown_callee_call.completes" in repr(face.guard)
     match = _returned(face)
     assert "re" in repr(match) and "compile" in repr(match)
     assert type(match).__name__ != "NoneValue"

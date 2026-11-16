@@ -30,26 +30,25 @@ class EffectCoordinate(FloorValue):
         return slot_identity(self, other, site, super().is_identical(other, site))
 
     def attribute(self, name, site, ctx):
+        """``x.name`` on the object a slot binds: ``with m as r: r.x``
+        (the value ``__enter__`` returned at that one entry) or ``except T
+        as e: e.args`` (the object the routed raise threw).  Nothing here
+        testified to its runtime type, so the read is the one undecided read
+        (``floor_value.undecided_attribute_result``, #7757 NEW-3): it
+        completes under ``python:attribute_op.completes``, otherwise an
+        undetermined raise, both owed; no member value or exception is
+        invented.  ``__context__`` on an except slot is the chained
+        exception the raise carried, read by ``ObservedEffectValue`` where the
+        route authenticated it and refused by name where nothing did."""
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import effect_slot_source
 
-        if (
-            effect_slot_source(self.slot_id).endswith("#enter_result")
-            and type(self) is EffectCoordinate
+        if name != "__context__" or effect_slot_source(self.slot_id).endswith(
+            "#enter_result"
         ):
-            # ``with m as r: r.x`` read through the body's enter-result slot:
-            # the value ``__enter__`` returned at that one entry, whose runtime
-            # type nothing here testified to.  The opaque attribute law holds:
-            # complete under ``python:attribute_op.completes``, otherwise an
-            # undetermined raise; no member value or exception is invented.
-            from sugar_lift_py_tests.floor.floor_value import (
-                undecided_attribute_result,
-            )
-
             return undecided_attribute_result(
                 self, name, site, owner="EffectCoordinate.attribute"
             )
-        if name != "__context__":
-            return super().attribute(name, site, ctx)
         from sugar_lift_py_tests.gap.info import GapKind
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 

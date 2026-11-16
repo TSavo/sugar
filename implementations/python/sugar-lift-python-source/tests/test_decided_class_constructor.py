@@ -5,10 +5,13 @@ decided by its bases, read by binding (#7757, found by #8043).
 then ``P()``: no class of the walk writes ``__init__`` or ``__new__``, and
 every base is a source class, ``object``, or a builtin exception class whose
 constructor is BaseException's ``(*args)``, each reached through its binding.
-So the call is that construction (``ClassConstructorBodySugar``, through the
-class's constructor frame): it completes with the instance, and an exception
-instance carries its positional actuals as ``args``.  Only a base the lifter
-cannot read leaves the call the one unanswered call.
+That construction is the class's constructor contract, stated under its join
+symbol (``python:e.E``, #8726) and joined at prove: a call of a same-file
+class is its coordinate and edge like any same-file call (#7757 steps 6 and
+9; #8980), so at the call site it is owed, both faces kept, and nothing read
+off the construction (an instance's ``args``, a field an ``__init__``
+stores) is answered by the lift.  A base the lifter cannot read leaves the
+class with no constructor contract: the call is the one unanswered call.
 
 Every reader of a class's bases reads one walk, the MRO by binding
 (``ClassDef.method_resolution_order``): ``ClassDef.constructor_is_read``,
@@ -21,7 +24,7 @@ frame applies, and ``super().__init__(...)`` reaches BaseException's.
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.effect.raise_effect import RaiseEffect, UndeterminedRaiseEffect
+from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import StringValue, TupleValue
 from sugar_lift_py_tests.unanswered_calls import owed_calls
 from sugar_source_tree.nodes import ClassDef
@@ -60,18 +63,32 @@ def _names(order):
     return [entry if isinstance(entry, str) else entry.name for entry in order]
 
 
+def _owed_symbols(exits):
+    """The join symbols of the calls ``f`` owes (``UnansweredCallV1``)."""
+    return sorted(
+        {
+            call.symbol
+            for call in owed_calls(exits)
+            if getattr(call, "symbol", None) is not None
+        }
+    )
+
+
 def test_an_exception_class_without_a_constructor_raises_its_instance(tmp_path):
+    # Every face of ``f`` halts: the class call's own raise, or the raise of
+    # the instance it completes with.  The call is owed under the class's
+    # join symbol, where its constructor contract answers it at prove.
     source = "class E(Exception):\n    pass\ndef f():\n    raise E('boom')\n"
     exits, returns, halts = _faces(tmp_path, source)
     assert returns == []
-    assert owed_calls(exits) == ()
-    assert _owners(halts) == []
-    (raised,) = halts
-    assert isinstance(raised, RaiseEffect)
-    assert raised.exception_type_coordinate.args[0].value == "source-class"
+    assert halts
+    assert _owed_symbols(exits) == ["python:e.E"]
 
 
-def test_the_exception_instance_carries_its_args(tmp_path):
+def test_the_exception_instance_is_bound_never_its_args_read_here(tmp_path):
+    # ``except E as e`` binds the raised object; ``e.args`` is the one
+    # undecided read on it (owed), never the ``('boom',)`` the lift once
+    # read off the construction, and never a construction panic.
     source = (
         "class E(Exception):\n"
         "    pass\n"
@@ -82,8 +99,9 @@ def test_the_exception_instance_carries_its_args(tmp_path):
         "        return e.args\n"
     )
     exits, returns, halts = _faces(tmp_path, source)
-    assert owed_calls(exits) == ()
-    assert returns == [TupleValue((StringValue("boom"),))]
+    assert "python:e.E" in _owed_symbols(exits)
+    assert returns
+    assert TupleValue((StringValue("boom"),)) not in returns
 
 
 def test_a_documented_exception_class_constructs(tmp_path):
@@ -93,9 +111,10 @@ def test_a_documented_exception_class_constructs(tmp_path):
         "def f():\n"
         "    raise E()\n"
     )
-    exits, _returns, halts = _faces(tmp_path, source)
-    assert owed_calls(exits) == ()
-    assert not any(isinstance(halt, UndeterminedRaiseEffect) for halt in halts)
+    exits, returns, halts = _faces(tmp_path, source)
+    assert returns == []
+    assert halts
+    assert _owed_symbols(exits) == ["python:e.E"]
 
 
 def test_a_plain_class_completes_with_its_instance(tmp_path):
@@ -103,8 +122,7 @@ def test_a_plain_class_completes_with_its_instance(tmp_path):
         source = f"class P{bases}:\n    pass\ndef f():\n    return P()\n"
         exits, returns, halts = _faces(_seat(tmp_path, seat), source)
         assert len(returns) == 1
-        assert owed_calls(exits) == ()
-        assert _owners(halts) == []
+        assert _owed_symbols(exits) == ["python:e.P"]
 
 
 def test_a_base_the_lifter_cannot_read_stays_the_unanswered_call(tmp_path):
@@ -198,7 +216,10 @@ def test_an_unread_base_leaves_the_initializer_undecided(tmp_path):
     assert b.initializer_entry() is None
 
 
-def test_an_inherited_initializer_binds_its_own_default(tmp_path):
+def test_an_inherited_initializer_is_the_class_calls_contract(tmp_path):
+    # ``B()`` runs ``A.__init__`` with its own default: that is ``B``'s
+    # constructor contract, joined at prove.  The call is owed, and ``.n`` on
+    # its result is never the ``'three'`` read off ``A``'s body here.
     source = (
         "class A:\n"
         "    def __init__(self, n='three'):\n"
@@ -209,8 +230,9 @@ def test_an_inherited_initializer_binds_its_own_default(tmp_path):
         "    return B().n\n"
     )
     exits, returns, _halts = _faces(tmp_path, source)
-    assert owed_calls(exits) == ()
-    assert returns == [StringValue("three")]
+    assert "python:e.B" in _owed_symbols(exits)
+    assert returns
+    assert StringValue("three") not in returns
 
 
 # -- a source ``__init__`` in a chain ending in a builtin exception ---------

@@ -150,7 +150,7 @@ def test_a_rebound_list_constructs_nothing(source):
 
 def test_value_error_bound_to_the_builtin_is_the_builtin_exception_class():
     sugar = _sugar(_call("def f(o):\n    return ValueError(o)\n", "ValueError"))
-    applied = sugar._applied_builtin_exception_class(None)
+    applied = sugar._applied_builtin_exception_class()
     assert isinstance(applied, BuiltinExceptionClassValue)
 
 
@@ -167,20 +167,20 @@ _SOURCE_CLASS_VALUE_ERROR = (
 )
 def test_a_rebound_value_error_is_not_the_builtin_exception_class(source):
     sugar = _sugar(_call(source, "ValueError"))
-    assert sugar._applied_builtin_exception_class(None) is None
+    assert sugar._applied_builtin_exception_class() is None
 
 
 def test_type_bound_to_the_builtin_answers_a_class_coordinate():
     sugar = _sugar(_call("def f(o):\n    return type(o)\n", "type"))
     assert sugar.language_callee is LanguageCallee.BUILTIN_TYPE
     term = object()
-    assert sugar._applied_builtin_type_of(None, (TermValue(1),), (), term) is term
+    assert sugar._applied_builtin_type_of((TermValue(1),), (), term) is term
 
 
 @pytest.mark.parametrize("source", _shadowed("type"))
 def test_a_rebound_type_answers_no_class_coordinate(source):
     sugar = _sugar(_call(source, "type"))
-    applied = sugar._applied_builtin_type_of(None, (TermValue(1),), (), object())
+    applied = sugar._applied_builtin_type_of((TermValue(1),), (), object())
     assert applied is None
 
 

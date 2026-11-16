@@ -5,25 +5,30 @@
 source ``__init__``: Lib/dataclasses.py ``_init_fn`` writes
 ``__init__(self, f1, f2=<default>, ...)`` from the class's annotated fields in
 order, one ``self.f = f`` store each, and ``field(default_factory=F)`` calls
-``F()`` when the argument is omitted.  Binding those keyword actuals to the
-bare class body was ``call-binding: unconsumed call actual``.
+``F()`` when the argument is omitted.
 
 Only the bare stdlib decorator is modelled; any decorator argument, a source
-``__post_init__``, or a dataclass base keeps the old refusal.
+``__post_init__``, a default that is not a constant, or a factory that is not
+a bare name leaves the written ``__init__`` undecided.
+
+What a call of the class does is the class's constructor contract, joined at
+prove (#7757 steps 6 and 9): a call of a same-file class is its coordinate
+and edge, and no caller follows a manager's or a constructor's body at lift.
+So these read the one place the lifter decides the written ``__init__``,
+``ClassDef._dataclass_generated_init_fields``, the fields the class's
+constructor frame binds.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
-from sugar_source_tree.panic import SourceTreePanic
+from sugar_source_tree.nodes import ClassDef
 
-from test_contextmanager_generator_protocol import _function_rows, _imported
+from test_decorator_and_annotation_known_by_binding import _node
 
 
-def _impl(decorator: str, fields: str, construct: str, check: str, extra: str = "") -> str:
+def _impl(decorator: str, fields: str) -> str:
     return (
         "import dataclasses\n"
         "from typing import Generic, TypeVar\n"
@@ -31,19 +36,6 @@ def _impl(decorator: str, fields: str, construct: str, check: str, extra: str = 
         f"{decorator}\n"
         "class Args(Generic[T]):\n"
         f"{fields}"
-        f"{extra}"
-        "class M:\n"
-        "    def __init__(self, args):\n"
-        "        self.args = args\n"
-        "    def __enter__(self):\n"
-        f"        if {check}:\n"
-        "            raise KeyError(1)\n"
-        "        return 1\n"
-        "    def __exit__(self, *exc):\n"
-        "        return False\n"
-        "def cm():\n"
-        f"    args = {construct}\n"
-        "    return M(args)\n"
     )
 
 
@@ -54,36 +46,27 @@ _FIELDS = (
 )
 
 
-def _rows(tmp_path: Path, source: str):
-    tree, with_node = _imported(tmp_path, source, "pass", contextlib_enrolled=False)
-    return _function_rows(tree, with_node)[1]
+def _fields(source: str):
+    _, args = _node(source, ClassDef, "Args")
+    return args._dataclass_generated_init_fields()
 
 
-@pytest.mark.parametrize(
-    ("construct", "check"),
-    (
-        ("Args(a=1)", "self.args.b != 2"),  # the field default
-        ("Args(a=1)", "self.args.a != 1"),  # keyword actual
-        ("Args(1, 5)", "self.args.b != 5"),  # positional, in field order
-        ("Args(a=1, b=7)", "self.args.b != 7"),
-        ("Args(a=1)", "len(self.args.c) != 0"),  # factory called when omitted
-    ),
-)
-def test_fields_are_the_constructor_parameters(tmp_path, construct, check) -> None:
-    source = _impl("@dataclasses.dataclass", _FIELDS, construct, check)
-    rows = _rows(tmp_path, source)
-    # The stored field decides ``__enter__``: it returns, and never raises
-    # the KeyError a wrong value would.  (The class body's own
-    # ``dataclasses.field(...)`` call keeps its undetermined face: nothing
-    # here testifies what that unresolved callee does.)
-    assert ("return", 7) in rows
-    assert ("halt", "KeyError") not in rows
-
-
-def test_a_wrong_field_value_reaches_the_raise(tmp_path) -> None:
-    source = _impl("@dataclasses.dataclass", _FIELDS, "Args(a=1)", "self.args.b != 3")
-    with pytest.raises(SourceTreePanic, match="enter-may-halt"):
-        _rows(tmp_path, source)
+def test_fields_are_the_constructor_parameters() -> None:
+    # The written ``__init__(self, a, b=2, c=<list()>)``: the fields in
+    # source order, the constant default stored as written, and the factory
+    # the frame calls when the argument is omitted.
+    fields = _fields(_impl("@dataclasses.dataclass", _FIELDS))
+    assert fields is not None
+    assert tuple(name for name, *_ in fields) == ("a", "b", "c")
+    (_, _, a_default, a_factory), (_, _, b_default, b_factory), (
+        _,
+        _,
+        c_default,
+        c_factory,
+    ) = fields
+    assert a_default is None and a_factory is None
+    assert b_default.value == 2 and b_factory is None
+    assert c_default is None and c_factory.id == "list"
 
 
 _UNMODELLED = (
@@ -95,7 +78,8 @@ _UNMODELLED = (
 
 
 @pytest.mark.parametrize(("decorator", "fields"), _UNMODELLED)
-def test_unmodelled_dataclass_shapes_keep_the_refusal(tmp_path, decorator, fields) -> None:
-    source = _impl(decorator, fields, "Args(a=1)", "self.args.b != 2")
-    with pytest.raises(SourceTreePanic, match="call-binding"):
-        _rows(tmp_path, source)
+def test_unmodelled_dataclass_shapes_write_no_init(decorator, fields) -> None:
+    # Nothing here models the shape exactly, so no ``__init__`` is written:
+    # the class call stays the one unanswered call, never a frame built as
+    # if the fields were plain.
+    assert _fields(_impl(decorator, fields)) is None

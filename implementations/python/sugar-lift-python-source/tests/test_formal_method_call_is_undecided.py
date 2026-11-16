@@ -134,13 +134,22 @@ def test_keyword_actuals_reach_the_dispatch():
     assert _owners(halted) == ["UnknownCallee:foo"]
 
 
-def test_a_helper_pop_on_an_empty_actual_may_raise(tmp_path):
+# A caller never runs a same-file helper's body on its actual (#8705): the
+# call is its coordinate and edge, and the dispatch above is what ``g``'s
+# contract states over its formal, joined at prove (#7757 steps 6 and 9).  So
+# each helper call below keeps the one halt its edge owes, and no face the
+# lift would read off ``g``'s body on the caller's actual.
+
+
+def test_a_helper_pop_on_an_empty_actual_is_the_helpers_edge(tmp_path):
     source = "def g(y):\n    return y.pop()\ndef f():\n    return g([])\n"
     _returns, halts = _split(tmp_path, source)
-    assert _owners(halts) == ["BuiltinMethodCall:list.pop"]
+    assert _owners(halts) == ["UnknownCallee:e.g"]
 
 
-def test_a_helper_append_never_raises_and_applies(tmp_path):
+def test_a_helper_append_leaves_the_calls_after_state(tmp_path):
+    from test_builtin_container_mutation import _is_after_call
+
     source = (
         "def g(y):\n"
         "    y.append(1)\n"
@@ -150,11 +159,14 @@ def test_a_helper_append_never_raises_and_applies(tmp_path):
         "    return r\n"
     )
     returns, halts = _split(tmp_path, source)
-    assert returns == [fresh(ListValue, (TermValue(1),))]
-    assert halts == []
+    (value,) = returns
+    assert _is_after_call(value, "y", callee="e.g")
+    assert value != fresh(ListValue, ())
+    assert value != fresh(ListValue, (TermValue(1),))
+    assert _owners(halts) == ["UnknownCallee:e.g"]
 
 
-def test_a_source_method_on_a_formal_runs_its_body(tmp_path):
+def test_a_source_method_on_a_formal_is_the_helpers_edge(tmp_path):
     source = (
         "class C:\n"
         "    def m(self):\n"
@@ -165,4 +177,4 @@ def test_a_source_method_on_a_formal_runs_its_body(tmp_path):
         "    return g(C())\n"
     )
     _returns, halts = _split(tmp_path, source)
-    assert halts == []
+    assert _owners(halts) == ["UnknownCallee:e.C", "UnknownCallee:e.g"]
