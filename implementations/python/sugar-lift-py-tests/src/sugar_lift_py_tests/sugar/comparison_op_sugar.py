@@ -260,8 +260,9 @@ def _publish_undecided_dispatch_edges(
     # Undecided dispatch: the operands' runtime types select ``__eq__`` /
     # ``__contains__`` (and their reflections), which this frame did not look
     # at, so the comparison may raise anything -- the #7585 law.  It completes
-    # with the undecided comparison result, keyed per evaluation
-    # (``python:compare_result(<kind>, left, right, <key>)``), only under
+    # with the truth of the undecided comparison's value, keyed per
+    # evaluation (``python:truth_result(python:compare_result(<kind>, left,
+    # right, <key>), <key>)``), only under
     # ``python:compare.completes(python:compare(op, left, right, <key>))`` and
     # halts with an
     # ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
@@ -354,21 +355,29 @@ _KEYED_COMPARISON_KINDS: dict[str, str] = {
 
 def keyed_comparison(formula, key: str):
     """``formula`` with each undecided comparison atom in it keyed per
-    evaluation: ``py.<op>(<left>, <right>)`` becomes
-    ``python:compare_result("<Kind>", <left>, <right>, <key>)``
-    (``floor_value.undecided_predicate_result``), the operands in the
-    atom's own order (``py.in(item, container)`` stays item first).  Any
-    other atom is unchanged; a connective is rebuilt over its keyed
+    evaluation: ``py.<op>(<left>, <right>)`` becomes the one truth rule's
+    atom over the comparison's value, ``python:truth_result(
+    python:compare_result("<Kind>", <left>, <right>, <key>), <key>)``
+    (``floor_value.undecided_truth_result`` /
+    ``floor_value.undecided_compare_result``), the operands in the atom's
+    own order (``py.in(item, container)`` stays item first).  The
+    comparison is always a value and never a predicate: carried as a value
+    (``PredicateValue.to_term``) it is the ``python:compare_result`` term.
+    Any other atom is unchanged; a connective is rebuilt over its keyed
     operands."""
-    from sugar_lift_py_tests.floor.floor_value import undecided_predicate_result
-    from sugar_lift_py_tests.ir import _Atomic, _Connective, connective, str_const
+    from sugar_lift_py_tests.floor.floor_value import (
+        undecided_compare_result,
+        undecided_truth_result,
+    )
+    from sugar_lift_py_tests.ir import _Atomic, _Connective, connective
 
     if isinstance(formula, _Atomic):
         kind = _KEYED_COMPARISON_KINDS.get(formula.name)
         if kind is None or len(formula.args) != 2:
             return formula
-        return undecided_predicate_result(
-            "compare", (str_const(kind), *formula.args), key
+        left, right = formula.args
+        return undecided_truth_result(
+            undecided_compare_result(kind, left, right, key), key
         )
     if isinstance(formula, _Connective):
         return connective(
@@ -410,8 +419,9 @@ def undecided_ordering_faces(left, right, site, *, operator: str):
     The same law as undecided ``==``: the rich method (and its reflection)
     Python selects is one this frame did not look at, so the comparison
     completes with the undecided ``py.lt/le/gt/ge`` predicate, keyed per
-    evaluation (``python:compare_result("Lt", left, right, <key>)`` ...,
-    :func:`keyed_comparison`), only under
+    evaluation: the truth of the comparison's value
+    (``python:truth_result(python:compare_result("Lt", left, right, <key>),
+    <key>)`` ..., :func:`keyed_comparison`), only under
     ``python:compare.completes(python:compare(op, left, right, <key>))`` and
     halts with an
     ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the

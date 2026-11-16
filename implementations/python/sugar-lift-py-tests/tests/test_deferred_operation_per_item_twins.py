@@ -46,9 +46,12 @@ inside the live item, so each item's operation is still its own
 
 A comparison (``c == 0``) and a truth test (``not c``) on a formal are the
 undecided two faces, and their value is keyed per evaluation too (#7757
-NEW-1, option (b)): ``python:compare_result("Eq", c, 0, <key>)`` and
-``python:truth_result(c, <key>)`` (``floor_value.undecided_predicate_result``),
-the key their completes atom and their halt already carry.  A counting
+NEW-1, option (b)): the comparison is the value ``python:compare_result("Eq",
+c, 0, <key>)`` (``floor_value.undecided_compare_result``) -- what
+``out.append(c == 0)`` stores -- and every truth test, of it or of ``c``, is
+the one truth rule's atom ``python:truth_result(<value>, <key>)``
+(``floor_value.undecided_truth_result``), the key their completes atom and
+their halt already carry; no head is both a value and a predicate.  A counting
 ``__eq__`` or ``__bool__`` answers differently each time, so two evaluations
 -- in two live items, or twice in one body -- are two atoms, and the truth
 ``r[0] != r[1]`` is never ``unsat`` (``compare-per-item``,

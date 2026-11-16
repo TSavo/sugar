@@ -48,9 +48,11 @@ def test_eq_of_two_call_results_is_two_faced(tmp_path):
     returns, halts = _split(tmp_path, source)
     (value,) = returns
     assert type(value) is PredicateValue
-    # The undecided ``==``, keyed per evaluation (#7757 NEW-1).
-    assert value.formula.name == "python:compare_result"
-    assert value.formula.args[0].value == "Eq"
+    # The truth of the undecided ``==``'s value, keyed per evaluation
+    # (#7757 NEW-1).
+    assert value.formula.name == "python:truth_result"
+    assert value.formula.args[0].name == "python:compare_result"
+    assert value.formula.args[0].args[0].value == "Eq"
     assert "UndecidedCompare:Eq" in _owners(halts)
 
 

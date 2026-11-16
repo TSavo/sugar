@@ -42,10 +42,12 @@ def test_ground_assert_true_states_nothing():
 def test_bool_composes_in_equality():
     v = _uni("def A(x):\n    assert x == True\n    return x\n")
     # The undecided ``==``, keyed per evaluation (#7757 NEW-1):
-    # ``python:compare_result("Eq", x, True, <key>)``.
-    assert v.invs()[0].name == "python:compare_result"
-    assert v.invs()[0].args[0].value == "Eq"
-    assert v.invs()[0].args[2].value is True
+    # the truth of ``python:compare_result("Eq", x, True, <key>)``.
+    assert v.invs()[0].name == "python:truth_result"
+    compared = v.invs()[0].args[0]
+    assert compared.name == "python:compare_result"
+    assert compared.args[0].value == "Eq"
+    assert compared.args[2].value is True
 
 
 if __name__ == "__main__":

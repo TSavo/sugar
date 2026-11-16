@@ -168,9 +168,11 @@ def _assert_undecided_ordering_faces(outcome) -> None:
     (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
     (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
     assert completed.guard.name == "python:compare.completes"
-    # The undecided ordering, keyed per evaluation (#7757 NEW-1).
-    assert completed.value.formula.name == "python:compare_result"
-    assert completed.value.formula.args[0].value in {"Lt", "LtE", "Gt", "GtE"}
+    # The truth of the undecided ordering's value, keyed per evaluation
+    # (#7757 NEW-1).
+    assert completed.value.formula.name == "python:truth_result"
+    assert completed.value.formula.args[0].name == "python:compare_result"
+    assert completed.value.formula.args[0].args[0].value in {"Lt", "LtE", "Gt", "GtE"}
     assert isinstance(halted.effect, UndeterminedRaiseEffect)
     assert halted.effect.exception_name is None
     assert halted.effect.producer_node_owner.startswith("UndecidedCompare:")
@@ -403,9 +405,11 @@ def _assert_undecided_membership_faces(outcome) -> None:
     (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
     (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
     assert completed.guard.name == "python:compare.completes"
-    # The undecided membership, keyed per evaluation (#7757 NEW-1).
-    assert completed.value.formula.name == "python:compare_result"
-    assert completed.value.formula.args[0].value == "In"
+    # The truth of the undecided membership's value, keyed per evaluation
+    # (#7757 NEW-1).
+    assert completed.value.formula.name == "python:truth_result"
+    assert completed.value.formula.args[0].name == "python:compare_result"
+    assert completed.value.formula.args[0].args[0].value == "In"
     assert isinstance(halted.effect, UndeterminedRaiseEffect)
     assert halted.effect.exception_name is None
     assert halted.effect.producer_node_owner == "UndecidedCompare:In"

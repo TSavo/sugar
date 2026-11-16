@@ -149,11 +149,15 @@ def test_undecidable_ordering_legs_keep_exact_guards_and_occurrences() -> None:
     first_site, second_site = (value.site for value in sugar.values)
     first_completes = completes(first_site, a, b)
     second_completes = completes(second_site, b, c)
-    # The first leg's value, keyed per evaluation like its completes atom
-    # (#7757 NEW-1).
+    # The first leg's truth: the one truth rule's atom over its value, both
+    # keyed per evaluation like its completes atom (#7757 NEW-1).
+    first_key = str_const(_undecided_occurrence(first_site))
     first_true = atomic(
-        "python:compare_result",
-        [str_const("Lt"), a, b, str_const(_undecided_occurrence(first_site))],
+        "python:truth_result",
+        [
+            ctor("python:compare_result", [str_const("Lt"), a, b, first_key]),
+            first_key,
+        ],
     )
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert {exit_.guard for exit_ in halted} == {

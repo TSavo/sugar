@@ -29,6 +29,40 @@ def test_atomic_predicates_reify_as_term_coordinates() -> None:
     )
 
 
+def test_a_comparison_is_a_value_and_its_truth_never_one() -> None:
+    """#7757: an undecided comparison is always a value and the one truth
+    rule's atom always a predicate; no head stands in both positions.
+
+    ``c == 0``'s own truth, ``python:truth_result(python:compare_result(
+    "Eq", c, 0, <key>), <key>)``, carries the comparison's value -- what
+    ``out.append(c == 0)`` stores.  Any other keyed truth (``not c``, a
+    later test of a stored comparison at its own key) carries the truth
+    evaluation it is, ``python:truth(<operand>, <key>)``, never a
+    ``python:truth_result`` term."""
+    from sugar_lift_py_tests.floor.floor_value import (
+        undecided_compare_result,
+        undecided_truth_result,
+    )
+    from sugar_lift_py_tests.ir import str_const
+
+    c = make_var("c")
+    compared = undecided_compare_result("Eq", c, num(0), "k#1")
+    own = PredicateValue(undecided_truth_result(compared, "k#1"))
+    assert own.to_term(owner="test") == compared
+    assert PredicateValue(not_(own.formula)).to_term(owner="test") == ctor(
+        "py.not", [compared]
+    )
+    later = PredicateValue(undecided_truth_result(compared, "k#2"))
+    assert later.to_term(owner="test") == ctor(
+        "python:truth", [compared, str_const("k#2")]
+    )
+    truth = PredicateValue(not_(undecided_truth_result(c, "k#3")))
+    assert truth.to_term(owner="test") == ctor(
+        "py.not", [ctor("python:truth", [c, str_const("k#3")])]
+    )
+    assert "python:truth_result" not in repr(truth.to_term(owner="test"))
+
+
 def test_connective_predicates_reify_recursively() -> None:
     value = make_var("value")
     formula = and_([py_truthy(value), not_(py_eq(value, num(0)))])

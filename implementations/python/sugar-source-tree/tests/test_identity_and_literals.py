@@ -49,11 +49,13 @@ def test_membership_lifts_for_a_symbolic_container():
         _fn("def A(x, xs):\n    assert x in xs\n    return x\n"),
         owner="UndecidedCompare:In",
     ).invs()[0]
-    # Keyed per evaluation (#7757 NEW-1): ``python:compare_result("In",
-    # x, xs, <key>)``.
-    assert inv.name == "python:compare_result"
-    assert inv.args[0].value == "In"
-    item, container = inv.args[1:-1]
+    # Keyed per evaluation (#7757 NEW-1): the truth of
+    # ``python:compare_result("In", x, xs, <key>)``.
+    assert inv.name == "python:truth_result"
+    compared = inv.args[0]
+    assert compared.name == "python:compare_result"
+    assert compared.args[0].value == "In"
+    item, container = compared.args[1:-1]
     assert item.name == "x"
     assert container.name == "xs"
 

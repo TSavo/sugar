@@ -84,7 +84,7 @@ def _unanswered_truth(value, site, *, owner: str):
 
     The truth completes with the undecided truth of the operand, keyed per
     evaluation (``python:truth_result(<operand term>, <key>)``,
-    ``floor_value.undecided_predicate_result``), only under
+    ``floor_value.undecided_truth_result``), only under
     ``python:truth.completes(python:truth(<operand term>, <key>))``, both
     keyed on the exact source site and its occurrence so two truth tests of
     one term are never forced to agree (the owner's key rule, #7757 NEW-1),
@@ -98,7 +98,7 @@ def _unanswered_truth(value, site, *, owner: str):
     its key (``occurrence.site_coordinate_cid``).
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.floor.floor_value import undecided_predicate_result
+    from sugar_lift_py_tests.floor.floor_value import undecided_truth_result
     from sugar_lift_py_tests.floor.object_identity import identity_term
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
@@ -108,7 +108,7 @@ def _unanswered_truth(value, site, *, owner: str):
     key = occurrence_key(site)
     return ExitSet.two_faced(
         PredicateValue(
-            undecided_predicate_result("truth", (operand,), key),
+            undecided_truth_result(operand, key),
             site,
             operand_callsites=tuple(value.callsites()),
         ),

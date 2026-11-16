@@ -2692,19 +2692,24 @@ mod tests {
 
     #[test]
     fn python_keyed_compare_and_truth_results_are_the_same_read_per_evaluation() {
-        // The kit's undecided comparison and truth values are keyed per
-        // evaluation (#7757 NEW-1): `python:compare_result("<Kind>", l, r,
-        // <key>)` and `python:truth_result(x, <key>)`. Over operands whose
-        // builtin type is decided or stated they are read exactly as
-        // `py.eq` / the integer order / `py.truthy` are.
-        let compare = |kind: &str, left: serde_json::Value, right: serde_json::Value, key: &str| {
-            atomic(
-                PYTHON_COMPARE_RESULT,
-                vec![string_const(kind), left, right, string_const(key)],
-            )
-        };
+        // The kit's undecided comparison and truth are keyed per evaluation
+        // (#7757 NEW-1): a comparison is the value `python:compare_result(
+        // "<Kind>", l, r, <key>)`, and every truth test is the one truth
+        // rule's atom `python:truth_result(x, <key>)`, over that value for
+        // the comparison's own truth. Over operands whose builtin type is
+        // decided or stated they are read exactly as `py.eq` / the integer
+        // order / `py.truthy` are.
         let truth = |operand: serde_json::Value, key: &str| {
             atomic(PYTHON_TRUTH_RESULT, vec![operand, string_const(key)])
+        };
+        let compare = |kind: &str, left: serde_json::Value, right: serde_json::Value, key: &str| {
+            truth(
+                ctor(
+                    PYTHON_COMPARE_RESULT,
+                    vec![string_const(kind), left, right, string_const(key)],
+                ),
+                key,
+            )
         };
         assert_twin(
             compare("Eq", int_const(3), int_const(3), "k"),
@@ -2789,33 +2794,31 @@ mod tests {
             "sat",
             "two evaluations of an undecided bool(p) may differ"
         );
-    }
-
-    #[test]
-    fn a_keyed_comparison_carried_as_a_value_is_the_truth_of_that_value() {
-        // `out.append(c == 0)` carries the keyed comparison as a value (the
-        // same-name ctor, `PredicateValue.to_term`) while a claim states the
-        // same head as an atom. One head in term and in boolean position was
-        // declared once, Int-valued, and applied in Bool position: z3 and
-        // vampire rejected the script and cvc5 hung up on its stdin (the
-        // deferred-operation compare twins). The atom is the truth of the
-        // value it carries: the script is well-formed (`solve` refuses any
-        // `(error ...`), and the stored value's truth is the comparison's.
-        let args = || {
+        // A comparison carried as a value (`out.append(c == 0)`) and the
+        // comparison's truth in one script: the value is only ever a term
+        // and the truth only ever a predicate, so the script is well-sorted
+        // (`solve` refuses any `(error ...`), and an undecided `c == 0` is
+        // either.
+        let value = ctor(
+            PYTHON_COMPARE_RESULT,
             vec![
                 string_const("Eq"),
                 var("c"),
                 int_const(0),
                 string_const("k#1"),
-            ]
-        };
-        let stored = eq(var("x"), ctor(PYTHON_COMPARE_RESULT, args()));
-        let compared = atomic(PYTHON_COMPARE_RESULT, args());
-        let truth_of_x = atomic("py.truthy", vec![var("x")]);
-        assert_twin(
-            all_of(vec![stored.clone(), compared.clone(), truth_of_x.clone()]),
-            all_of(vec![stored, compared, not_formula(truth_of_x)]),
-            "the truth of a stored c == 0 is the comparison's truth",
+            ],
+        );
+        let stored = eq(var("x"), value.clone());
+        let compared = truth(value, "k#1");
+        assert_eq!(
+            solve(&all_of(vec![stored.clone(), compared.clone()])),
+            "sat",
+            "a stored undecided c == 0 may be true"
+        );
+        assert_eq!(
+            solve(&all_of(vec![stored, not_formula(compared)])),
+            "sat",
+            "a stored undecided c == 0 may be false"
         );
     }
 

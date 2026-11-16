@@ -228,7 +228,7 @@ def test_corpus_not_over_an_import_member_is_the_two_faced_truth() -> None:
     surrounding ``pytest.raises``.
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.floor.floor_value import undecided_predicate_result
+    from sugar_lift_py_tests.floor.floor_value import undecided_truth_result
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import not_
 
@@ -258,9 +258,7 @@ def test_corpus_not_over_an_import_member_is_the_two_faced_truth() -> None:
     assert isinstance(completed[0].value, PredicateValue)
     # The truth is keyed per evaluation, at the halt's own key (#7757 NEW-1).
     assert completed[0].value.formula == not_(
-        undecided_predicate_result(
-            "truth", (reference,), halted[0].effect.occurrence
-        )
+        undecided_truth_result(reference, halted[0].effect.occurrence)
     )
 
 
@@ -273,7 +271,7 @@ def test_corpus_not_over_a_symbolic_local_is_the_two_faced_truth() -> None:
     ``pytest.raises``.
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.floor.floor_value import undecided_predicate_result
+    from sugar_lift_py_tests.floor.floor_value import undecided_truth_result
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import not_
 
@@ -300,9 +298,7 @@ def test_corpus_not_over_a_symbolic_local_is_the_two_faced_truth() -> None:
     assert isinstance(completed[0].value, PredicateValue)
     # The truth is keyed per evaluation, at the halt's own key (#7757 NEW-1).
     assert completed[0].value.formula == not_(
-        undecided_predicate_result(
-            "truth", (make_var("obj1"),), halted[0].effect.occurrence
-        )
+        undecided_truth_result(make_var("obj1"), halted[0].effect.occurrence)
     )
 
 
@@ -378,7 +374,7 @@ def test_formal_not_is_the_two_faced_truth_then_negate() -> None:
     protocol no one dispatched method states), and only the completed
     truth is negated.  The halt is kept; no exception type is named."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.floor.floor_value import undecided_predicate_result
+    from sugar_lift_py_tests.floor.floor_value import undecided_truth_result
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import not_
 
@@ -393,9 +389,7 @@ def test_formal_not_is_the_two_faced_truth_then_negate() -> None:
     assert isinstance(completed[0].value, PredicateValue)
     # The truth is keyed per evaluation, at the halt's own key (#7757 NEW-1).
     assert completed[0].value.formula == not_(
-        undecided_predicate_result(
-            "truth", (make_var("value"),), halted[0].effect.occurrence
-        )
+        undecided_truth_result(make_var("value"), halted[0].effect.occurrence)
     )
     assert completed[0].owed and completed[0].owed == halted[0].owed
 

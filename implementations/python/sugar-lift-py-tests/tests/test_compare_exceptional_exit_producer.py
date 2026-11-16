@@ -216,9 +216,11 @@ def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
             for nested in atoms(operand)
         )
 
-    # The completed value is the undecided comparison keyed per evaluation
-    # (#7757 NEW-1): ``python:compare_result("<Kind>", l, r, <key>)``, the
-    # kind the unkeyed ``atom`` names, never the bare ``atom`` itself.
+    # The completed value is the truth of the undecided comparison's value,
+    # both keyed per evaluation (#7757 NEW-1): ``python:truth_result(
+    # python:compare_result("<Kind>", l, r, <key>), <key>)``, the kind the
+    # unkeyed ``atom`` names, never the bare ``atom`` itself, and the
+    # comparison never a predicate.
     from sugar_lift_py_tests.ir import str_const
 
     kind = {
@@ -231,10 +233,13 @@ def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
     }[atom]
     stated = atoms(completed.value.formula)
     assert all(getattr(each, "name", None) != atom for each in stated)
+    assert all(each.name != "python:compare_result" for each in stated)
     keyed = [
         each
         for each in stated
-        if each.name == "python:compare_result" and each.args[0] == str_const(kind)
+        if each.name == "python:truth_result"
+        and getattr(each.args[0], "name", None) == "python:compare_result"
+        and each.args[0].args[0] == str_const(kind)
     ]
     assert keyed, completed.value.formula
     assert halted.effect.exception_name is None
@@ -261,11 +266,13 @@ def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
     # decides their types decides whether the comparison completes.
     (dispatch,) = completes.args
     assert dispatch.name == "python:compare"
-    if getattr(completed.value.formula, "name", None) == "python:compare_result":
-        result = completed.value.formula
+    if getattr(completed.value.formula, "name", None) == "python:truth_result":
+        truth = completed.value.formula
+        result = truth.args[0]
         assert tuple(dispatch.args[1:-1]) == tuple(result.args[1:-1])
-        # One key: the value, its completes atom and its halt.
+        # One key: the value, its truth, its completes atom and its halt.
         assert result.args[-1] == dispatch.args[-1]
+        assert truth.args[-1] == result.args[-1]
         assert result.args[-1] == str_const(halted.effect.occurrence)
 
 
@@ -575,8 +582,9 @@ def test_formal_membership_records_authenticated_contains_receiver_order() -> No
 
     _assert_dual_dispatch(outcome, atom="py.in", blame=str(node.fragment))
     completed = next(exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
-    # ``python:compare_result("In", item, container, <key>)``.
-    assert tuple(completed.value.formula.args[1:-1]) == (
+    # ``python:truth_result(python:compare_result("In", item, container,
+    # <key>), <key>)``.
+    assert tuple(completed.value.formula.args[0].args[1:-1]) == (
         make_var("left"),
         make_var("container"),
     )
@@ -628,14 +636,16 @@ def test_formal_ordering_keeps_swapped_operands_distinct() -> None:
 
     forward_formula, forward_guard = stated(forward)
     swapped_formula, swapped_guard = stated(swapped)
-    # ``python:compare_result("Lt", left, right, <key>)``: the operands sit
-    # between the operator kind and the per-evaluation key.
-    assert forward_formula.name == "python:compare_result"
-    assert tuple(forward_formula.args[1:-1]) == (
+    # ``python:truth_result(python:compare_result("Lt", left, right, <key>),
+    # <key>)``: the operands sit between the operator kind and the
+    # per-evaluation key of the comparison's value.
+    assert forward_formula.name == "python:truth_result"
+    assert forward_formula.args[0].name == "python:compare_result"
+    assert tuple(forward_formula.args[0].args[1:-1]) == (
         make_var("left"),
         make_var("container"),
     )
-    assert tuple(swapped_formula.args[1:-1]) == (
+    assert tuple(swapped_formula.args[0].args[1:-1]) == (
         make_var("container"),
         make_var("left"),
     )
