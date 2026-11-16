@@ -109,7 +109,7 @@ def _the_completed_value(outcome):
 def _iteration_halt(face) -> bool:
     """``face`` is the halt of ``iter`` of the comprehension's undecided
     iterable, or of ``next`` of the iterator ``iter`` completed with
-    (``ComprehensionSugar._iterated``, ``iterator_operation.stepped``)."""
+    (``ComprehensionSugar._recurrence``, ``iterator_operation.stepped``)."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 
     return (

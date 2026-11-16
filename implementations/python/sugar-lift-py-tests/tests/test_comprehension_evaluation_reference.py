@@ -16,12 +16,7 @@ from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.sugar.comprehension_sugar import (
-    ComprehensionSugar,
-    ComprehensionTargetSugar,
-    _leaf_projections,
-    _projection,
-)
+from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
@@ -193,22 +188,31 @@ def test_an_unbound_member_reference_refuses() -> None:
         member.desugar(None)
 
 
+def _recurrence_item(generator, iterable):
+    """The recurrence's one symbolic item of ``iterable`` for ``generator``
+    (``ComprehensionSugar._recurrence``)."""
+    from sugar_lift_py_tests.sugar.loop_recurrence_sugar import loop_item
+
+    return loop_item(generator.binding_coordinate_cid, iterable)
+
+
 def test_a_symbolic_member_is_bound_before_the_element_reads_it() -> None:
     comp = _comprehension("def f(xs):\n    return [x for x in xs]\n")
     sugar = comp.sugar()
     generator = sugar.generators[0]
     coordinate = generator.binding_coordinate_cid
     ctx = _bound(ReduceContext.root(owner="comprehension-member"), "x", TermValue(99))
-    unpacked, enter = sugar._symbolic_member(generator, ctx)
+    member = _recurrence_item(generator, SymbolicValue(make_var("xs")))
+    unpacked, enter = sugar._member_unpack(generator, member, ctx)
     # A name target unpacks nothing: no halt, nothing owed.
     assert not unpacked.halts(), unpacked
     assert not unpacked.owed_items(), unpacked
     inner = enter(())
-    member = SymbolicValue(make_var(coordinate))
     assert inner.temporal.value_if_bound(coordinate) == member
     read = sugar.element.desugar(inner)
     assert read == ExitSet.completed(member)
-    # Nothing outside the fold binds the member: its read owes (#7757).
+    # Nothing ties the recurrence's item to a member of ``xs``: its read owes
+    # (#7757).
     assert read.owed_items(), read
 
 
@@ -216,28 +220,30 @@ def test_a_symbolic_member_binds_without_a_context() -> None:
     comp = _comprehension("def f(xs):\n    return [x for x in xs]\n")
     sugar = comp.sugar()
     generator = sugar.generators[0]
-    _unpacked, enter = sugar._symbolic_member(generator, None)
+    member = _recurrence_item(generator, SymbolicValue(make_var("xs")))
+    _unpacked, enter = sugar._member_unpack(generator, member, None)
     inner = enter(())
-    member = SymbolicValue(make_var(generator.binding_coordinate_cid))
     assert inner.temporal.value_if_bound(generator.binding_coordinate_cid) == member
 
 
 def test_a_symbolic_destructuring_member_binds_each_leaf_projection() -> None:
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.ir import ctor, num
     from sugar_lift_py_tests.outcome import Completed
 
     comp = _comprehension("def f(ps):\n    return [a - b for a, b in ps]\n")
     sugar = comp.sugar()
     generator = sugar.generators[0]
-    element = make_var(generator.binding_coordinate_cid)
-    unpacked, enter = sugar._symbolic_member(
-        generator, ReduceContext.root(owner="comprehension-member")
+    member = _recurrence_item(generator, SymbolicValue(make_var("ps")))
+    unpacked, enter = sugar._member_unpack(
+        generator, member, ReduceContext.root(owner="comprehension-member")
     )
-    # The member's length is not in hand: the unpack completes only under
-    # its completes atom, and under the complement it raises (a wrong arity
-    # is ``ValueError``), the one undetermined raise, which owes.  The halt is
-    # an arm of the comprehension at lift, never only a coordinate inside a
-    # term (#7757: a halt is never dropped).
+    # The item's length is not in hand: the unpack -- the one a loop item
+    # takes (``project_iteration_target``) -- completes only under its
+    # completes atom, and under the complement it raises (a wrong arity is
+    # ``ValueError``), the one undetermined raise, which owes.  The halt is an
+    # arm of the comprehension at lift, never only a coordinate inside a term
+    # (#7757: a halt is never dropped).
     (halted,) = unpacked.halts()
     assert type(halted.effect) is UndeterminedRaiseEffect
     assert halted.effect.producer_node_owner == "ComprehensionSugar.target.unpack"
@@ -246,31 +252,18 @@ def test_a_symbolic_destructuring_member_binds_each_leaf_projection() -> None:
     (done,) = [arm for arm in unpacked.exits if isinstance(arm, Completed)]
     inner = enter(done.value)
     a, b = (coordinate.cid for coordinate in generator.target_coordinates)
-    assert inner.temporal.value_if_bound(a) == SymbolicValue(_projection(element, 0, 2))
-    assert inner.temporal.value_if_bound(b) == SymbolicValue(_projection(element, 1, 2))
 
-
-def test_leaf_projections_nest_as_the_source_nests() -> None:
-    target = ComprehensionTargetSugar(
-        coordinates=(
-            ComprehensionTargetSugar(source_name="a"),
-            ComprehensionTargetSugar(
-                coordinates=(
-                    ComprehensionTargetSugar(source_name="b"),
-                    ComprehensionTargetSugar(source_name="c"),
-                )
-            ),
+    def projection(index):
+        return SymbolicValue(
+            ctor(
+                "python:unpack.project",
+                [member.term, num(index), num(2)],
+                symbol_kind="coordinate",
+            )
         )
-    )
-    element = make_var("member")
-    inner = _projection(element, 1, 2)
-    assert _leaf_projections(target, element) == (
-        _projection(element, 0, 2),
-        _projection(inner, 0, 2),
-        _projection(inner, 1, 2),
-    )
-    leaf = ComprehensionTargetSugar(source_name="x")
-    assert _leaf_projections(leaf, element) == (element,)
+
+    assert inner.temporal.value_if_bound(a) == projection(0)
+    assert inner.temporal.value_if_bound(b) == projection(1)
 
 
 # #7757 item 7, after #7932: a lambda made in a comprehension may be called
@@ -343,16 +336,18 @@ def test_a_symbolic_stored_lambda_reads_the_final_member_without_a_panic() -> No
     comp = _comprehension("def f(xs):\n    return [lambda: x for x in xs]\n")
     sugar = comp.sugar()
     generator = sugar.generators[0]
-    _unpacked, enter = sugar._symbolic_member(
-        generator, ReduceContext.root(owner="comprehension-closure")
+    member = _recurrence_item(generator, SymbolicValue(make_var("xs")))
+    _unpacked, enter = sugar._member_unpack(
+        generator, member, ReduceContext.root(owner="comprehension-closure")
     )
-    ctx = sugar._symbolic_final_ctx(
-        generator, SymbolicValue(make_var("xs")), enter(())
-    )
+    ctx = sugar._recurrence_final_ctx(generator, enter(()))
     final = ctx.temporal.value_if_bound(
         final_member_coordinate(generator.binding_coordinate_cid)
     )
     assert isinstance(final, SymbolicValue)
+    # The final member is the recurrence's value of the member's coordinate
+    # after it (``recurrence_head``), as a loop's target read after it is.
+    assert final.term.name == "python:loop.recurrence", final
     assert final != ctx.temporal.value_if_bound(generator.binding_coordinate_cid)
     read = sugar.element.body.desugar(ctx)
     assert read == ExitSet.completed(final)
@@ -457,12 +452,11 @@ def test_a_symbolic_stored_lambda_reads_the_outer_final_member() -> None:
     comp = _comprehension(_NESTED)
     sugar = comp.sugar()
     generator = sugar.generators[0]
-    _unpacked, enter = sugar._symbolic_member(
-        generator, ReduceContext.root(owner="comprehension-closure")
+    member = _recurrence_item(generator, SymbolicValue(make_var("xs")))
+    _unpacked, enter = sugar._member_unpack(
+        generator, member, ReduceContext.root(owner="comprehension-closure")
     )
-    ctx = sugar._symbolic_final_ctx(
-        generator, SymbolicValue(make_var("xs")), enter(())
-    )
+    ctx = sugar._recurrence_final_ctx(generator, enter(()))
     cell = final_member_coordinate(generator.binding_coordinate_cid)
     final = ctx.temporal.value_if_bound(cell)
     assert isinstance(final, SymbolicValue)

@@ -124,13 +124,139 @@ def _else_left_from(runtime, else_ctx, witnesses, halt, *, site):
 
 
 # The recurrence's value of a name a live loop writes
-# (``LoopRecurrenceSugar._recurrence_head``).
+# (``recurrence_head``).
 RECURRENCE_HEAD = "python:loop.recurrence"
-# The recurrence's one symbolic item of the iterable
-# (``LoopRecurrenceSugar._enter_symbolic_item``).
+# The recurrence's one symbolic item of the iterable (``loop_item``).
 LOOP_ITEM = "python:loop.item"
 # The values a live loop's recurrence states and nothing decides.
 _RECURRENCE_VALUES = frozenset({RECURRENCE_HEAD, LOOP_ITEM})
+
+
+def recurrence_head(target_cid: str, key: str):
+    """The recurrence's value of the name a read after the recurrence
+    reads through ``key`` (a binding coordinate, a post-loop key, a
+    comprehension member's final coordinate): its symbolic fixed point,
+    ``python:loop.recurrence(<target>, <key>)``.  ``target_cid`` names the
+    recurrence: a loop's owned target, a comprehension generator's binding
+    coordinate.  Nothing decides it: a read of it owes
+    (``holds_recurrence_value``)."""
+    return ctor(
+        RECURRENCE_HEAD,
+        [str_const(target_cid), str_const(key)],
+        symbol_kind="coordinate",
+    )
+
+
+def loop_item(target_cid: str, iterable):
+    """The recurrence's one symbolic item of ``iterable`` (None: a
+    ``while``, which iterates nothing): ``python:loop.item(<target>,
+    <iterable>)``, the value every item of a recurrence over an iterable
+    whose members are not in hand stands as -- a ``for``'s
+    (``LoopRecurrenceSugar._enter_symbolic_item``) and a comprehension
+    generator's (``ComprehensionSugar._recurrence``), ``target_cid`` the
+    loop's owned target or the generator's binding coordinate.  No equation
+    ties it to a member of the iterable: a read of it owes
+    (``holds_recurrence_value``)."""
+    return SymbolicValue(
+        ctor(
+            LOOP_ITEM,
+            [
+                str_const(target_cid),
+                *(
+                    ()
+                    if iterable is None
+                    else (iterable.to_term(owner="LoopRecurrenceSugar"),)
+                ),
+            ],
+            symbol_kind="coordinate",
+        )
+    )
+
+
+def project_iteration_target(pattern, value, ctx, *, owner: str, prefix=("target",)):
+    """Project every target leaf of ``pattern`` (a ``TargetPatternV1``)
+    through the Floor-owned unpack door: the one unpack an item of a
+    recurrence takes into its target -- a ``for``'s
+    (``LoopRecurrenceSugar._project_iteration_target``) and a comprehension
+    generator's (``ComprehensionSugar._member_unpack``).  ``prefix`` is the
+    projection path of the pattern's root (``("target",)`` for a ``for``,
+    ``("generators", <index>, "target")`` for a comprehension generator,
+    ``SourceUnit.target_pattern_enrollment``); ``owner`` names the unpack.
+
+    Completes with ``(name, coordinate, value)`` per leaf, in source
+    order; each unpack's halt is an arm beside it, nothing bound.  An
+    item with authenticated members answers one plain roster or halts;
+    one without (the symbolic item, a concrete item's symbolic member)
+    answers both faces of its runtime unpack (``runtime_unpack_faces``):
+    the leaves are read from each completed arm (``ExitSet.and_then``),
+    beneath its guard and carrying what it owes, and an inner unpack's
+    halt is an arm beneath the outer one's."""
+    from sugar_lift_py_tests.operations.positional_unpack_operation import (
+        PositionalUnpackOperation,
+        UnpackMemberRoster,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+    from sugar_source_tree.nodes import List, Name, Tuple_
+
+    coordinates = {
+        coordinate.projection_path: coordinate
+        for coordinate in pattern.target_coordinates
+    }
+
+    def project(target, current, path=()):
+        if isinstance(target, Name):
+            coordinate = coordinates[(*prefix, *path)]
+            return ExitSet.completed(((target.id, coordinate.cid, current),))
+        if not isinstance(target, (Tuple_, List)):
+            raise TypeError("iteration target contains an unsupported target leaf")
+        operation = PositionalUnpackOperation(
+            fixed_prefix=len(target.elts),
+            fixed_suffix=0,
+            has_star=False,
+            owner=owner,
+            blame=target.fragment,
+        )
+        # An item with no authenticated members (the symbolic item, a
+        # symbolic member) is unpacked through the one undecided
+        # operation: two faces (``runtime_unpack_faces``), completing with
+        # the roster or halting with the unpack's raise, both owing its
+        # ``undecided`` member.  The leaves are read from each completed
+        # arm beneath its guard and owing what it owes, and the halt is an
+        # arm as it is (``ExitSet.and_then``): never refused for its debt.
+        unpacked = _require_exit_set(operation.submit(current, ctx), owner=owner)
+
+        def leaves(roster):
+            if not isinstance(roster, UnpackMemberRoster):
+                raise TypeError(
+                    "positional target unpack omitted its authenticated roster"
+                )
+            # The roster is this operation's: minted under its occurrence
+            # (``mint_roster``), the one fragment it was built with.
+            # ``target.fragment`` is a new ``SourceFragment`` at every read,
+            # so it is never the roster's by identity.
+            if (
+                roster.occurrence is not operation.blame
+                or roster.demand_cid != operation.demand_cid()
+                or len(roster.members) != len(target.elts)
+            ):
+                raise TypeError(
+                    "positional target unpack returned cross-wired testimony"
+                )
+
+            def collect(index, bindings):
+                if index == len(target.elts):
+                    return ExitSet.completed(bindings)
+                # A child's halt is an arm as it is; its leaves join the
+                # siblings' on each completed arm.
+                return project(
+                    target.elts[index], roster.members[index], (*path, index)
+                ).and_then(lambda child: collect(index + 1, (*bindings, *child)))
+
+            return collect(0, ())
+
+        return unpacked.and_then(leaves)
+
+    return project(pattern.target, value)
 
 
 def holds_recurrence_value(value) -> bool:
@@ -150,27 +276,18 @@ def holds_recurrence_value(value) -> bool:
     member of an in-hand list, tuple or range) is a concrete item's value,
     never ``LOOP_ITEM``: the loop runs unrolled over it.
 
-    A comprehension's symbolic fold is the same recurrence over the same
-    iterator path (``iterator_operation.iterated``, ``stepped``): a
-    ``ComprehensionValue`` with no finite members holds the comprehension's
-    own coordinate, ``py.listcomp(<occurrence>, <evaluation key>)`` (or its
+    A comprehension over an iterable whose members are not in hand runs as
+    the same recurrence (``ComprehensionSugar._recurrence``): its member is
+    the recurrence's one symbolic item (``loop_item``), and its final
+    member, what a lambda made in it reads after it, is the recurrence's
+    value of that member's coordinate (``recurrence_head``).  The
+    ``ComprehensionValue`` it completes with holds the comprehension's own
+    coordinate, ``py.listcomp(<occurrence>, <evaluation key>)`` (or its
     set, dict or generator kind, ``ComprehensionSugar._own_coordinate``), a
-    constructor
-    prove does not interpret, so the list, set or dict it accumulates (and
-    what a generator yields) is a value the solver chooses.  One whose owner
-    projected every member (``finite_elements``) is decided.
-
-    So is the fold's symbolic member (``SymbolicValue.recurrence_member``,
-    bound by ``ComprehensionSugar._symbolic_member``): the member ``next``
-    yielded, and each leaf's projection of it.  Nothing binds it, so the
-    guard of every arm that reads it -- an element's or condition's halt,
-    the target unpack's halt -- reads it free, and a claim about that halt
-    (an ``except`` around the comprehension) would be decided by the solver
-    choosing the member.  A finite member is the member's own value,
-    never marked.  The fold's final member, what a lambda made in the
-    comprehension reads after it (``python:comprehension.final_member``,
-    ``ComprehensionSugar._symbolic_final_ctx``), is marked the same way: no
-    equation ties it to a member of the iterable."""
+    constructor prove does not interpret, so the list, set or dict it
+    accumulates (and what a generator yields) is a value the solver
+    chooses.  One whose owner projected every member (``finite_elements``)
+    is decided."""
     from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
     from sugar_lift_py_tests.ir import _Ctor
@@ -184,8 +301,6 @@ def holds_recurrence_value(value) -> bool:
             if current.finite_elements is None:
                 return True
         elif isinstance(current, SymbolicValue):
-            if current.recurrence_member:
-                return True
             term = current.term
             if isinstance(term, _Ctor) and term.name in _RECURRENCE_VALUES:
                 return True
@@ -198,11 +313,12 @@ def read_of_bound_value(value, site):
     decides (``holds_recurrence_value``) -- the name the loop carries read
     after it (``LoopBindingRefSugar``), in its ``else`` suite or inside its
     symbolic item through the header, or the item itself read through the
-    target's key (``EvaluationRefSugar``), and a comprehension's symbolic
-    fold, read where the comprehension completes with it
+    target's key (``EvaluationRefSugar``), and a comprehension run as its
+    recurrence, read where the comprehension completes with it
     (``ComprehensionSugar._complete``) and through any key it is bound
-    under, and the fold's symbolic member read in its element, key, value or
-    condition (``EvaluationRefSugar._member``) -- the undecided member, as a slot
+    under, and its member (the recurrence's symbolic item) read in its
+    element, key, value or condition (``EvaluationRefSugar._member``), or its
+    final member read after it -- the undecided member, as a slot
     nothing decided is (``branch_result_coordinate.undecided_slot_debt``):
     the value still stands, and every claim that reads it owes, never
     decided by a value the solver selects (#7757)."""
@@ -594,8 +710,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # consumed (``GeneratorValue``: its pull is stated by its ``next``),
         # a container whose contents are not current
         # (``object_identity.contents_stale``), an instance, a ``str``, a
-        # ``set`` -- runs as the recurrence, over the one iterator path a
-        # comprehension's symbolic fold takes too.  The receiver answers its
+        # ``set`` -- runs as the recurrence, as a comprehension over such an
+        # iterable does (``ComprehensionSugar._recurrence``).  The receiver
+        # answers its
         # ``iter`` as it answers
         # ``iter(x)`` (``SymbolicValue.iter_with``, ``ListValue.iter_with``):
         # the one two-faced outcome (``FloorValue.undecided_iteration``), a
@@ -606,7 +723,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # before any item.  The recurrence stays over the iterable's own
         # term, and steps the iterator ``iter`` completed with
         # (``_recurrence``).  It is the one iterator path a comprehension's
-        # symbolic fold takes too (``iterator_operation.iterated``): where
+        # recurrence takes too (``iterator_operation.iterated``): where
         # the iteration is decided never to raise
         # (``iterator_operation.iteration_total``) no ``iter`` is submitted.
         from sugar_lift_py_tests.operations.iterator_operation import iterated
@@ -912,7 +1029,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # A ``while`` steps no iterator: its test decides each item.
             return items()
         # Each item is what follows its ``next`` (the one iterator path a
-        # comprehension's fold takes too, ``iterator_operation.stepped``):
+        # comprehension's recurrence takes too, ``iterator_operation.stepped``):
         # the item runs on its value face, the loop leaves exhausted on its
         # ``StopIteration``, and its halt -- an undecided raise of an
         # iterator whose ``__next__`` is not decided here, on any step --
@@ -1773,22 +1890,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             return ExitSet.completed(()), lambda _projections: (header_ctx, ()), item
         # The item is free: a read of it through the target's key owes the
         # undecided member (``read_of_bound_value``).
-        element = ctor(
-            LOOP_ITEM,
-            [
-                str_const(self.target_cid),
-                *(
-                    ()
-                    if iterable is None
-                    else (iterable.to_term(owner="LoopRecurrenceSugar"),)
-                ),
-            ],
-            symbol_kind="coordinate",
-        )
+        element = loop_item(self.target_cid, iterable)
         with item():
             header_ctx = self._enter_header(runtime, ctx, starts, decide=False)
             projected = self._project_iteration_target(
-                pattern, SymbolicValue(element), header_ctx
+                pattern, element, header_ctx
             )
         from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 
@@ -1900,86 +2006,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         return tuple(values)
 
     def _project_iteration_target(self, pattern, value, ctx):
-        """Project every target leaf through the Floor-owned unpack door.
-
-        Completes with ``(name, coordinate, value)`` per leaf, in source
-        order; each unpack's halt is an arm beside it, nothing bound.  An
-        item with authenticated members answers one plain roster or halts;
-        one without (the symbolic item, a concrete item's symbolic member)
-        answers both faces of its runtime unpack (``runtime_unpack_faces``):
-        the leaves are read from each completed arm (``ExitSet.and_then``),
-        beneath its guard and carrying what it owes, and an inner unpack's
-        halt is an arm beneath the outer one's."""
-        from sugar_lift_py_tests.operations.positional_unpack_operation import (
-            PositionalUnpackOperation,
-            UnpackMemberRoster,
+        """Project every target leaf of this loop's ``pattern`` through the
+        one unpack an item of a recurrence takes into its target
+        (``project_iteration_target``), under this loop's owner and the
+        ``for`` target's projection path."""
+        return project_iteration_target(
+            pattern, value, ctx, owner="LoopRecurrenceSugar.target"
         )
-        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
-        from sugar_source_tree.nodes import List, Name, Tuple_
-
-        coordinates = {
-            coordinate.projection_path: coordinate
-            for coordinate in pattern.target_coordinates
-        }
-
-        def project(target, current, path=()):
-            if isinstance(target, Name):
-                coordinate = coordinates[("target", *path)]
-                return ExitSet.completed(((target.id, coordinate.cid, current),))
-            if not isinstance(target, (Tuple_, List)):
-                raise TypeError("live for target contains an unsupported target leaf")
-            operation = PositionalUnpackOperation(
-                fixed_prefix=len(target.elts),
-                fixed_suffix=0,
-                has_star=False,
-                owner="LoopRecurrenceSugar.target",
-                blame=target.fragment,
-            )
-            # An item with no authenticated members (the symbolic item, a
-            # symbolic member) is unpacked through the one undecided
-            # operation: two faces (``runtime_unpack_faces``), completing with
-            # the roster or halting with the unpack's raise, both owing its
-            # ``undecided`` member.  The leaves are read from each completed
-            # arm beneath its guard and owing what it owes, and the halt is an
-            # arm as it is (``ExitSet.and_then``): never refused for its debt.
-            unpacked = _require_exit_set(
-                operation.submit(current, ctx), owner="LoopRecurrenceSugar.target"
-            )
-
-            def leaves(roster):
-                if not isinstance(roster, UnpackMemberRoster):
-                    raise TypeError(
-                        "positional target unpack omitted its authenticated roster"
-                    )
-                # The roster is this operation's: minted under its occurrence
-                # (``mint_roster``), the one fragment it was built with.
-                # ``target.fragment`` is a new ``SourceFragment`` at every read,
-                # so it is never the roster's by identity.
-                if (
-                    roster.occurrence is not operation.blame
-                    or roster.demand_cid != operation.demand_cid()
-                    or len(roster.members) != len(target.elts)
-                ):
-                    raise TypeError(
-                        "positional target unpack returned cross-wired testimony"
-                    )
-
-                def collect(index, bindings):
-                    if index == len(target.elts):
-                        return ExitSet.completed(bindings)
-                    # A child's halt is an arm as it is; its leaves join the
-                    # siblings' on each completed arm.
-                    return project(
-                        target.elts[index], roster.members[index], (*path, index)
-                    ).and_then(
-                        lambda child: collect(index + 1, (*bindings, *child))
-                    )
-
-                return collect(0, ())
-
-            return unpacked.and_then(leaves)
-
-        return project(pattern.target, value)
 
     @staticmethod
     def _require_loop_control_state(state, *, target_bindings):
@@ -2304,12 +2337,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     def _recurrence_head(self, key):
         """The recurrence's value of the name a read after the loop reads
         through ``key`` (a binding coordinate or a post-loop key): the loop's
-        symbolic fixed point of it (``python:loop.recurrence``)."""
-        return ctor(
-            RECURRENCE_HEAD,
-            [str_const(self.target_cid), str_const(key)],
-            symbol_kind="coordinate",
-        )
+        symbolic fixed point of it (``recurrence_head``)."""
+        return recurrence_head(self.target_cid, key)
 
     def _publication(self, coordinate_values, posted):
         """What the loop leaves bound for a read after it, on every exit it

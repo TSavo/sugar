@@ -27,8 +27,8 @@ authenticated finite members?
   cardinality is known only at runtime, so the unpack has both faces
   (``runtime_unpack_faces``).  Under ``python:unpack.completes`` of the
   demand (``python:unpack.destructure(term, arity)``, the coordinate a
-  comprehension's target unpack states too:
-  ``sugar/comprehension_sugar.py::_target_unpack``; its starred layout
+  loop or comprehension item's target unpack states too:
+  ``loop_recurrence_sugar.project_iteration_target``; its starred layout
   ``python:unpack.destructure_starred``) each name binds to its position's
   projection; under the complement the unpack raises something undetermined
   (``UndeterminedRaiseEffect``: ``ValueError`` on a count mismatch,

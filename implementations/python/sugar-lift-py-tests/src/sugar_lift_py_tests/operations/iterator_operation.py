@@ -214,7 +214,7 @@ def advance_in_hand(
 # -- the one iterator path of an iteration the reduction does not step -------
 #
 # A ``for`` run as its recurrence (``LoopRecurrenceSugar._desugar_with_iterable``)
-# and a comprehension's symbolic fold (``ComprehensionSugar._after_iterable``)
+# and a comprehension run as that recurrence (``ComprehensionSugar._recurrence``)
 # iterate an iterable whose members are not in hand.  Both run ``iter`` on it
 # once (``iterated``), then a ``next`` per item (``stepped``): each answers
 # here, the one way, and neither has a second form.

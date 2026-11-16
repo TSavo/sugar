@@ -151,7 +151,7 @@ class ComprehensionSugar(ConstructedTermSugar):
     walrus_recurrence: tuple = dataclass_field(compare=False, default=())
     # Whether the comprehension's final member is placed after it: what a
     # lambda made in it reads at a call outside every run of it
-    # (``_final_member_ctx``, ``_symbolic_final_ctx``).  An eager
+    # (``_final_member_ctx``, ``_recurrence_final_ctx``).  An eager
     # comprehension runs whole where it is made.  A generator expression
     # runs when it is consumed: only where it is consumed whole in place
     # (``GeneratorExp._consumed_whole_in_place``); anywhere else how far it
@@ -260,7 +260,12 @@ class ComprehensionSugar(ConstructedTermSugar):
     def _desugar_generators(self, index, ctx, *, writes, outer):
         """``writes``: each walrus write a condition made so far.  ``outer``:
         the context the comprehension is evaluated in, which a walrus's prior
-        read reads (``_walrus_prior``)."""
+        read reads (``_walrus_prior``).
+
+        Past the last generator, the element (a dict's key, then its value)
+        of the recurrence's item: what it ran, ``_ItemRan``, which the
+        outermost recurrence completes the comprehension with, outside every
+        item (``_recurrence``, ``_complete``)."""
         from sugar_lift_py_tests.floor.named_expression_value import (
             peel_walrus_binds,
         )
@@ -275,13 +280,13 @@ class ComprehensionSugar(ConstructedTermSugar):
                             peel_walrus_binds(key)[0], ctx, finite=False
                         )
                     ).and_then(
-                        lambda element: self._complete(
-                            element, key, writes=writes, outer=outer
+                        lambda element: ExitSet.completed(
+                            _ItemRan(element, key, writes)
                         )
                     )
                 )
             return self.element.desugar(ctx).and_then(
-                lambda element: self._complete(element, writes=writes, outer=outer)
+                lambda element: ExitSet.completed(_ItemRan(element, None, writes))
             )
         generator = self.generators[index]
         return generator.iterable.desugar(ctx).and_then(
@@ -303,22 +308,16 @@ class ComprehensionSugar(ConstructedTermSugar):
         A comprehension of several generators is projected when a walrus in
         it writes a name it reads (``walrus_recurrence``): the running value
         threads through the members in nested loop order (each outer member,
-        then every inner member under it), which one evaluation over symbolic
-        members does not hold.  Without one it stays the symbolic fold.
+        then every inner member under it), which the recurrence's one
+        symbolic item does not hold.  Without one it runs as the recurrence.
 
-        The symbolic fold runs ``iter`` on its iterable first and ``next``
-        per member, as a ``for`` does (``_iterated``): the fold follows the
-        faces they go on by.  Where iterating the iterable is decided never
-        to raise (``iterator_operation.iteration_total``) there is no such
-        face to carry.
-
-        This is the comprehension's one loop mechanism (#7757 new 6): no
-        rewrite dissolves a comprehension into a display, and its members run
-        through the loop's one item runner (``_run_in_hand``,
-        ``iterator_operation.advance_in_hand``) where the reduction holds
-        them, by the loop's one gate (``iterator_operation.in_hand_members``:
-        the same budget, the same ``range`` reading); anything else is the
-        symbolic fold over the same iterator path a loop's recurrence takes.
+        A comprehension runs as a ``for`` does (#7757 new 6): no rewrite
+        dissolves it into a display; its members run through the loop's one
+        item runner (``_run_in_hand``, ``iterator_operation.advance_in_hand``)
+        where the reduction holds them, by the loop's one gate
+        (``iterator_operation.in_hand_members``: the same budget, the same
+        ``range`` reading), each in its own item segment; anything else runs
+        as the loop's recurrence (``_recurrence``).
         """
         from sugar_lift_py_tests.operations.iterator_operation import (
             in_hand_members,
@@ -387,26 +386,86 @@ class ComprehensionSugar(ConstructedTermSugar):
                         f"{decision!r}: add a match arm, never a fallthrough"
                     )
 
-        def fold(_iterator):
-            # The member ``next`` yielded is unpacked into the target before
-            # any condition or element reads it (``_symbolic_member``): the
-            # unpack's halt is an arm of the comprehension as it is.
-            unpacked, enter = self._symbolic_member(generator, ctx)
-            return unpacked.and_then(
-                lambda leaves: self._desugar_filters(
-                    generator,
-                    0,
-                    index,
-                    self._symbolic_final_ctx(generator, iterable, enter(leaves)),
-                    writes=writes,
-                    outer=outer,
-                )
-            )
+        return self._recurrence(
+            generator, iterable, index, ctx, writes=writes, outer=outer
+        )
 
-        # The outermost iterable's ``iter`` runs where the generator is made;
-        # everything after it is the pull (``_generator``).
-        made = self._generator if index == 0 and self._pulled_later() else None
-        return self._iterated(iterable, ctx, lambda: fold(None), made=made)
+    def _recurrence(self, generator, iterable, index, ctx, *, writes, outer):
+        """Generator ``index`` over ``iterable``, whose members the reduction
+        does not hold in order, run as a ``for`` over it runs: as the loop's
+        recurrence (``LoopRecurrenceSugar._recurrence``), one symbolic item
+        beside the iteration ending.
+
+        - ``iter`` once, before any item, and a ``next`` per item, through
+          the one iterator path (``iterator_operation.iterated``,
+          ``stepped``): ``iter``'s halt leaves the comprehension before any
+          item; ``next``'s ``StopIteration`` ends it and its value runs the
+          item, which covers every member and none; its halt -- an undecided
+          raise of an iterator whose ``__next__`` is not decided here --
+          leaves the comprehension.  Where the iteration is decided never to
+          raise (``iterator_operation.iteration_total``) neither adds a face.
+        - The item is the recurrence's one symbolic item
+          (``loop_recurrence_sugar.loop_item``: ``python:loop.item(<the
+          generator's binding coordinate>, <iterable>)``), reduced inside
+          its own segment (``occurrence.loop_symbolic_item_segment``), as a
+          ``for``'s symbolic item is: every site in it -- the target unpack,
+          each condition, the element, a later generator -- is keyed as the
+          item's evaluation, never as the comprehension's own.  It is
+          unpacked into the target by the one unpack a loop item takes
+          (``_member_unpack``), whose halt is an arm as it is; nothing ties
+          it to a member of the iterable, so a read of it owes
+          (``read_of_bound_value``).
+        - What the comprehension completes with is read outside every item,
+          by the outermost generator (``_complete``): its own coordinate,
+          whose read owes.
+
+        No halt is guessed and none is dropped.  An expression's halt offers
+        no record of its own: the statement that runs the comprehension
+        records it (``halts_recorded``).  The outermost iterable's ``iter``
+        runs where a generator expression is made; everything after it is
+        the pull (``_generator``)."""
+        from sugar_lift_py_tests.occurrence import entered, loop_symbolic_item_segment
+        from sugar_lift_py_tests.operations.iterator_operation import (
+            iterated,
+            stepped,
+        )
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+        from sugar_lift_py_tests.sugar.loop_recurrence_sugar import loop_item
+
+        owner = "ComprehensionSugar"
+        member = loop_item(generator.binding_coordinate_cid, iterable)
+        segment = loop_symbolic_item_segment(generator.binding_coordinate_cid)
+
+        def item():
+            with entered(segment):
+                # The item is unpacked into the target before any condition
+                # or element reads it: the unpack's halt is an arm of the
+                # comprehension as it is.
+                unpacked, enter = self._member_unpack(generator, member, ctx)
+                return unpacked.and_then(
+                    lambda leaves: self._desugar_filters(
+                        generator,
+                        0,
+                        index,
+                        self._recurrence_final_ctx(generator, enter(leaves)),
+                        writes=writes,
+                        outer=outer,
+                    )
+                )
+
+        def each(iterator):
+            ran = stepped(iterable, iterator, ctx, item, owner=owner, site=self.site)
+            if index != 0:
+                # An inner generator's items are its outer item's: the
+                # outermost generator completes the comprehension.
+                return ran
+            completed = ran.and_then(lambda done: self._complete(done, outer=outer))
+            return self._generator(completed) if self._pulled_later() else completed
+
+        return _require_exit_set(
+            iterated(iterable, ctx, owner=owner, site=self.site),
+            owner="ComprehensionSugar.iter",
+        ).and_then(each)
 
     def _pulled_later(self) -> bool:
         """Whether this is a generator expression whose members are pulled
@@ -499,10 +558,10 @@ class ComprehensionSugar(ConstructedTermSugar):
         Prove does not interpret what such a comprehension accumulates (or
         what a generator yields): reading it owes the undecided member
         (``_complete``, ``read_of_bound_value``, #8916), so no verdict is ever
-        decided by it.  Its recurrence -- the member each generator binds, the
-        unpack of the member into the target, every condition and the element
+        decided by it.  Its recurrence -- the item each generator binds, the
+        unpack of the item into the target, every condition and the element
         -- is reduced here, at lift, where each of their halts and debts is an
-        arm of the comprehension (``_iterated``, ``_symbolic_member``,
+        arm of the comprehension (``_recurrence``, ``_member_unpack``,
         ``_desugar_filters``).  None of it is stated inside the term: a fold
         whose member is bound by a lambda is a binder no term table carries
         (``lift_rpc._closed_enumerate_result`` knows ``var``, ``const`` and
@@ -520,47 +579,6 @@ class ComprehensionSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def _iterated(self, iterable, ctx, fold, *, made=None):
-        """The symbolic fold (``fold()``) over ``iterable``, run as a ``for``
-        runs its recurrence, through the one iterator path both share
-        (``iterator_operation.iterated`` and ``stepped``): ``iter`` once
-        before any member, then each member's ``next``.  ``iter``'s halt
-        leaves the comprehension before any member; ``next``'s
-        ``StopIteration`` and value are where the fold stands (it covers
-        every member and none), and its halt -- an undecided raise of an
-        iterator whose ``__next__`` is not decided here -- leaves the
-        comprehension, kept beside the fold.  Where the iteration is decided
-        never to raise (``iterator_operation.iteration_total``) neither adds
-        a face.  No halt is guessed and none is dropped.
-
-        An expression's halt offers no record of its own: the statement that
-        runs the comprehension records it (``halts_recorded``).
-
-        ``made``, where given, takes what follows ``iter``'s completion (the
-        ``next`` and the fold) to what the comprehension completes with there:
-        a generator pulled later holds it for its consumer (``_generator``)."""
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-        from sugar_lift_py_tests.operations.iterator_operation import (
-            iterated,
-            stepped,
-        )
-        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
-
-        owner = "ComprehensionSugar"
-        iteration = iterated(iterable, ctx, owner=owner, site=self.site)
-
-        def each(iterator):
-            pulled = stepped(iterable, iterator, ctx, fold, owner=owner, site=self.site)
-            return pulled if made is None else made(pulled)
-
-        if isinstance(iteration, NativeOperationExitCarrierV1):
-            return iteration.and_then(each)
-        return _require_exit_set(iteration, owner="ComprehensionSugar.iter").and_then(
-            each
-        )
-
     def _run_in_hand(self, generator, members, ctx):
         """The comprehension over ``members`` (``in_hand_members``: held in
         iteration order, within the one unroll budget), its members run one
@@ -569,8 +587,17 @@ class ComprehensionSugar(ConstructedTermSugar):
         its unpack into the target, its conditions and its element (or the
         next generator's members), then the next member; the iteration's
         ``StopIteration`` ends it (``finish``).  A ``Projected`` outcome, or
-        why the members do not run here (``NotProjected``)."""
+        why the members do not run here (``NotProjected``).
+
+        Each member runs in its own item segment, as a live loop's item does
+        (``occurrence.loop_iteration_segment`` of the generator's binding
+        coordinate and the member's index, ``LoopRecurrenceSugar._run_item``):
+        every site its unpack, conditions and element evaluate is keyed as
+        that member's evaluation, so two members' evaluations of one call
+        are two values, never one key.  The next member, and what the
+        comprehension completes with, run outside it."""
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+        from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
         from sugar_lift_py_tests.operations.iterator_operation import (
             advance_in_hand,
             in_hand_iterator,
@@ -646,6 +673,10 @@ class ComprehensionSugar(ConstructedTermSugar):
         # its members run in order before the next outer member.  The writes
         # thread through that order: ``carried`` passes from each member to
         # the next at every depth.
+        #
+        # ``state`` is ``(projected, binds, carried)``: the elements (dict
+        # pairs) so far, the walrus writes so far, and the context the next
+        # member starts from.
         def finish(projected, binds, _carried):
             from sugar_lift_py_tests.floor.list_value import ListValue
             from sugar_lift_py_tests.floor.object_identity import made_at
@@ -708,49 +739,56 @@ class ComprehensionSugar(ConstructedTermSugar):
                 )
             )
 
-        def project(depth, iterator, index, projected, binds, carried, done):
+        def project(depth, iterator, index, state):
             """Generator ``depth``'s member ``index`` (what ``iterator``
-            yields next) and every member after it, then ``done`` where the
-            iteration ends: stepped by the loop's one item runner
-            (``advance_in_hand``).  An expression's halt offers no record of
+            yields next) and every member after it, stepped by the loop's
+            one item runner (``advance_in_hand``): an ``ExitSet`` whose
+            completed arms hold the ``state`` the iteration ends with.  Each
+            member runs inside its own item segment; the next one runs
+            after it, outside it.  An expression's halt offers no record of
             its own (the statement that runs the comprehension records it)."""
             level = levels[depth]
 
             def item(member_value, advanced):
-                def after(projected, binds, carried):
-                    return project(
-                        depth, advanced, index + 1, projected, binds, carried, done
-                    )
-
-                unpacked, enter = self._member_unpack(level, member_value, carried)
-                if unpacked.completed_value() is None and level.filters:
-                    # The member does not destructure on every arm: its
-                    # conditions are not decided here.
-                    raise _UndecidedMember
-
-                # The member runs beneath each completed arm of its unpack;
-                # the unpack's halt is an arm of the comprehension as it is.
-                def member(roster):
-                    return run_member(
-                        depth, enter(roster), projected, binds, carried, after
-                    )
-
-                return unpacked.and_then(member)
+                with entered(
+                    loop_iteration_segment(level.binding_coordinate_cid, index)
+                ):
+                    ran = run_item(depth, member_value, state)
+                return ran.and_then(
+                    lambda after: project(depth, advanced, index + 1, after)
+                )
 
             return advance_in_hand(
                 iterator,
-                carried,
+                state[2],
                 index=index,
                 owner="ComprehensionSugar",
                 site=self.site,
                 item=item,
-                exhausted=lambda: done(projected, binds, carried),
+                exhausted=lambda: ExitSet.completed(state),
             )
 
-        def run_member(depth, inner_ctx, projected, binds, carried, after):
+        def run_item(depth, member_value, state):
+            """One member of generator ``depth``: its unpack into the
+            target, then (``run_member``) its conditions and its element,
+            or the next generator's members."""
+            level = levels[depth]
+            unpacked, enter = self._member_unpack(level, member_value, state[2])
+            if unpacked.completed_value() is None and level.filters:
+                # The member does not destructure on every arm: its
+                # conditions are not decided here.
+                raise _UndecidedMember
+            # The member runs beneath each completed arm of its unpack; the
+            # unpack's halt is an arm of the comprehension as it is.
+            return unpacked.and_then(
+                lambda roster: run_member(depth, enter(roster), state)
+            )
+
+        def run_member(depth, inner_ctx, state):
             """One member of generator ``depth`` whose target is bound in
             ``inner_ctx``: its conditions, then its element (or the next
-            generator's members), then ``after`` (every member after it)."""
+            generator's members): the state the next member starts from."""
+            projected, binds, carried = state
             level = levels[depth]
             # The member's conditions run before its element, after every
             # earlier member: their writes come first.
@@ -758,7 +796,7 @@ class ComprehensionSugar(ConstructedTermSugar):
             binds = _last_binds((*binds, *condition_writes))
             carried = self._written(condition_writes, carried, finite=True)
             if not keep:
-                return after(projected, binds, carried)
+                return ExitSet.completed((projected, binds, carried))
             if depth + 1 < len(levels):
                 # The next generator's members, under this member: its
                 # iterable reads this member and every write before it.
@@ -768,17 +806,14 @@ class ComprehensionSugar(ConstructedTermSugar):
                 )
                 if inner_members is None:
                     # Not held in hand (``in_hand_members``): the nested
-                    # members are not fixed here, and the comprehension stays
-                    # symbolic.
+                    # members are not fixed here, and the comprehension runs
+                    # as its recurrence.
                     raise _UndecidedMember
                 return project(
                     depth + 1,
                     in_hand_iterator(inner_members),
                     0,
-                    projected,
-                    binds,
-                    inner_ctx,
-                    after,
+                    (projected, binds, inner_ctx),
                 )
 
             def written(wrote):
@@ -808,9 +843,11 @@ class ComprehensionSugar(ConstructedTermSugar):
                     refused = _uninsertable(key, self.site, "DictSugar")
                     if refused is not None:
                         return refused
-                    return after(
-                        (*projected, (key, value)),
-                        *written((*key_binds, *value_binds)),
+                    return ExitSet.completed(
+                        (
+                            (*projected, (key, value)),
+                            *written((*key_binds, *value_binds)),
+                        )
                     )
 
                 return self.key.desugar(inner_ctx).and_then(after_key)
@@ -828,7 +865,9 @@ class ComprehensionSugar(ConstructedTermSugar):
                     refused = _uninsertable(element, self.site, "SetSugar")
                     if refused is not None:
                         return refused
-                return after((*projected, element), *written(element_binds))
+                return ExitSet.completed(
+                    ((*projected, element), *written(element_binds))
+                )
 
             return self.element.desugar(inner_ctx).and_then(after_element)
 
@@ -842,196 +881,109 @@ class ComprehensionSugar(ConstructedTermSugar):
                 0,
                 in_hand_iterator(members),
                 0,
-                (),
-                (),
-                self._recurrence_start(final_ctx, ctx),
-                finish,
-            )
+                ((), (), self._recurrence_start(final_ctx, ctx)),
+            ).and_then(lambda state: finish(*state))
         except _UndecidedMember:
             # A condition's verdict is not one decided bool for some member,
             # or a nested generator's iterable is not a finite container:
-            # which members run is not fixed, and the comprehension stays
-            # symbolic.
+            # which members run is not fixed, and the comprehension runs as
+            # its recurrence.
             return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
         # ExitSet.and_then owns terminal/guarded propagation. Every constructed
         # outcome propagates unchanged through its own continuation law and is
         # TRANSPORTED by ``Projected`` -- which is not a non-success cause.
         return Projected(projected)
 
+    def _generator_index(self, generator) -> int:
+        """Which of this comprehension's generators ``generator`` is: the
+        index its target's projection path is rooted at
+        (``("generators", <index>, "target")``,
+        ``SourceUnit.target_pattern_enrollment``)."""
+        for index, candidate in enumerate(self.generators):
+            if candidate is generator:
+                return index
+        raise ValueError("generator is not one of this comprehension's")
+
     def _member_unpack(self, generator, member, ctx):
-        """``(unpacked, enter)``: one finite member's unpack into the
-        generator's target (``_target_unpack``).  ``unpacked`` is an
-        ``ExitSet`` whose completed arms hold the target's leaf values
-        (``()`` for a name target) and whose halted arms are the unpack's
-        halt (the member does not destructure into the target); a member
-        with no authenticated cardinality answers both, its leaves'
-        projections under the unpack's completes atom and the halt under its
-        complement.  ``enter(leaves)`` is ``ctx`` with the member and a
-        completed arm's leaves bound.
+        """``(unpacked, enter)``: one member's unpack into the generator's
+        target -- an in-hand member (``_run_in_hand``) or the recurrence's
+        one symbolic item (``_recurrence``) -- by the one unpack a loop item
+        takes into its target (``loop_recurrence_sugar.
+        project_iteration_target``, under the generator's own projection
+        path).  ``unpacked`` is an ``ExitSet`` whose completed arms hold each
+        leaf's ``(name, coordinate, value)`` (``()`` for a name target) and
+        whose halted arms are the unpack's halt (the member does not
+        destructure into the target); a member with no authenticated
+        cardinality answers both, its leaves' projections under the
+        unpack's completes atom and the halt under its complement, both
+        owing its ``undecided`` member.  ``enter(leaves)`` is ``ctx`` with
+        the member and a completed arm's leaves bound.
 
         A read of a target name in the element or a condition is a member
         ``EvaluationRef`` to the coordinate bound here (temporal choice 1,
         #7661): the generator's coordinate for a name target, each leaf's
         coordinate for a destructuring one. The reference reads only the
         coordinate. The source name is still bound, for a read substitution
-        did not rewrite.
-        """
-        from dataclasses import replace
+        did not rewrite.  A context that carries no temporal is entered
+        unchanged: a member read in it panics.
 
+        A destructuring generator with no target pattern is refused by
+        name: the producer mints one for every destructuring generator
+        (``ListComp._recurrence_generators``), and no unpack is made up in
+        its place.
+        """
         from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
+            project_iteration_target,
+        )
+        from sugar_lift_py_tests.temporal.context_helpers import bind_temporal
 
         target = generator.target
         member = member.project_operation_receiver(
-            ctx, owner="ComprehensionSugar finite iterable member"
+            ctx, owner="ComprehensionSugar member"
         )
-        temporal = ctx.temporal
-        if target.source_name is not None:
-            temporal = temporal.bind_value(target.source_name, member)
-        temporal = temporal.bind_value(generator.binding_coordinate_cid, member)
-        if target.coordinates is None:
-            return ExitSet.completed(()), lambda _leaves: replace(
-                ctx, temporal=temporal
-            )
-        leaves = _target_leaves(target)
-
-        def enter(leaf_values):
-            leaf_temporal = temporal
-            for leaf, coordinate, value in zip(
-                leaves,
-                generator.target_coordinates,
-                leaf_values,
-                strict=True,
-            ):
-                leaf_temporal = leaf_temporal.bind_value(leaf.source_name, value)
-                leaf_temporal = leaf_temporal.bind_value(coordinate.cid, value)
-            return replace(ctx, temporal=leaf_temporal)
-
-        unpacked = self._target_unpack(
-            target, member, ctx, owner="ComprehensionSugar._run_in_hand.target"
-        )
-        return unpacked, enter
-
-    def _symbolic_member(self, generator, ctx):
-        """``(unpacked, enter)`` for the generator's symbolic member, as
-        ``_member_unpack`` answers for a finite one: the member ``next``
-        yielded, ``make_var(<generator coordinate>)``, unpacked into the
-        target by the one unpack step (``_target_unpack``).
-
-        For a destructuring target the member's cardinality is not in hand,
-        so the unpack answers both of its faces
-        (``positional_unpack_operation.runtime_unpack_faces``): the leaves'
-        projections (``python:unpack.project(<member>, <index>, <arity>)``,
-        a nested pattern's of its position's projection, outer before inner)
-        under the unpack's completes atom, and under its complement the
-        raise Python makes for a member that does not destructure into the
-        target -- ``ValueError`` for a wrong arity, ``TypeError`` for a
-        member that is not iterable -- the one undetermined raise, which
-        owes its ``undecided`` member.  That halt is an arm of the
-        comprehension as it is, under every guard before it, and every
-        condition and the element run only on the completed face.  A name
-        target unpacks nothing: ``unpacked`` completes with ``()``.
-
-        ``enter(leaves)`` is ``ctx`` with the member bound under the
-        generator's coordinate and each leaf under its leaf's coordinate:
-        the coordinates a member ``EvaluationRef`` reads, so the element,
-        the conditions and every later generator read the member and never a
-        name an enclosing statement bound.  Nothing binds the member but its
-        own read, and no input decides it, so each is marked
-        (``SymbolicValue.recurrence_member``): its read owes
-        (``holds_recurrence_value``, #7757).  A context that carries no
-        temporal is entered unchanged: a member read in it panics.
-        """
-        from dataclasses import replace
-
-        from sugar_lift_py_tests.floor import SymbolicValue
-        from sugar_lift_py_tests.ir import make_var
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.temporal.context_helpers import bind_temporal
-
-        member = SymbolicValue(
-            make_var(generator.binding_coordinate_cid), recurrence_member=True
-        )
+        whole = (target.source_name, generator.binding_coordinate_cid, member)
 
         def enter(leaves):
             if ctx is not None and not hasattr(ctx, "temporal"):
                 return ctx
-            bindings = [
-                (generator.binding_coordinate_cid, member),
-                *zip(
-                    (coordinate.cid for coordinate in generator.target_coordinates),
-                    (
-                        replace(leaf, recurrence_member=True)
-                        if isinstance(leaf, SymbolicValue)
-                        else leaf
-                        for leaf in leaves
-                    ),
-                    strict=True,
-                ),
-            ]
             bound = ctx
-            for coordinate, value in bindings:
-                bound = bind_temporal(
-                    bound,
-                    coordinate,
-                    value,
-                    owner="ComprehensionSugar._symbolic_member",
-                    blame=str(self.site),
-                )
+            for name, coordinate, value in (whole, *leaves):
+                for key in (name, coordinate):
+                    if key is None:
+                        continue
+                    bound = bind_temporal(
+                        bound,
+                        key,
+                        value,
+                        owner="ComprehensionSugar._member_unpack",
+                        blame=str(self.site),
+                    )
             return bound
 
-        if generator.target.coordinates is None:
+        if target.coordinates is None:
             return ExitSet.completed(()), enter
-        unpacked = self._target_unpack(
-            generator.target, member, ctx, owner="ComprehensionSugar.target"
+        if generator.target_pattern is None:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="ComprehensionSugar.target",
+                blame=self.site,
+                observed="a destructuring generator target with no target pattern",
+                requested="the producer's TargetPatternV1 for the generator target",
+                fix=(
+                    "construct the comprehension through "
+                    "ListComp._recurrence_generators, which mints the pattern"
+                ),
+            )
+        unpacked = project_iteration_target(
+            generator.target_pattern,
+            member,
+            ctx,
+            owner="ComprehensionSugar.target",
+            prefix=("generators", self._generator_index(generator), "target"),
         )
         return unpacked, enter
-
-    def _target_unpack(self, target, value, ctx, *, owner):
-        """The one unpack of ``value`` into the destructuring ``target``, as
-        Python runs it: ``value`` unpacks into the pattern's positions
-        (``PositionalUnpackOperation``, the step every unpack takes), then
-        each position that is itself a pattern unpacks the same way, in
-        source order.  An ``ExitSet`` whose completed arms hold every leaf's
-        value in ``_target_leaves`` order, and whose halted arms are each
-        unpack's halt: a decided member of the wrong length is the ground
-        ``ValueError``, a member whose cardinality is not in hand halts under
-        the complement of its completes atom (``runtime_unpack_faces``).  A
-        name ``target`` is its own one leaf."""
-        from sugar_lift_py_tests.operations.positional_unpack_operation import (
-            PositionalUnpackOperation,
-            UnpackMemberRoster,
-        )
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        if target.source_name is not None:
-            return ExitSet.completed((value,))
-        positions = target.coordinates
-
-        def leaves_of(roster):
-            if not isinstance(roster, UnpackMemberRoster):
-                raise TypeError(
-                    "comprehension target unpack omitted its authenticated roster"
-                )
-            return position(roster.members, 0, ())
-
-        def position(members, index, done):
-            if index == len(positions):
-                return ExitSet.completed(done)
-            return self._target_unpack(
-                positions[index], members[index], ctx, owner=owner
-            ).and_then(lambda leaves: position(members, index + 1, (*done, *leaves)))
-
-        return (
-            PositionalUnpackOperation(
-                fixed_prefix=len(positions),
-                fixed_suffix=0,
-                has_star=False,
-                owner=owner,
-                blame=self.site,
-            )
-            .submit(value, ctx)
-            .and_then(leaves_of)
-        )
 
     def _final_member_ctx(self, generator, last, ctx):
         """``ctx`` with the generator's final member bound: what the
@@ -1075,17 +1027,21 @@ class ComprehensionSugar(ConstructedTermSugar):
             )
         return replace(ctx, temporal=temporal)
 
-    def _symbolic_final_ctx(self, generator, iterable, ctx):
-        """``ctx`` with the generator's symbolic final member bound under each
+    def _recurrence_final_ctx(self, generator, ctx):
+        """``ctx`` with the recurrence's final member bound under each
         member coordinate's final coordinate (``final_member_coordinate``),
-        as ``_final_member_ctx`` binds a finite one: the final member of
-        ``iterable`` (the member's final evaluation), and, for a destructuring
-        target, each leaf's projection of it. A context that carries no
-        temporal is returned unchanged, as is one where the final member is
-        not placed (``final_member``).
+        as ``_final_member_ctx`` binds a finite one: what a lambda made in
+        the comprehension reads after it.  The final member of a recurrence
+        is its value of that coordinate after it, the recurrence's fixed
+        point (``loop_recurrence_sugar.recurrence_head`` over the
+        generator's binding coordinate and the member coordinate), as a
+        loop's target read after it is: nothing ties it to a member of the
+        iterable, so a read of it owes (``read_of_bound_value``).  A context
+        that carries no temporal is returned unchanged, as is one where the
+        final member is not placed (``final_member``).
         """
         from sugar_lift_py_tests.floor import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.sugar.loop_recurrence_sugar import recurrence_head
         from sugar_lift_py_tests.temporal.context_helpers import bind_temporal
         from sugar_source_tree.nodes import final_member_coordinate
 
@@ -1093,26 +1049,14 @@ class ComprehensionSugar(ConstructedTermSugar):
             return ctx
         if ctx is not None and not hasattr(ctx, "temporal"):
             return ctx
-        final = ctor(
-            "python:comprehension.final_member",
-            [
-                iterable.to_term(owner=str(self.site)),
-                str_const(generator.binding_coordinate_cid),
-            ],
-            symbol_kind="coordinate",
-        )
-        terms = (final,)
-        if generator.target.coordinates is not None:
-            terms = (final, *_leaf_projections(generator.target, final))
-        coordinates = _member_coordinates(generator)
-        for coordinate, term in zip(coordinates, terms, strict=True):
+        for coordinate in _member_coordinates(generator):
             ctx = bind_temporal(
                 ctx,
                 final_member_coordinate(coordinate),
-                # No equation ties the final member to a member of the
-                # iterable: its read owes (``holds_recurrence_value``, #7757).
-                SymbolicValue(term, recurrence_member=True),
-                owner="ComprehensionSugar._symbolic_final_ctx",
+                SymbolicValue(
+                    recurrence_head(generator.binding_coordinate_cid, coordinate)
+                ),
+                owner="ComprehensionSugar._recurrence_final_ctx",
                 blame=str(self.site),
             )
         return ctx
@@ -1323,7 +1267,10 @@ class ComprehensionSugar(ConstructedTermSugar):
 
         return generator.filters[filter_index].desugar(ctx).and_then(after_guard)
 
-    def _complete(self, element, key=None, *, writes, outer) -> ExitSet:
+    def _complete(self, ran, *, outer) -> ExitSet:
+        """What the comprehension run as its recurrence completes with, from
+        what its item ran (``ran``, ``_ItemRan``), read outside every item
+        (``_recurrence``)."""
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
         from sugar_lift_py_tests.floor.named_expression_value import (
             carry_walrus_binds,
@@ -1331,13 +1278,14 @@ class ComprehensionSugar(ConstructedTermSugar):
         )
         from sugar_lift_py_tests.outcome import ExitSet
 
-        # Over a symbolic iterable the element (and a condition) is evaluated
-        # once, over the symbolic member: a walrus there writes for every
-        # member that reaches it, and its write is carried out as the name's
-        # last write, guarded by some member writing (``_symbolic_writes``).
-        key_binds = () if key is None else peel_walrus_binds(key)[0]
-        element_binds = peel_walrus_binds(element)[0]
-        writes = (*writes, *key_binds, *element_binds)
+        # Over an iterable whose members are not in hand the element (and a
+        # condition) is evaluated once, in the recurrence's symbolic item: a
+        # walrus there writes for every member that reaches it, and its write
+        # is carried out as the name's last write, guarded by some member
+        # writing (``_symbolic_writes``).
+        key_binds = () if ran.key is None else peel_walrus_binds(ran.key)[0]
+        element_binds = peel_walrus_binds(ran.element)[0]
+        writes = (*ran.writes, *key_binds, *element_binds)
         value = ComprehensionValue(self._own_coordinate())
         # What the comprehension accumulates (or yields) is decided by no
         # input, and prove does not interpret it.  The comprehension
@@ -1418,8 +1366,21 @@ class ComprehensionSugar(ConstructedTermSugar):
 
 class _UndecidedMember(Exception):
     """A finite member whose conditions are not decided here
-    (``ComprehensionSugar._sifted``): the finite projection does not apply and
-    the comprehension stays symbolic (``_run_in_hand``)."""
+    (``ComprehensionSugar._sifted``): the members do not run in hand and the
+    comprehension runs as its recurrence (``_run_in_hand``)."""
+
+
+@dataclass(frozen=True, eq=False)
+class _ItemRan:
+    """What the recurrence's item ran past its last generator
+    (``ComprehensionSugar._desugar_generators``): the element (a dict's
+    value), the key (a dict's; ``None`` otherwise), and every walrus write
+    a condition made before them.  The outermost generator completes the
+    comprehension from it, outside every item (``_complete``)."""
+
+    element: object
+    key: object
+    writes: tuple
 
 
 def _finite_members(iterable):
@@ -1488,56 +1449,10 @@ def _target_shape_name(target: ComprehensionTargetSugar) -> str:
     return f"destructure:{len(target.coordinates)}"
 
 
-def _projection(element, index: int, arity: int):
-    """The coordinate the ``index``th position of an ``arity``-wide
-    destructuring reads out of a symbolic ``element``.
-
-    Python unpacking is iterable unpacking, not subscription, so this is its
-    own coordinate: it carries the arity the source demanded, which is what
-    makes the accompanying obligation checkable.
-    """
-    from sugar_lift_py_tests.ir import ctor, num
-
-    return ctor(
-        "python:unpack.project",
-        [element, num(index), num(arity)],
-        symbol_kind="coordinate",
-    )
-
-
-def _target_leaves(
-    target: ComprehensionTargetSugar,
-) -> tuple[ComprehensionTargetSugar, ...]:
-    if target.source_name is not None:
-        return (target,)
-    assert target.coordinates is not None
-    return tuple(leaf for child in target.coordinates for leaf in _target_leaves(child))
-
-
 def _member_coordinates(generator: ComprehensionGeneratorSugar) -> tuple[str, ...]:
     """Every coordinate a member binds: the generator's, then, for a
-    destructuring target, each leaf's in ``_target_leaves`` order."""
+    destructuring target, each leaf's in source order."""
     return (
         generator.binding_coordinate_cid,
         *(coordinate.cid for coordinate in generator.target_coordinates),
-    )
-
-
-def _leaf_projections(target: ComprehensionTargetSugar, element) -> tuple:
-    """What each leaf of ``target`` reads out of the symbolic ``element``, in
-    ``_target_leaves`` order.
-
-    A leaf reads the element whole. A pattern reads each position's
-    projection, recursively -- so a nested pattern reads a projection of a
-    projection, exactly as the source nests.
-    """
-    if target.source_name is not None:
-        return (element,)
-    coordinates = target.coordinates
-    assert coordinates is not None
-    arity = len(coordinates)
-    return tuple(
-        projection
-        for index, child in enumerate(coordinates)
-        for projection in _leaf_projections(child, _projection(element, index, arity))
     )

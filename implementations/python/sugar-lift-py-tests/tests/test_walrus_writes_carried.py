@@ -121,7 +121,7 @@ def _value(outcome):
     that halt.
 
     ``iter`` of a formal iterable waits on the caller's actual
-    (``ComprehensionSugar._iterated``): with none, it stands as its two
+    (``ComprehensionSugar._recurrence``): with none, it stands as its two
     faces (``as_its_own_proof_states``), and the comprehension's value is
     the completed face beside that halt too."""
     from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
