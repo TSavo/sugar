@@ -291,6 +291,35 @@ def test_a_formals_truth_is_two_faced_and_owes_it() -> None:
     assert "py.truthy" not in repr(done.value.formula)
 
 
+def test_a_direct_truth_is_the_one_truth_rules_two_faces() -> None:
+    """#7757 NEW-5: ``.truth`` asked directly of a value whose type is not
+    decided (a non-formal symbol, a call result) is what ``truth_of``
+    answers -- the two faces, owed -- never a halt-less ``py.truthy``."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
+    for value, owner in (
+        (SymbolicValue(make_var("s")), "SymbolicValue.truth"),
+        (
+            CallSiteValue(
+                "opaque", (), (), ctor("call:opaque", [make_var("xs")]), None
+            ),
+            "CallSiteValue.truth",
+        ),
+    ):
+        site = _Site()
+        faces = value.truth(site)
+        _assert_two_faced_and_owed(faces, owner)
+        (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
+        assert done.value.formula.name == "python:truth_result"
+        ruled = truth_of(value, site, owner=owner)
+        assert [arm.guard for arm in ruled.exits] == [arm.guard for arm in faces.exits]
+        assert [
+            arm.value.formula for arm in ruled.exits if isinstance(arm, Completed)
+        ] == [done.value.formula]
+
+
 def test_two_evaluations_of_one_comparison_or_truth_are_two_unknowns() -> None:
     """#7757 NEW-1 key rule, comparisons and truth (option (b)): the value
     of ``p == q`` and of ``bool(p)`` names its own occurrence, so two

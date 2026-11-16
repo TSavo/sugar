@@ -1210,7 +1210,8 @@ class ExitSet(Generic[T]):
         ``resume`` of its state, as in ``and_exit``; falsity restores the
         halt with its state as it is.
         """
-        from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
+        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+        from sugar_lift_py_tests.sugar.if_sugar import truth_formula
 
         exits: list[Exit[object]] = []
         for incoming in self.exits:
@@ -1227,41 +1228,83 @@ class ExitSet(Generic[T]):
                 from sugar_lift_py_tests.floor import TermValue
 
                 if isinstance(ex.value, TermValue) and type(ex.value.value) is bool:
-                    truth = true_guard() if ex.value.value else false_guard()
-                else:
-                    truth = predicate_formula(ex.value, site)
-                falsity = (
-                    false_guard()
-                    if _is_true(truth)
-                    else true_guard() if _is_false(truth) else not_(truth)
-                )
-                # The truth predicate is a split this site owns: exactly one of
-                # truth/falsity holds. Mint it so the exclusion survives being
-                # conjoined with a prefix guard downstream.
-                truth_face, falsity_face = partition(
-                    ("and_exit_truthiness", site, truth, guard)
-                )
-                exits.append(
-                    Completed(
-                        _and_guards(guard, truth),
+                    readings = [
                         (
-                            incoming.state
-                            if resume is None
-                            else resume(incoming.state)
-                        ),
-                        faces | {truth_face},
-                        owed,
+                            guard,
+                            true_guard() if ex.value.value else false_guard(),
+                            faces,
+                            owed,
+                        )
+                    ]
+                else:
+                    # ``bool()`` of what ``__exit__`` returned, through the one
+                    # truth rule (#7757 NEW-5): where it is not decided it is
+                    # its two faces, and its halt replaces the incoming one.
+                    readings = []
+                    for read in truth_of(
+                        ex.value, site, owner="ExitSet.and_exit_truthiness"
+                    ).exits:
+                        read_guard = _and_guards(guard, read.guard)
+                        read_faces = faces | read.faces
+                        read_owed = _owed_union(owed, read.owed)
+                        if isinstance(read, Halted):
+                            exits.append(
+                                Halted(
+                                    read_guard,
+                                    read.effect,
+                                    (
+                                        read.state
+                                        if read.state is not None
+                                        else incoming.state
+                                    ),
+                                    read_faces,
+                                    read_owed,
+                                )
+                            )
+                            continue
+                        readings.append(
+                            (
+                                read_guard,
+                                truth_formula(
+                                    ExitSet.completed(read.value), ex.value
+                                ),
+                                read_faces,
+                                read_owed,
+                            )
+                        )
+                for read_guard, truth, read_faces, read_owed in readings:
+                    falsity = (
+                        false_guard()
+                        if _is_true(truth)
+                        else true_guard() if _is_false(truth) else not_(truth)
                     )
-                )
-                exits.append(
-                    Halted(
-                        _and_guards(guard, falsity),
-                        incoming.effect,
-                        incoming.state,
-                        faces | {falsity_face},
-                        owed,
+                    # The truth predicate is a split this site owns: exactly
+                    # one of truth/falsity holds. Mint it so the exclusion
+                    # survives being conjoined with a prefix guard downstream.
+                    truth_face, falsity_face = partition(
+                        ("and_exit_truthiness", site, truth, guard)
                     )
-                )
+                    exits.append(
+                        Completed(
+                            _and_guards(read_guard, truth),
+                            (
+                                incoming.state
+                                if resume is None
+                                else resume(incoming.state)
+                            ),
+                            read_faces | {truth_face},
+                            read_owed,
+                        )
+                    )
+                    exits.append(
+                        Halted(
+                            _and_guards(read_guard, falsity),
+                            incoming.effect,
+                            incoming.state,
+                            read_faces | {falsity_face},
+                            read_owed,
+                        )
+                    )
         return ExitSet(tuple(exits)).normalize()
 
 

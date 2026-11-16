@@ -64,8 +64,39 @@ def _ground_atomic_truth(formula):
 
 
 def predicate_formula(value, site):
-    """The one truth-to-formula projection shared by all guarded constructs."""
-    return truth_formula(value.truth(site), value)
+    """The formula ``bool(value)`` states, where that truth is one value.
+
+    The truth is taken through the one truth rule
+    (``bool_op_sugar.truth_of``), never by asking the value directly, so a
+    value whose truth is not decided here is its two faces and its halt is
+    never dropped (#7757 NEW-5).  Such a truth has no one formula: a caller
+    that can carry its faces takes ``truth_of`` and reads each completed face
+    through ``truth_formula`` (``IfSugar._desugar_condition``, a ``match``
+    guard, ``ExitSet.and_exit_truthiness``); here it is refused by name.
+    """
+    from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
+
+    truth = truth_of(value, site, owner="if_sugar.predicate_formula")
+    if plain_completed_value(truth) is None:
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            owner="if_sugar.predicate_formula",
+            blame=site if site is not None else "if_sugar.predicate_formula",
+            observed=(
+                "truth that is not one decided value: "
+                f"{type(value).__name__}"
+            ),
+            requested="the truth's faces, each read under its own guard",
+            fix=(
+                "take the truth through bool_op_sugar.truth_of and read each "
+                "completed face, as IfSugar._desugar_condition does"
+            ),
+        )
+    return truth_formula(truth, value)
 
 
 def truth_formula(truth, value):

@@ -190,23 +190,20 @@ class ImportMemberValue(FloorValue):
         return self.undecided_attribute(name, site, owner="ImportMemberValue.attribute")
 
     def truth(self, site):
-        """``if mod.FLAG:`` stands as ``py.truthy(<member>)``.
+        """``bool(mod.FLAG)``: the one truth rule's two faces
+        (``bool_op_sugar._unanswered_truth``).
 
         The export's runtime value is not projected, so its truth is not
-        decided at lift time. Like a call result's truth, the condition stands
-        as the symbolic ``py.truthy`` over the authenticated member coordinate
-        and both suites stay reachable under their guards. Nothing is folded:
+        decided at lift time and its ``__bool__`` / ``__len__`` may raise.
+        It completes with ``python:truth_result(<member>, <key>)`` under
+        ``python:truth.completes`` and halts undetermined under the
+        complement, as ``truth_of`` answers for it (#7757 NEW-5): both suites
+        of an ``if`` stay reachable and the halt is kept.  Nothing is folded:
         the member's value is not guessed.
         """
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.bool_op_sugar import _unanswered_truth
 
-        return ExitSet.completed(
-            PredicateValue(
-                py_truthy(self.to_term(owner="ImportMemberValue.truth")), site
-            )
-        )
+        return _unanswered_truth(self, site, owner="ImportMemberValue.truth")
 
     def contains(self, item, site):
         return self.undecided_contains(item, site, owner="ImportMemberValue.contains")

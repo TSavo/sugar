@@ -510,10 +510,15 @@ class FloorValue:
     def undecided_truth(self, site, *, owner: str):
         """``bool(self)`` whose answer is not decided here: a two-faced boolean.
 
-        The value's truth is the opaque ``python:truth(<term>, <site>)``,
-        keyed on the exact source site so two truth tests of the same term
-        are never forced to agree: true under ``py.truthy`` of it, false under
-        its complement.  It completes as that one ``PredicateValue``, so every
+        The value's truth is the one keyed undecided truth,
+        ``python:truth_result(<term>, <key>)``
+        (:func:`undecided_predicate_result`, the form the one truth rule's
+        two faces complete with), keyed on the exact source site so two truth
+        tests of the same term are never forced to agree.  ``<term>`` is the
+        container's identity (``object_identity.identity_term``: its contents
+        are not current, so never its display), so prove never reads it from
+        the contents it arrived with.  It completes as that one
+        ``PredicateValue``, so every
         guarded construct splits on it (``if_sugar.predicate_formula``,
         ``BoolOpSugar``'s selection, ``not``) and neither face is chosen.
 
@@ -533,19 +538,16 @@ class FloorValue:
             _siteless_undecided_read(owner, f"bool({type(self).__name__})", "Call")
         from sugar_lift_py_tests.floor.object_identity import identity_term
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import ctor, py_truthy, str_const
         from sugar_lift_py_tests.occurrence import occurrence_key
         from sugar_lift_py_tests.outcome import ExitSet
 
-        truth = ctor(
-            "python:truth",
-            (
-                identity_term(self, site, "receiver", owner=owner),
-                str_const(occurrence_key(site)),
-            ),
+        truth = undecided_predicate_result(
+            "truth",
+            (identity_term(self, site, "receiver", owner=owner),),
+            occurrence_key(site),
         )
         return ExitSet.completed(
-            PredicateValue(py_truthy(truth), site, operand_callsites=self.callsites())
+            PredicateValue(truth, site, operand_callsites=self.callsites())
         )
 
     def _undecided_protocol_faces(

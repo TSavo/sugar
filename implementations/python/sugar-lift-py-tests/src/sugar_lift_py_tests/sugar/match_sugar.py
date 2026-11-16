@@ -18,8 +18,9 @@ ExitSet law (advisor #6716 rework):
     tighter selection); later-case outcomes never fire unguarded
   - Halted faces keep ``effect`` and ``state``; guards compose via ExitSet.guarded
   - multi-face guard ExitSets are fanned per face (no completed[0] collapse)
-  - equality testimony routes through Floor ``equals`` + ``predicate_formula``
-    (value.truth), never nested getattr formula probes
+  - equality testimony routes through Floor ``equals`` + the one truth rule
+    (``bool_op_sugar.truth_of``), never nested getattr formula probes and
+    never a value's own ``.truth`` (#7757 NEW-5)
   - a completed pattern / equality / guard face feeds the selection formula
     AND what it owes: every arm past it is sequenced after it (``_after``),
     so its ``owed`` reaches the case body's result and every later arm (#7757)
@@ -182,11 +183,17 @@ def _decide(formula, site):
 
 def _tested(outcome, site):
     """A floor test's outcome (``equals``, ``contains``, a type test): each
-    completed truth value decided as matched / not matched; a halt stays."""
+    completed result's truth, taken through the one truth rule
+    (``_truth_faces``), decided as matched / not matched; a halt -- the
+    test's or its truth's -- stays."""
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
-    return _require_exit_set(outcome, owner="MatchSugar.pattern").and_then(
-        lambda value: _decide(_formula_from_floor_value(value, site), site)
+    return (
+        _require_exit_set(outcome, owner="MatchSugar.pattern")
+        .and_then(lambda value: _truth_faces(value, site))
+        .and_then(
+            lambda truth_value: _decide(_truth_face_formula(truth_value), site)
+        )
     )
 
 
@@ -735,55 +742,24 @@ def _halted_face(face, prefix_guard):
     return ExitSet((face,)).guarded(prefix_guard)
 
 
-def _formula_from_floor_value(value, site):
-    """Equality / guard truth via Floor surface (value.truth), not getattr probes."""
-    from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
+def _truth_faces(value, site):
+    """``bool(value)`` for a pattern test's result, an equality's, or a case
+    guard's: the one truth rule (``bool_op_sugar.truth_of``), never the
+    value asked directly.  A value whose truth is not decided here is its two
+    faces: the truth completes under its own atom and the halt stays, as an
+    ``if`` test's does (``IfSugar._desugar_condition``, #7757 NEW-5)."""
+    from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
 
-    return predicate_formula(value, site)
+    return truth_of(value, site, owner="MatchSugar.truth")
 
 
-def _guard_truth_formula(value, site):
-    """The formula a case guard's truth states, or a refusal by name.
-
-    A guard whose truth is one decided value states its formula, through the
-    projection every guarded construct reads (``truth_formula``).  A guard
-    whose truth is not one value where the match is reduced -- the two
-    faces of a value whose truth is not decided, a formal's included
-    (``SymbolicValue.truth``) -- has no one formula, and
-    this match selects its cases by formula (``earlier``).  Carrying such a
-    truth means sequencing the case body and every later case after each of
-    its faces, as ``IfSugar._desugar_condition`` does for an ``if``; that is
-    not written for a case guard, so the guard is refused by name here.
-    Before, it reached ``truth_formula``'s bare ``NotImplementedError``,
-    which is no named refusal.
-    """
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        plain_completed_value,
-    )
+def _truth_face_formula(truth_value):
+    """The formula one completed truth face of ``_truth_faces`` states,
+    through the projection every guarded construct reads
+    (``truth_formula``)."""
     from sugar_lift_py_tests.sugar.if_sugar import truth_formula
 
-    truth = value.truth(site)
-    if plain_completed_value(truth) is None:
-        from sugar_source_tree.panic import SugarNotWritten
-
-        raise SugarNotWritten(
-            owner="MatchSugar.guard",
-            blame=site if site is not None else "MatchSugar.guard",
-            observed=(
-                "case guard whose truth is not one decided value: "
-                f"{type(truth).__name__}"
-            ),
-            requested=(
-                "the guard's truth through the one truth rule "
-                "(bool_op_sugar.truth_of), each face selecting the case "
-                "under its own guard"
-            ),
-            fix=(
-                "sequence the case body and the later cases after each truth "
-                "face, as IfSugar._desugar_condition does"
-            ),
-        )
-    return truth_formula(truth, value)
+    return truth_formula(ExitSet.completed(truth_value), truth_value)
 
 
 def _exceptional_faces_only(exits, prefix_guard):
@@ -885,7 +861,12 @@ def _equality_outcome_under(eq_out, not_prev, site, record):
         raise NotImplementedError(
             f"match equality outcome not lifted: {type(eq_out).__name__}"
         )
-    eq_out = halts_recorded(eq_out, record)
+    # Each completed equality's truth is taken through the one truth rule: a
+    # result whose truth is not decided is its two faces, its halt a side
+    # exit like the equality's own (#7757 NEW-5).
+    eq_out = halts_recorded(
+        eq_out.and_then(lambda value: _truth_faces(value, site)), record
+    )
     side = ExitSet(())
     formulas = []
     path = _debt()
@@ -894,7 +875,7 @@ def _equality_outcome_under(eq_out, not_prev, site, record):
             side = side.union(_halted_face(face, not_prev))
             continue
         if isinstance(face, Completed):
-            truth = _formula_from_floor_value(face.value, site)
+            truth = _truth_face_formula(face.value)
             formulas.append(_and_parts(face.guard, truth))
             path = path.union(_debt(face.owed))
             continue
@@ -941,8 +922,16 @@ def _guard_faces_under(
         )
     # The guard runs where the case's captures are bound (``body_ctx`` binds
     # what the guard's context bound): a guard halt carries the record of
-    # that context, before the case body ran (``halt_record``).
-    guard_out = halts_recorded(guard_out, halt_record(body_ctx))
+    # that context, before the case body ran (``halt_record``).  The guard's
+    # truth is taken through the one truth rule (``_truth_faces``): where it
+    # is not decided (a formal, a call result, an imported member) it is its
+    # two faces, each completed face selecting the case under its own guard
+    # and the truth's halt kept beside the guard expression's own, as an
+    # ``if`` test's are (#7757 NEW-5).
+    guard_out = halts_recorded(
+        guard_out.and_then(lambda value: _truth_faces(value, site)),
+        halt_record(body_ctx),
+    )
     for face in guard_out.exits:
         if isinstance(face, Halted):
             parts.append(_after(None, path, _halted_face(face, reached)))
@@ -950,7 +939,7 @@ def _guard_faces_under(
             earlier_bits.append(_and_parts(match_formula, face.guard))
             continue
         if isinstance(face, Completed):
-            truth = _guard_truth_formula(face.value, site)
+            truth = _truth_face_formula(face.value)
             body_exits = routed(reduce_block_to_exitset(body, body_ctx))
             # The body runs after ``path`` and then the guard face itself: its
             # guard, its partition testimony and what it owes ride onto every

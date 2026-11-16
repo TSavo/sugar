@@ -546,8 +546,10 @@ def test_a_stale_containers_truth_is_the_undecided_truth_never_its_emptiness():
         # One boolean, true under the opaque truth of the value and false
         # under its complement: neither face is chosen.
         assert type(truth) is PredicateValue
-        assert truth.formula.name == "py.truthy"
-        assert truth.formula.args[0].name == "python:truth"
+        # The one keyed undecided truth (#7757 NEW-5): ``python:truth_result(
+        # <the container's identity>, <key>)``, never its display.
+        assert truth.formula.name == "python:truth_result"
+        assert truth.formula.args[0].name == "python:object_read"
         # A builtin container's truth runs no code: no halt, no debt.
         assert outcome.halts() == ()
         assert outcome.owed_items() == ()
