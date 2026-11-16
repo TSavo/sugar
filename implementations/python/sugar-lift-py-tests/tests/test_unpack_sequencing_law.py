@@ -17,10 +17,11 @@ Python semantic law made constructible here (distinct from the store lanes):
   d. Starred targets (``a, *rest = expr``) change the arity law: any length at
      or above the fixed count. Do not apply exact-arity to a starred pattern.
 
-Producer methods (this PR):
+Producer methods:
   - ``Assign.substitute`` via ``_substituted_store_targets``
-  - ``Assign._flat_store_unpack_pairs`` / ``Assign._construct_sugar``
-  - ``UnpackStoreAssignSugar.desugar``
+  - ``Assign.unpack_store_sugar`` / ``Assign._construct_sugar``
+  - ``DynamicUnpackStoreAssignSugar.desugar``: the one unpack, a display
+    right-hand side among them (#7757 S2)
 
 Consumer methods (reused, not reimplemented — windows 10876 / composition):
   - ``SubscriptStoreEffectSugar.desugar`` / ``_store`` → the one item
@@ -37,7 +38,6 @@ Corpus coordinate (pandas 3.0.3, line content verified):
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -50,9 +50,12 @@ from sugar_lift_py_tests.outcome.exit_set import (
     ExitSet,
     Halted,
 )
-from sugar_lift_py_tests.sugar.assign_sugar import UnpackStoreAssignSugar
+from sugar_lift_py_tests.sugar.assign_sugar import DynamicUnpackStoreAssignSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+    NameUnpackTarget,
+    StoreUnpackTarget,
+)
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import path_source, workspace_path_source
 from sugar_source_tree.nodes import Assign
@@ -105,43 +108,33 @@ def _function_sugar(tmp_path: Path, source: str, stem: str = "unpack_seq"):
 
 def _unpack(
     tmp_path: Path, source: str, stem: str = "unpack_seq"
-) -> UnpackStoreAssignSugar:
+) -> DynamicUnpackStoreAssignSugar:
     sugar = _function_sugar(tmp_path, source, stem)
     return next(
-        stmt for stmt in sugar.statements if isinstance(stmt, UnpackStoreAssignSugar)
+        stmt
+        for stmt in sugar.statements
+        if isinstance(stmt, DynamicUnpackStoreAssignSugar)
     )
+
+
+def _stores(unpack) -> tuple:
+    """Each store leaf's own statement's sugar, left to right."""
+    return tuple(t.store for t in unpack.targets if isinstance(t, StoreUnpackTarget))
+
+
+def _member_keys(unpack) -> tuple:
+    """The key each store leaf's member is bound under, left to right."""
+    return tuple(
+        t.evaluation for t in unpack.targets if isinstance(t, StoreUnpackTarget)
+    )
+
+
+def _names(unpack) -> tuple:
+    return tuple(t.name for t in unpack.targets if isinstance(t, NameUnpackTarget))
 
 
 def _exits(tmp_path: Path, source: str, stem: str = "unpack_seq"):
     return _function_sugar(tmp_path, source, stem).desugar(None)
-
-
-@dataclass(frozen=True)
-class _ObservedSugar(Sugar):
-    label: str
-    value: object
-    log: list
-
-    @classmethod
-    def witnesses(cls):
-        raise AssertionError("test helper has no witness")
-
-    def desugar(self, ctx=None):
-        del ctx
-        self.log.append(self.label)
-        return ExitSet.completed(self.value)
-
-
-def _site(tmp_path: Path):
-    path = tmp_path / "store.py"
-    path.write_text("def f(obj, key, value):\n    obj[key] = value\n")
-    function = next(
-        SourceFile(
-            workspace_path_source(str(path), root=str(tmp_path)),
-            construction_context=tree_construction_context_for_workspace(tmp_path),
-        ).functions()
-    )
-    return function.body[0].fragment
 
 
 # ---------------------------------------------------------------------------
@@ -204,9 +197,9 @@ def test_corpus_name_subscript_unpack_constructs_then_stays_undischarged() -> No
 
     # Construction must no longer refuse the shape at Assign.sugar.
     sugar = assigns[0].sugar()
-    assert isinstance(sugar, UnpackStoreAssignSugar)
-    assert len(sugar.stores) == 1
-    assert isinstance(sugar.stores[0], SubscriptStoreEffectSugar)
+    assert isinstance(sugar, DynamicUnpackStoreAssignSugar)
+    assert len(_stores(sugar)) == 1
+    assert isinstance(_stores(sugar)[0], SubscriptStoreEffectSugar)
 
     # Desugar of the full enclosing function is not required: the site itself
     # carries undecided receivers. The statement is not one unconditional
@@ -224,9 +217,9 @@ def test_corpus_name_subscript_unpack_constructs_then_stays_undischarged() -> No
 def test_producer_and_consumer_methods_are_the_named_seams() -> None:
     """Document the exact methods this PR owns (and the store law it reuses)."""
     assert hasattr(Assign, "substitute")
-    assert hasattr(Assign, "_flat_store_unpack_pairs")
+    assert hasattr(Assign, "unpack_store_sugar")
     assert hasattr(Assign, "_construct_sugar")
-    assert hasattr(UnpackStoreAssignSugar, "desugar")
+    assert hasattr(DynamicUnpackStoreAssignSugar, "desugar")
     # Reused store lane — not reimplemented here.
     assert hasattr(SubscriptStoreEffectSugar, "desugar")
     assert hasattr(SubscriptStoreEffectSugar, "_store")
@@ -245,9 +238,8 @@ def test_name_and_subscript_display_unpack_constructs(tmp_path: Path) -> None:
         "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n",
         "namesub",
     )
-    assert len(unpack.bindings) == 1
-    assert unpack.bindings[0][0] == "x"
-    assert len(unpack.stores) == 1
+    assert _names(unpack) == ("x",)
+    assert len(_stores(unpack)) == 1
     # The store leaf is the single-target store's own statement (#7757 item
     # 7): the receiver's ``__setitem__``, the receiver read through its
     # formal's coordinate.
@@ -257,7 +249,7 @@ def test_name_and_subscript_display_unpack_constructs(tmp_path: Path) -> None:
     )
     from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
 
-    (store,) = unpack.stores
+    (store,) = _stores(unpack)
     assert isinstance(store, ContainerMutationStatementSugar)
     call = store.evaluated[0]
     assert isinstance(call, PathContainerCallSugar)
@@ -280,22 +272,25 @@ def test_dual_subscript_display_unpack_constructs_distinct_pairings(
         "def f(a, b, i, j, p, q):\n    a[i], b[j] = q, p\n    return p\n",
         "dual_qp",
     )
-    assert len(left.stores) == 2 and len(right.stores) == 2
-    # Each store reads its paired RHS member through its member key — not
-    # index text alone.
-    assert left.members[0][1] is not right.members[0][1] or (
-        str(left.members[0][1]) != str(right.members[0][1])
+    assert len(_stores(left)) == 2 and len(_stores(right)) == 2
+    # The unpack pairs each store with its RHS member by position, through
+    # the member key -- not index text alone.
+    assert left.value.elements[0] is not right.value.elements[0] or (
+        str(left.value.elements[0]) != str(right.value.elements[0])
     )
     # Each store is the receiver's ``__setitem__(key, value)``; its value
     # operand reads the store's own member key, in target order.
-    assert [store.evaluated[0].method for store in left.stores] == [
+    assert [store.evaluated[0].method for store in _stores(left)] == [
         "__setitem__",
         "__setitem__",
     ]
-    assert [store.evaluated[0].args[-1].evaluation for store in left.stores] == [
-        key for key, _member in left.members
+    assert [
+        store.evaluated[0].args[-1].evaluation for store in _stores(left)
+    ] == list(_member_keys(left))
+    assert [store.evaluated[0].receiver.name for store in _stores(left)] == [
+        "a",
+        "b",
     ]
-    assert [store.evaluated[0].receiver.name for store in left.stores] == ["a", "b"]
 
 
 def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> None:
@@ -336,27 +331,6 @@ def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 # Face (b): evaluate-once, left-to-right; store reuses #6599 order
 # ---------------------------------------------------------------------------
-
-
-def test_unpack_store_leaf_evaluates_value_receiver_key_once_in_python_order(
-    tmp_path: Path,
-) -> None:
-    """Store leaf inside unpack reuses the #6599 evaluation order."""
-    log: list[str] = []
-    store = SubscriptStoreEffectSugar(
-        receiver=_ObservedSugar("receiver", fresh(ListValue, (TermValue(1),)), log),
-        index=_ObservedSugar("key", TermValue(0), log),
-        value=_ObservedSugar("value", TermValue(7), log),
-        site=_site(tmp_path),
-    )
-    outcome = UnpackStoreAssignSugar(
-        bindings=(), stores=(store,), site=_site(tmp_path)
-    ).desugar()
-    assert log == ["value", "receiver", "key"]
-    value = outcome.completed_value()
-    assert value is not None
-    # reduce_body wraps store contributions in a fall-through BlockValue.
-    assert fresh(ListValue, (TermValue(7),)) in value.statements
 
 
 def test_ground_name_then_list_store_completes_with_name_bound(tmp_path: Path) -> None:
@@ -439,7 +413,7 @@ def test_list_indexerror_store_halt_originates_in_setitem_not_boundary(
 def test_display_arity_mismatch_does_not_fabricate_completion(tmp_path: Path) -> None:
     """Two targets, one display member: not a completed unpack.
 
-    The display the tree does not pair is built and unpacked at reduce, as
+    The display is built and unpacked at reduce, as
     any right-hand side is (#7757 S2): its decided count is wrong, so every
     face halts and none completes; nothing is stored."""
     path = tmp_path / "arity.py"
@@ -566,8 +540,8 @@ def test_an_unpack_store_leaf_is_the_standalone_store_statement(
         "def f():\n    a = [0]\n    x, a[0] = 1, 2\n    return x\n",
         "one_door",
     )
-    assert isinstance(unpack, UnpackStoreAssignSugar)
-    assert isinstance(unpack.stores[0], ContainerMutationStatementSugar)
+    assert isinstance(unpack, DynamicUnpackStoreAssignSugar)
+    assert isinstance(_stores(unpack)[0], ContainerMutationStatementSugar)
 
     single = _function_sugar(
         tmp_path, "def f():\n    a = [0]\n    a[0] = 2\n    return a\n", "single"
@@ -575,4 +549,6 @@ def test_an_unpack_store_leaf_is_the_standalone_store_statement(
     assert any(
         isinstance(s, ContainerMutationStatementSugar) for s in single.statements
     )
-    assert not any(isinstance(s, UnpackStoreAssignSugar) for s in single.statements)
+    assert not any(
+        isinstance(s, DynamicUnpackStoreAssignSugar) for s in single.statements
+    )

@@ -68,62 +68,6 @@ class AssignSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class MultiAssignSugar(Sugar):
-    """More than one name bound by a single Assign statement -- either a
-    destructured display (`a, b = <tuple/list display>`) or a chained
-    assignment (`x = y = e`). Just like AssignSugar, substitute has already
-    threaded every binding into the rest of the block by the time this sugar
-    reduces: an assignment states no fact of its own, so this too is inert
-    meaning. `bindings` holds each bound name with its own rhs sugar --
-    provenance only, never re-stated.
-
-    Meaning-only, node-constructed: no owns/new/role. Only shapes the tree
-    node has already proven destructure (or chain) reach here; anything else
-    stays a loud gap on the node.
-    """
-
-    # tuple of (name, value_sugar) pairs, in evaluation order
-    # (``Assign._unpacked_in_order``).
-    bindings: tuple
-    site: object = dataclass_field(compare=False)
-    evaluations: tuple = ()  # (name, key) per Name target, as AssignSugar's
-    # No name is bound before a halt (every member is evaluated before any
-    # target is assigned); a walrus in a RHS member is, and a later member's
-    # halt carries it (``evaluate_assignment_values``).
-    halts_at_statement_head: ClassVar[bool] = True
-
-    @classmethod
-    def witnesses(cls):
-        # A destructuring bind that discriminates ON THE PAIRING: swap the
-        # two names' rhs and the sum through both flips.
-        return _assertion_pair(
-            name="multi_assign_destructure",
-            owner_sugar="MultiAssignSugar",
-            statements="p = 2\nq = 3\na, b = p, q",
-            truthful="a + b == 5",
-            lying="a + b == 6",
-        )
-
-    def desugar(self, ctx: object = None) -> ExitSet:
-        # Every binding was consumed by substitute; each RHS member is still
-        # evaluated HERE, left to right, before any name is bound.
-        from sugar_lift_py_tests.sugar.assigned_value import (
-            evaluate_assignment_values,
-        )
-
-        values = _distinct_in_order(value for _name, value in self.bindings)
-        bind = tuple(
-            (name, next(i for i, v in enumerate(values) if v is value))
-            for name, value in self.bindings
-        )
-        return evaluate_assignment_values(
-            values,
-            ctx,
-            evaluations=_evaluation_indices(self.evaluations, bind),
-        )
-
-
-@dataclass(frozen=True)
 class ChainedAssignSugar(Sugar):
     """One evaluated RHS distributed left-to-right across names and stores.
 
@@ -284,7 +228,8 @@ class KeyedStoreSugar(Sugar):
 
 @dataclass(frozen=True)
 class DynamicUnpackStoreAssignSugar(Sugar):
-    """Non-display RHS: flat Name|Attribute|Subscript|*Name unpack (LTR).
+    """Any RHS, a display among them (#7757 S2): Name|Attribute|Subscript|*Name
+    unpack (LTR).
 
     Python: evaluate RHS **once**, UNPACK materializes all members, then each
     target applies its member **left-to-right**.  A halt on an earlier target
@@ -481,102 +426,6 @@ class DynamicUnpackStoreAssignSugar(Sugar):
         return prefix, suffix, has_star
 
 
-@dataclass(frozen=True)
-class UnpackStoreAssignSugar(Sugar):
-    """Flat display unpack with Attribute/Subscript store leaves (and optional Names).
-
-    Python law this sugar sequences (the unpack's own faces, not a second store
-    door):
-
-    - RHS display members are already projected one-to-one onto leaves at tree
-      construction (arity decided there; mismatch stays loud until a ground
-      ``ValueError`` exit exists).
-    - Name leaves are spent by substitute (same as MultiAssign) — binding
-      before later store leaves run.
-    - Each store leaf's member is bound under its member key (``members``)
-      once every member completed; the leaves are then assigned left to
-      right (``target_order``): each Name leaf bound under its key, each
-      store leaf's own statement (``Assign._store_statements``) reading its
-      member there and storing it exactly as ``o.x = v`` alone does. A
-      store's halt means the statement did not complete; the Name leaves to
-      its left are assigned and the ones to its right are not, and earlier
-      completed stores are not rolled back.
-
-    One temporal model: names thread, stores effect — no second door.
-    """
-
-    # (name, value_sugar) — provenance; substitute spent them.
-    bindings: tuple
-    stores: tuple  # each store leaf's own statement's sugar, left to right
-    site: object = dataclass_field(compare=False)
-    evaluations: tuple = ()  # (name, key) per Name leaf, as AssignSugar's
-    members: tuple = ()  # (member key, value_sugar) per store leaf
-    # The leaves left to right: each Name leaf's name (in ``bindings``
-    # order) and each store leaf's index in ``stores``
-    # (``nodes._target_order``); empty, every Name leaf before every store.
-    target_order: tuple = ()
-    # A record-less halt is a RHS member's, before any target is assigned;
-    # the stores' halts carry the record their block gave them.
-    halts_at_statement_head: ClassVar[bool] = True
-
-    @classmethod
-    def witnesses(cls):
-        return typed_red_effect_witness(
-            name="unpack_attribute_store",
-            owner_sugar="UnpackStoreAssignSugar",
-            source=("def A(o, p, q):\n" "    o.x, o.y = p, q\n" "    return p\n"),
-            effect_class="UndeterminedRaiseEffect",
-            reason_needle="undetermined exception identity",
-            blame_needle="SourceFragment",
-            wrong_reason_needle="raise AttributeError",
-        )
-
-    def desugar(self, ctx: object = None) -> ExitSet:
-        # Name bindings are spent by substitute; only store effects remain.
-        # Sequencing of store success/halt is the shared reducer — not a local
-        # second composition algebra.
-        from sugar_lift_py_tests.context import ReduceContext
-        from sugar_lift_py_tests.sugar.assigned_value import (
-            evaluate_assignment_values,
-        )
-
-        if ctx is None:
-            ctx = ReduceContext.root(owner="UnpackStoreAssignSugar")
-        # Python evaluates the whole RHS display first, left to right, then
-        # assigns each target left to right. Every RHS member is evaluated
-        # here in source order and each store leaf's bound under its member
-        # key; the leaves are then assigned in their order, a store reading
-        # its member there and evaluating only its own target.
-        values = sorted(
-            (
-                *(value for _name, value in self.bindings),
-                *(value for _key, value in self.members),
-            ),
-            key=_source_start,
-        )
-        values = _distinct_in_order(values)
-
-        def index(value):
-            return next(i for i, v in enumerate(values) if v is value)
-
-        bind = tuple((name, index(value)) for name, value in self.bindings)
-        members = tuple((key, index(value)) for key, value in self.members)
-        if not self.stores:
-            return evaluate_assignment_values(
-                values,
-                ctx,
-                evaluations=(*_evaluation_indices(self.evaluations, bind), *members),
-            )
-        return evaluate_assignment_values(
-            values,
-            ctx,
-            evaluations=members,
-            targets=_ordered_targets(
-                self.target_order, bind, self.evaluations, self.stores
-            ),
-        )
-
-
 def _evaluation_indices(evaluations, bind):
     """``(key, value index)`` for each keyed name: ``evaluations`` holds
     ``(name, key)`` (``Assign.target_evaluations``), ``bind`` the index of
@@ -633,22 +482,6 @@ def _reduce_targets(targets, active, ctx):
     ):
         return reduce_body(targets, active)
     return reduce_block_to_exitset(targets, active)
-
-
-def _distinct_in_order(values):
-    """Each RHS sugar once, in order: ``x = y = e`` evaluates ``e`` once."""
-    seen = []
-    for value in values:
-        if any(value is prior for prior in seen):
-            continue
-        seen.append(value)
-    return tuple(seen)
-
-
-def _source_start(sugar):
-    site = getattr(sugar, "site", None)
-    span = getattr(site, "span", None)
-    return getattr(span, "start", 0)
 
 
 def _chained_names(bindings):

@@ -9747,8 +9747,8 @@ def _discharge_consumed_handler_tuple(handler) -> None:
     them.  The ``try`` builds each member as one matcher of the arm, in that
     order (``Try._authenticated_handler_specs``, ``TryStar._construct_
     sugar``), every face of it the arm's, and never builds the display as a
-    whole.  That consumption is its discharge, as an unpack's display
-    (``Assign._unpacked_displays``) is; its members answer for themselves,
+    whole.  That consumption is its discharge; its members answer for
+    themselves,
     built or refused by name."""
     if handler.type_ is not None and handler.type_.kind == "Tuple":
         handler.type_.discharge_by_substitution()
@@ -13753,8 +13753,8 @@ def _store_leaves(targets) -> tuple:
 
 def _target_order(leaves) -> tuple:
     """``leaves`` (Name and Attribute/Subscript targets, left to right) as
-    the order a statement assigns them in (``ChainedAssignSugar`` /
-    ``UnpackStoreAssignSugar.target_order``): each Name leaf's name and
+    the order a chain assigns them in (``ChainedAssignSugar``): each Name
+    leaf's name and
     each store leaf's ordinal among the store leaves (its statement's index
     in ``_store_statements``)."""
     order: list = []
@@ -14160,112 +14160,6 @@ class Assign(Statement):
     value: Expression
     _child_fields = ("targets", "value")
 
-    def structural_parts(self) -> Tuple["Node", ...]:
-        """Every display the statement's unpack consumes element by element:
-        ``a, b = p, q`` (``_destructured_binding``, ``MultiAssignSugar``) and
-        ``x, o.a = p, q`` (``_flat_store_unpack_pairs``,
-        ``UnpackStoreAssignSugar``) evaluate each member once, left to right,
-        and bind or store it; the display is never built as a whole, so it
-        is a structural part of the unpack (``_unpacked_displays``) and
-        answers the roll with the statement.  Its members are ordinary
-        nodes and answer for themselves, built or refused."""
-        return (*super().structural_parts(), *self._unpacked_displays())
-
-    def _unpacked_displays(self) -> Tuple["Node", ...]:
-        """The right-hand side display of a one-target ``Tuple``/``List``
-        unpack, and each display member a nested target level unpacks in
-        turn, by the arity rule both display unpacks pair by
-        (``_display_unpack_pairs``, ``TargetPattern.bindings_for``): at most
-        one starred target per level, whose members are collected into a
-        fresh list (``_make_unpack_rest_list``) and never unpacked.  Nothing
-        is minted here.  Where a level does not pair with a display, or a
-        store leaf sits under a nested level (neither display unpack takes
-        it), none: the right-hand side is the one evaluation the reduce-time
-        unpack reads (``_dynamic_unpack_target``), built whole as any value
-        is, and answers for itself."""
-        if self._dynamic_unpack_target() is not None:
-            return ()
-        walk = self._unpack_walk()
-        if walk is None:
-            return ()
-        return tuple(item for kind, item in walk if kind == "display")
-
-    def _unpack_walk(self) -> "Optional[tuple]":
-        """The display unpack of a one-target ``Tuple``/``List`` statement,
-        in the order Python evaluates it: ``("display", value)`` where a
-        level consumes a display (before any of its members), ``("name",
-        name)`` for each Name leaf and ``("store", leaf)`` for each
-        Attribute/Subscript leaf, left to right, a starred leaf in its
-        place.  None where a level does not pair with a display, or a store
-        leaf sits under a nested level (``_unpacked_displays``)."""
-        if len(self.targets) != 1 or not isinstance(self.targets[0], (Tuple_, List)):
-            return None
-        events: list = []
-
-        def visit(target, value, depth: int) -> bool:
-            if isinstance(target, Starred):
-                target = target.value
-            if isinstance(target, Name):
-                events.append(("name", target.id))
-                return True
-            if isinstance(target, (Attribute, Subscript)):
-                events.append(("store", target))
-                return depth == 1
-            if not isinstance(target, (Tuple_, List)) or not isinstance(
-                value, (Tuple_, List)
-            ):
-                return False
-            starred = [
-                index
-                for index, element in enumerate(target.elts)
-                if isinstance(element, Starred)
-            ]
-            if len(starred) > 1:
-                return False
-            if not starred:
-                if len(target.elts) != len(value.elts):
-                    return False
-                pairs = list(zip(target.elts, value.elts))
-            else:
-                star = starred[0]
-                tail = len(target.elts) - star - 1
-                if len(value.elts) < len(target.elts) - 1:
-                    return False
-                # The starred leaf collects its members into a fresh list
-                # (``_make_unpack_rest_list``): never a display unpacked.
-                pairs = [
-                    *zip(target.elts[:star], value.elts[:star]),
-                    (target.elts[star], None),
-                    *(zip(target.elts[-tail:], value.elts[-tail:]) if tail else ()),
-                ]
-            events.append(("display", value))
-            return all(
-                visit(element, member, depth + 1) for element, member in pairs
-            )
-
-        if not visit(self.targets[0], self.value, 0):
-            return None
-        return tuple(events)
-
-    def _unpacked_in_order(self, values) -> tuple:
-        """``(name, value sugar)`` for each Name a display unpack binds
-        (``values``, the bindings ``_destructured_binding`` read), in the
-        order Python evaluates them.  A name repeated keeps its first place
-        and the value ``values`` gives it, as the bindings do."""
-        walk = self._unpack_walk()
-        if walk is None:
-            return tuple((name, value.sugar()) for name, value in values.items())
-        entries: list = []
-        seen: set = set()
-        for kind, item in walk:
-            if kind == "name" and item in values and item not in seen:
-                seen.add(item)
-                entries.append((item, values[item].sugar()))
-        entries.extend(
-            (name, value.sugar()) for name, value in values.items() if name not in seen
-        )
-        return tuple(entries)
-
     def substitute(self, scope):
         """Substitute the RHS, and load-side store target coordinates.
 
@@ -14395,13 +14289,10 @@ class Assign(Statement):
         """The target lists whose store targets are each their own statement
         (``_store_target_statement``), with what gives each its value:
         ``("chain", {})`` for a chain of Names and stores (every store is
-        given the one value), ``("display", members)`` for a flat unpack
-        against a display (each store leaf its member, by the leaf's
-        handle), ``("unpack", {})`` for the reduce-time unpack of any other
-        value, a display the flat pairing does not take included
-        (``_dynamic_unpack_target``; each leaf the member the unpack hands
-        it).  None for any other
-        target list (it stays a gap)."""
+        given the one value), ``("unpack", {})`` for the reduce-time unpack
+        of the value, a display among them (``_dynamic_unpack_target``; each
+        leaf the member the unpack hands it).  None for any other target
+        list (it stays a gap)."""
         if len(self.targets) > 1:
             if all(
                 isinstance(target, (Name, Attribute, Subscript))
@@ -14409,16 +14300,6 @@ class Assign(Statement):
             ):
                 return ("chain", {})
             return None
-        pairs = self._flat_store_unpack_pairs()
-        if pairs is not None:
-            return (
-                "display",
-                {
-                    id(leaf.ref): member
-                    for leaf, member in pairs
-                    if isinstance(leaf, (Attribute, Subscript))
-                },
-            )
         target = self._dynamic_unpack_target()
         if target is not None and self._admits_store_unpack(target):
             return ("unpack", {})
@@ -14431,8 +14312,8 @@ class Assign(Statement):
         evaluated again: the chain's value under the statement's key
         (``evaluation``), an unpack leaf's member under its member key
         (``_store_member_key``).  The reference carries the expression the
-        value came from as the object it denotes (``of``): a chain's value,
-        a display member; a non-display unpack's member is not known here.
+        value came from as the object it denotes (``of``): a chain's value;
+        an unpack's member is not known here.
 
         Keyed with its own evaluation (``_store_statement_key``) when the
         statement is substituted (``exit_path`` not None), so its
@@ -14497,29 +14378,21 @@ class Assign(Statement):
         )
 
     def _dynamic_unpack_target(self):
-        """The Tuple/List target of an unpack substitution does not pair with
-        a display's members, or None.  The statement's sugar unpacks its one
-        evaluation at reduce (``DynamicUnpackAssignSugar``,
-        ``NestedDynamicUnpackAssignSugar``,
-        ``DynamicUnpackStoreAssignSugar``).
+        """The Tuple/List target of a one-target unpack, or None.  The
+        statement's sugar unpacks its one evaluation at reduce
+        (``DynamicUnpackAssignSugar``, ``NestedDynamicUnpackAssignSugar``,
+        ``DynamicUnpackStoreAssignSugar``), whatever the right-hand side is.
 
-        That is every right-hand side that is not a display, and a display
-        neither display pairing takes (``_destructured_binding``,
-        ``_flat_store_unpack_pairs``): a nested level whose member is not a
-        display (``a, (b, c) = 1, [x for x in range(2)]``), an arity the
-        display does not match, a store leaf under a nested level.  Python
-        builds the display, then unpacks it: the reduce-time unpack reads the
-        decided tuple or list it reduces to exactly, and a level it cannot
-        read is owed, never refused by name (#7757 S2)."""
+        A display right-hand side is no exception: Python builds the
+        display, then unpacks it, and the reduce-time unpack reads the
+        decided tuple or list it reduces to exactly; a level it cannot read
+        is owed, never refused by name.  Substitution no longer pairs a
+        display's members with the targets: that was a second mechanism for
+        the one unpack (#7757 S2)."""
         if len(self.targets) != 1:
             return None
         target = self.targets[0]
         if not isinstance(target, (Tuple_, List)) or not target.elts:
-            return None
-        if isinstance(self.value, (Tuple_, List)) and (
-            self._destructured_binding() is not None
-            or self._flat_store_unpack_pairs() is not None
-        ):
             return None
         return target
 
@@ -14568,18 +14441,27 @@ class Assign(Statement):
         ground display it is given (``_ground_value``,
         ``TargetPatternV1.bindings_for``; a starred leaf the new list of the
         members it takes), or nothing where the value is not a ground display,
-        the target is no binding pattern, or the arity does not match."""
-        ground = _ground_value(self.value)
-        if ground is None or ground.kind not in ("List", "Tuple"):
-            return {}
+        the target is no binding pattern, or the arity does not match.
+
+        This is the unpack's one reader of its target pattern.  An enrolled
+        target's pattern is read strictly before the value is looked at, as
+        the deleted display pairing read it (``_destructured_binding``): a
+        stranded row refuses by name (``TargetPatternConstructionGapV1``)
+        whatever the right-hand side is, never a weaker answer.  The pattern
+        is read through the consumer that owns the target occurrence: this
+        Assign, or the With whose as-clause this store lowers
+        (``With._bind_store_target``)."""
         enrollment = self.unit.target_pattern_enrollment(self)
         if not isinstance(
             enrollment, TargetPatternEnrolledV1
         ) or not enrollment.covers(target):
             return {}
         owner = self.unit.require_target_pattern_for_target(target).consumer_occurrence
-        members = self.unit.require_target_pattern(owner, target).bindings_for(ground)
-        return members or {}
+        pattern = self.unit.require_target_pattern(owner, target)
+        ground = _ground_value(self.value)
+        if ground is None or ground.kind not in ("List", "Tuple"):
+            return {}
+        return pattern.bindings_for(ground) or {}
 
     def _unpack_member_objects(self, target, value, evaluation) -> dict:
         """Each Name leaf of ``target`` to the object the unpack of ``value``
@@ -14657,25 +14539,14 @@ class Assign(Statement):
     def _name_values(self) -> dict:
         """The value node substitution binds each Name target to: the
         right-hand side for ``y = e`` and ``a = b = e`` (Attribute/Subscript
-        targets among them bind no name), each display member for ``a, b =
-        p, q`` (a Name leaf beside store leaves included).  A non-display
-        unpack binds its targets to its projections instead and has none."""
+        targets among them bind no name).  An unpack, a display right-hand
+        side among them, binds its targets to its projections instead and
+        has none (``_unpack_projection_binding``)."""
         if len(self.targets) == 1:
             target = self.targets[0]
             if isinstance(target, Name):
                 return {target.id: self.value}
-            if (
-                not isinstance(target, (Tuple_, List))
-                or self._dynamic_unpack_target() is not None
-            ):
-                return {}
-            name_only = self._destructured_binding()
-            if name_only is not None:
-                return dict(name_only)
-            pairs = self._flat_store_unpack_pairs()
-            if pairs is None:
-                return {}
-            return self._name_bindings_from_store_unpack(pairs)
+            return {}
         if all(isinstance(t, (Name, Attribute, Subscript)) for t in self.targets):
             return {t.id: self.value for t in self.targets if isinstance(t, Name)}
         return {}
@@ -14886,77 +14757,10 @@ class Assign(Statement):
             target_name=self.targets[0].id,
         )
 
-    def _destructured_binding(self):
-        # Destructure only an already-constructed Tuple/List display.  This is
-        # structural projection, not an iterator guess: a symbolic/opaque RHS
-        # has no authenticated cardinality and therefore stays loud.
-        #
-        # Lexical binding patterns only. Attribute/Subscript (and mixed) unpack
-        # targets are intentionally NOT enrolled as binding patterns (see
-        # ``_is_binding_target_pattern`` and
-        # ``test_attribute_only_unpack_is_not_minted_as_a_binding_pattern``).
-        # Calling ``require_target_pattern`` when none was minted is a hierarchy
-        # lie — it dresses a non-binding unpack as ``foreign-target-occurrence``
-        # and aborts the file. Return None so mixed/store unpack falls through
-        # to ``_flat_store_unpack_pairs`` / store construction.
-        target = self.targets[0]
-        if not isinstance(target, (Tuple_, List)):
-            return None
-        enrollment = self.unit.target_pattern_enrollment(self)
-        if not isinstance(
-            enrollment, TargetPatternEnrolledV1
-        ) or not enrollment.covers(target):
-            # Lawful fall-through: mixed / pure-store unpack owns no binding
-            # pattern.  This arm is now reached ONLY for authentic
-            # non-enrollment; a stranded enrolled row goes loud below.
-            return None
-        # The pattern is read through the consumer that OWNS the target
-        # occurrence: this Assign for a source assignment, or the With whose
-        # as-clause this store lowers (``With._bind_store_target``).  The
-        # lowered store borrows the With's span but is no source occurrence of
-        # its own, so reading under ``self`` would always miss.  The owner's
-        # row is still read strictly: a stranded owner refuses.
-        owner = self.unit.require_target_pattern_for_target(target).consumer_occurrence
-        pattern = self.unit.require_target_pattern(owner, target)
-        return pattern.bindings_for(self.value)
-
-    def _display_unpack_pairs(self, target, value):
-        """Zip one Tuple/List target against a matching display RHS.
-
-        Supports at most one starred element. Returns ``None`` when arity or
-        structure cannot be authenticated from a concrete display.
-        """
-        if not isinstance(target, (Tuple_, List)) or not isinstance(
-            value, (Tuple_, List)
-        ):
-            return None
-        starred = [
-            index
-            for index, element in enumerate(target.elts)
-            if isinstance(element, Starred)
-        ]
-        if len(starred) > 1:
-            return None
-        if not starred:
-            if len(target.elts) != len(value.elts):
-                return None
-            return list(zip(target.elts, value.elts))
-        star_index = starred[0]
-        suffix = len(target.elts) - star_index - 1
-        if len(value.elts) < len(target.elts) - 1:
-            return None
-        pairs = list(zip(target.elts[:star_index], value.elts[:star_index]))
-        rest_end = len(value.elts) - suffix if suffix else len(value.elts)
-        rest = self._make_unpack_rest_list(value.elts[star_index:rest_end])
-        pairs.append((target.elts[star_index].value, rest))
-        if suffix:
-            pairs.extend(zip(target.elts[-suffix:], value.elts[-suffix:]))
-        return pairs
-
     def _flat_starred_name_parts(self, target):
         """Parse a flat ``Name | *Name`` target into (prefix, star_name, suffix).
 
-        Used for non-display RHS dynamic unpack. Nested stars, non-Name leaves,
+        Used for the reduce-time unpack. Nested stars, non-Name leaves,
         or more than one star stay unadmitted (``None``).
         """
         if not isinstance(target, (Tuple_, List)):
@@ -14986,7 +14790,7 @@ class Assign(Statement):
         return (tuple(prefix), star.value.id, tuple(suffix))
 
     def _name_only_nested_unpack_pattern(self, target):
-        """Name-only nested Tuple/List tree for non-display dynamic unpack.
+        """Name-only nested Tuple/List tree for the reduce-time unpack.
 
         Flat all-Name targets stay with ``DynamicUnpackAssignSugar``. This
         admits only trees that nest at least one Tuple/List of Names, with at
@@ -15125,74 +14929,6 @@ class Assign(Statement):
 
         return level(target) and has_store
 
-    def _flat_store_unpack_pairs(self):
-        """Flat Name|Attribute|Subscript leaves against a display RHS.
-
-        Nested unpack patterns stay on the name-only destructure path (or
-        loud). This is the mass residual: ``o.x, o.y = p, q`` and mixed
-        ``x, o.a = p, q`` / ``x, obj[key] = p, q``.
-
-        A leaf is admitted ONLY when the constructed store retains the exact
-        receiver term AND the exact RHS member it is paired with -- positional
-        correspondence is the whole claim of an unpack, so a store that cannot
-        carry its own value is not allowed to stand in for one. Attribute
-        leaves qualify (the one field store, ``ReceiverFieldStoreSugar``,
-        carries receiver, attr and value). Subscript leaves qualify the same way after #6599:
-        ``SubscriptStoreEffectSugar`` carries receiver, index, and value, so
-        ``a[i], b[j] = p, q`` and ``a[i], b[j] = q, p`` construct *differently*
-        and the pairing is retained. Undecided receivers stay loud
-        at *desugar* time through the store law — never by refusing the leaf
-        at admission.
-        """
-        if len(self.targets) != 1:
-            return None
-        target = self.targets[0]
-        if not isinstance(target, (Tuple_, List)):
-            return None
-        if not isinstance(self.value, (Tuple_, List)):
-            return None
-        pairs = self._display_unpack_pairs(target, self.value)
-        if pairs is None:
-            return None
-        for leaf, _value in pairs:
-            if not isinstance(leaf, (Name, Attribute, Subscript)):
-                return None
-        # Only useful when at least one leaf is a store (Attribute/Subscript);
-        # pure-Name flat unpack is MultiAssignSugar via _destructured_binding.
-        if not any(isinstance(leaf, (Attribute, Subscript)) for leaf, _ in pairs):
-            return None
-        return pairs
-
-    def _name_bindings_from_store_unpack(self, pairs):
-        """Lexical Name leaves only — stores are not temporal bindings."""
-        bindings = {}
-        for leaf, value in pairs:
-            if isinstance(leaf, Name):
-                bindings[leaf.id] = value
-            elif isinstance(leaf, Starred) and isinstance(leaf.value, Name):
-                bindings[leaf.value.id] = value
-        return bindings
-
-    def _make_unpack_rest_list(self, elements):
-        """The starred target's real CPython list result, from real RHS children."""
-        from .backend import Children, materialize
-        from .shadow import ShadowNode, _handle_of
-
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "List",
-                self.span,
-                (
-                    (
-                        "elts",
-                        Children(tuple(_handle_of(element) for element in elements)),
-                    ),
-                ),
-            ),
-            self.reporter,
-        )
-
     def _binding_site_and_path(self, name: str, ordinal: int):
         del ordinal
         matches = []
@@ -15233,36 +14969,19 @@ class Assign(Statement):
 
     def _value_binding(self, scope):
         # A single Name target binds its name to the already-substituted rhs.
-        # A single Tuple/List target of plain Names destructures against a
-        # matching display rhs (see _destructured_binding). A chain of plain
-        # Name targets (`x = y = e`) binds each name to the same rhs.
-        # A Tuple/List target against any other rhs -- a display neither
-        # pairing takes among them (``_dynamic_unpack_target``) -- binds each
-        # Name target to a reference to its projection of the statement's
-        # one evaluation.  Attribute / subscript targets thread nothing --
-        # their references stay honest gaps rather than a wrong binding (a
-        # store target's binding is its own
-        # statement's: ``ReceiverFieldStoreStatement``,
-        # ``ContainerMutationStatement``).
+        # A chain of plain Name targets (`x = y = e`) binds each name to the
+        # same rhs.  A Tuple/List target, whatever the rhs -- a display
+        # among them (``_dynamic_unpack_target``) -- binds each Name target
+        # to a reference to its projection of the statement's one
+        # evaluation.  Attribute / subscript targets thread nothing -- their
+        # references stay honest gaps rather than a wrong binding (a store
+        # target's binding is its own statement's:
+        # ``ReceiverFieldStoreStatement``, ``ContainerMutationStatement``).
         del scope
         if len(self.targets) == 1:
             target = self.targets[0]
             if isinstance(target, Name):
                 return {target.id: self.value}
-            # Name-only nested/flat display unpack.
-            name_only = self._destructured_binding()
-            if name_only is not None:
-                return name_only
-            # Mixed Name + Attribute/Subscript leaves against a display: bind
-            # only the Name leaves; stores are construction effects, not
-            # temporal bindings.
-            store_pairs = self._flat_store_unpack_pairs()
-            if store_pairs is not None:
-                names = self._name_bindings_from_store_unpack(store_pairs)
-                return names if names else None
-            # Any other right-hand side, a display neither pairing takes
-            # among them: each Name target reads its projection of the
-            # statement's one evaluation.
             return self._unpack_projection_binding()
         if all(isinstance(t, (Name, Attribute, Subscript)) for t in self.targets):
             # Store targets do not bind lexical names, but they also do not
@@ -15370,8 +15089,8 @@ class Assign(Statement):
         )
 
     def unpack_store_sugar(self, value_sugar):
-        """``a, o.x, *b = <rhs>`` / ``a, (b, o.x) = <rhs>`` against a
-        right-hand side no display pairing takes (``_dynamic_unpack_target``):
+        """``a, o.x, *b = <rhs>`` / ``a, (b, o.x) = <rhs>`` against any
+        right-hand side, a display among them (``_dynamic_unpack_target``):
         the one unpack of ``value_sugar`` (the
         right-hand side's sugar, or what a yield assignment's resume reads its
         resumed value through) into Name / store / ``*Name`` targets, nested
@@ -15399,14 +15118,12 @@ class Assign(Statement):
 
     def _construct_sugar(self):
         """`<name> = <rhs>` constructs AssignSugar WITH the rhs's sugar (held as
-        the deferred source). A destructured tuple/list target or a chained
-        `x = y = e` whose binding threaded constructs MultiAssignSugar -- both
-        are inert once substitute has done its work, exactly like the single
-        Name case. A Tuple/List target whose display substitution did not
-        pair -- or any other right-hand side -- is the reduce-time unpack of
-        the statement's one evaluation (``_dynamic_unpack_target``). A shape
-        no arm takes stays a loud gap -- never a partial binding rendered
-        inert."""
+        the deferred source). A chained `x = y = e` constructs
+        ChainedAssignSugar. A Tuple/List target, whatever the right-hand side
+        -- a display among them -- is the reduce-time unpack of the
+        statement's one evaluation (``_dynamic_unpack_target``): Python
+        builds the value, then unpacks it (#7757 S2). A shape no arm takes
+        stays a loud gap -- never a partial binding rendered inert."""
         if len(self.targets) == 1 and isinstance(self.targets[0], Name):
             from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
@@ -15418,47 +15135,6 @@ class Assign(Statement):
             )
 
         if len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
-            bindings = self._destructured_binding()
-            if bindings is not None:
-                from sugar_lift_py_tests.sugar.assign_sugar import MultiAssignSugar
-
-                return MultiAssignSugar(
-                    bindings=self._unpacked_in_order(bindings),
-                    site=self.fragment,
-                    evaluations=self.target_evaluations(),
-                )
-            # Flat Name|Attribute|Subscript leaves against a display RHS: each
-            # member evaluated once, left to right; each Name bound under its
-            # key, each store leaf's member under its member key, then each
-            # store leaf's own statement (``_store_statements``) reads its
-            # member there and stores it exactly as ``o.x = v`` alone does.
-            store_pairs = self._flat_store_unpack_pairs()
-            if store_pairs is not None:
-                from sugar_lift_py_tests.sugar.assign_sugar import (
-                    UnpackStoreAssignSugar,
-                )
-
-                evaluation = self._store_value_evaluation()
-                name_bindings = []
-                members = []
-                for leaf, val in store_pairs:
-                    if isinstance(leaf, Name):
-                        name_bindings.append((leaf.id, val.sugar()))
-                    else:
-                        members.append(
-                            (_store_member_key(evaluation, len(members)), val.sugar())
-                        )
-                return UnpackStoreAssignSugar(
-                    bindings=tuple(name_bindings),
-                    stores=tuple(store.sugar() for store in self._store_statements()),
-                    site=self.fragment,
-                    evaluations=self.target_evaluations(),
-                    members=tuple(members),
-                    target_order=_target_order(leaf for leaf, _ in store_pairs),
-                )
-            # Neither display pairing took the statement: its right-hand
-            # side, a display included, is the one evaluation unpacked at
-            # reduce (``_dynamic_unpack_target``).
             target = self.targets[0]
             if target.elts:
                 from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
@@ -15509,7 +15185,7 @@ class Assign(Statement):
                         suffix_names=suffix,
                         evaluation=evaluation,
                     )
-                # Store leaves (+ optional *Name) against non-display RHS.
+                # Store leaves (+ optional *Name) against any RHS.
                 mixed = self.unpack_store_sugar(self.value.sugar())
                 if mixed is not None:
                     return mixed

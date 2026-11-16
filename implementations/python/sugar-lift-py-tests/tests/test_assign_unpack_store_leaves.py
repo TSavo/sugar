@@ -17,7 +17,7 @@ paired with a discrimination arm that fails when the law is violated:
    is owned by ``test_assign_unpack_store_outcome_composition``. The OUTCOME
    SHAPE is asserted in neither of those two places from here -- this module
    reads arms, it does not claim how many exits a store body has.
-8. Pure-name ``MultiAssign`` construction is unchanged vs ``origin/main``.
+8. Pure-name unpack is the reduce-time unpack, never an unpack store.
 9. Starred opaque unpack stays typed-loud.
 10. Source-visible Subscript leaves construct (post-#6599 coordinates); formal
     receivers stay undischarged at desugar via the store law.
@@ -42,9 +42,10 @@ from sugar_lift_py_tests.outcome.exit_set import (
     Halted,
     sole_completed_value,
 )
-from sugar_lift_py_tests.sugar.assign_sugar import (
-    MultiAssignSugar,
-    UnpackStoreAssignSugar,
+from sugar_lift_py_tests.sugar.assign_sugar import DynamicUnpackStoreAssignSugar
+from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+    NameUnpackTarget,
+    StoreUnpackTarget,
 )
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
@@ -79,10 +80,32 @@ def _function_sugar(tmp_path: Path, source: str, stem: str = "assign_case"):
 
 
 def _unpack(tmp_path: Path, source: str, stem: str = "assign_case"):
+    """The statement's one unpack: a display right-hand side is evaluated
+    once and unpacked at reduce, as any other is (#7757 S2)."""
     sugar = _function_sugar(tmp_path, source, stem)
     return next(
-        stmt for stmt in sugar.statements if isinstance(stmt, UnpackStoreAssignSugar)
+        stmt
+        for stmt in sugar.statements
+        if isinstance(stmt, DynamicUnpackStoreAssignSugar)
     )
+
+
+def _store_targets(unpack) -> tuple:
+    return tuple(t for t in unpack.targets if isinstance(t, StoreUnpackTarget))
+
+
+def _stores(unpack) -> tuple:
+    """Each store leaf's own statement's sugar, left to right."""
+    return tuple(target.store for target in _store_targets(unpack))
+
+
+def _member_keys(unpack) -> tuple:
+    """The key each store leaf's member is bound under, left to right."""
+    return tuple(target.evaluation for target in _store_targets(unpack))
+
+
+def _name_targets(unpack) -> tuple:
+    return tuple(t.name for t in unpack.targets if isinstance(t, NameUnpackTarget))
 
 
 def _outcome(tmp_path: Path, source: str, stem: str = "assign_case"):
@@ -180,22 +203,24 @@ TWO_ATTRIBUTE = "def f(p, q):\n    o.x, o.y = p, q\n    return p\n"
 def test_rhs_member_is_one_retained_occurrence(tmp_path: Path) -> None:
     """`o.x, o.y = p, p` evaluates each RHS member ONCE, never once per target.
 
-    Proven at the layer that owns it: the statement holds one member per RHS
-    element, each under its own key, and each store reads its member through
-    that key. ``p, p`` is two reads of one formal (Python loads ``p`` twice):
-    two occurrences, each at its own source site, of the same coordinate.
+    Proven at the layer that owns it: the statement evaluates its one
+    right-hand side display, one element per member, and each store leaf
+    reads the member the unpack binds under its own key. ``p, p`` is two
+    reads of one formal (Python loads ``p`` twice): two occurrences, each at
+    its own source site, of the same coordinate.
     """
     shared = "def f(p):\n    o.x, o.y = p, p\n    return p\n"
     unpack = _unpack(tmp_path, shared)
-    (first_key, first), (second_key, second) = unpack.members
+    first, second = unpack.value.elements
     assert first == second, (first, second)
     assert first.coordinate == second.coordinate
     assert first.site != second.site, (first.site, second.site)
+    first_key, second_key = _member_keys(unpack)
     assert first_key != second_key
-    # Each store leaf reads its member through its member key; the member
-    # itself is the retained occurrence the statement evaluates.
-    assert unpack.stores[0].value.evaluation == first_key
-    assert unpack.stores[1].value.evaluation == second_key
+    # Each store leaf reads its member through its member key.
+    stores = _stores(unpack)
+    assert stores[0].value.evaluation == first_key
+    assert stores[1].value.evaluation == second_key
 
     # One store per target on the arms too: the arm that halted at the
     # second store states the first one completed, never a second evaluation
@@ -208,11 +233,13 @@ def test_rhs_member_is_one_retained_occurrence(tmp_path: Path) -> None:
     # Discrimination: distinct RHS members must NOT collapse onto one
     # occurrence -- sharing must come from the source, never from the lift.
     distinct = _unpack(tmp_path, TWO_ATTRIBUTE, stem="distinct")
-    assert distinct.members[0][1] is not distinct.members[1][1]
-    assert distinct.members[0][1] != distinct.members[1][1]
+    left, right = distinct.value.elements
+    assert left is not right
+    assert left != right
     # Each store reads its own member's key, never another leaf's.
-    assert distinct.stores[0].value.evaluation == distinct.members[0][0]
-    assert distinct.stores[1].value.evaluation == distinct.members[1][0]
+    stores, keys = _stores(distinct), _member_keys(distinct)
+    assert stores[0].value.evaluation == keys[0]
+    assert stores[1].value.evaluation == keys[1]
 
 
 # ---------------------------------------------------------------------------
@@ -225,23 +252,23 @@ def test_positional_correspondence_binds_each_target_to_its_own_member(
 ) -> None:
     """`o.x, o.y = p, q` stores p into `.x` and q into `.y` -- a swap must bite.
 
-    The pairing is the statement's own: store ``k`` is the ``k``-th target
-    and reads the ``k``-th member's key.  An undecided store states nothing
-    about the value it stores (its receiver's ``__setattr__`` is not
-    decided here), so the pairing is read where it is constructed, never off
-    a store testimony."""
+    The pairing is the unpack's, by position: store ``k`` is the ``k``-th
+    target and reads the member the unpack binds under the ``k``-th member
+    key.  An undecided store states nothing about the value it stores (its
+    receiver's ``__setattr__`` is not decided here), so the pairing is read
+    where it is constructed, never off a store testimony."""
     unpack = _unpack(tmp_path, TWO_ATTRIBUTE)
-    assert [store.store.attr for store in unpack.stores] == ["x", "y"]
-    assert [store.value.evaluation for store in unpack.stores] == [
-        key for key, _member in unpack.members
-    ]
+    assert [store.store.attr for store in _stores(unpack)] == ["x", "y"]
+    assert [store.value.evaluation for store in _stores(unpack)] == list(
+        _member_keys(unpack)
+    )
 
     # Discrimination arm: swap the targets, keep the members.  The first
     # member now pairs with `.y`.
     swapped_source = "def f(p, q):\n    o.y, o.x = p, q\n    return p\n"
     swapped = _unpack(tmp_path, swapped_source, stem="swapped")
-    assert [store.store.attr for store in swapped.stores] == ["y", "x"]
-    assert swapped.stores[0].value.evaluation == swapped.members[0][0]
+    assert [store.store.attr for store in _stores(swapped)] == ["y", "x"]
+    assert _stores(swapped)[0].value.evaluation == _member_keys(swapped)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -368,17 +395,17 @@ def test_name_leaf_binding_is_discharged_beside_the_store_effect(
 ) -> None:
     """`x, o.a = p, q` binds x to p AND runs the `.a` store.
 
-    The Name leaf has no ordered record entry: substitute spends it before
-    desugar, threading `p` into every later reference.  The store is the
-    statement's one store leaf, reading the second member, and the
-    continuation's post already reads `p`.
+    The Name leaf is bound by the unpack under its projection of the
+    statement's evaluation, and every later reference reads it there.  The
+    store is the statement's one store leaf, reading the second member, and
+    the continuation's post reads `p`.
     """
     source = "def f(p, q):\n    x, o.a = p, q\n    return x\n"
     unpack = _unpack(tmp_path, source)
-    assert [name for name, _ in unpack.bindings] == ["x"]
-    assert len(unpack.stores) == 1
-    assert unpack.stores[0].store.attr == "a"
-    assert unpack.stores[0].value.evaluation == unpack.members[0][0]
+    assert _name_targets(unpack) == ("x",)
+    assert len(_stores(unpack)) == 1
+    assert _stores(unpack)[0].store.attr == "a"
+    assert _stores(unpack)[0].value.evaluation == _member_keys(unpack)[0]
     assert _arm_stores(tmp_path, source, stem="mix")[-1][0] == (("o", "a"),)
     assert str(_post(tmp_path, source, stem="post")) == (
         "_Atomic(name='=', args=(_Var(name='out'), _Var(name='p')))"
@@ -412,74 +439,53 @@ def test_name_leaf_binding_is_discharged_beside_the_store_effect(
 
 
 # ---------------------------------------------------------------------------
-# Law 8 -- pure-name MultiAssign is unchanged vs origin/main.
+# Law 8 -- a pure-name unpack is the reduce-time unpack, never a store unpack.
 # ---------------------------------------------------------------------------
 
 # Statement shapes for the pure-name path, each with the one assign statement
 # kind it constructs. Returns avoid BinOp so binary dispatch has no face here.
 PURE_NAME_SHAPES = (
-    ("def f(p, q):\n    a, b = p, q\n    return a\n", "MultiAssignSugar"),
-    ("def f(p, q, r):\n    a, b, c = p, q, r\n    return a\n", "MultiAssignSugar"),
+    ("def f(p, q):\n    a, b = p, q\n    return a\n", "DynamicUnpackAssignSugar"),
+    (
+        "def f(p, q, r):\n    a, b, c = p, q, r\n    return a\n",
+        "DynamicUnpackAssignSugar",
+    ),
     ("def f(p):\n    x = y = p\n    return x\n", "ChainedAssignSugar"),
 )
 
 
-def _assign_faces(tmp_path: Path, source: str, stem: str) -> list:
-    """``(statement kind, its own reduced face)`` per assignment statement.
-
-    The kinds are read by name off the statement roster, so a pure-name shape
-    built as any other assignment kind (an unpack store, a dynamic unpack)
-    shows up as that kind here.
-    """
+def _assign_kinds(tmp_path: Path, source: str, stem: str) -> list:
+    """The kind of each assignment statement, read by name off the
+    statement roster, so a pure-name shape built as any other assignment
+    kind (a store unpack) shows up as that kind here."""
     sugar = _function_sugar(tmp_path, source, stem)
     return [
-        (type(stmt).__name__, stmt.desugar(None))
+        type(stmt).__name__
         for stmt in sugar.statements
         if "Assign" in type(stmt).__name__
     ]
 
 
-def test_pure_name_multi_assign_construction_is_unchanged(tmp_path: Path) -> None:
-    """Pure-name destructure/chain stays MultiAssign/ChainedAssign — not unpack stores.
+def test_pure_name_unpack_is_the_reduce_time_unpack(tmp_path: Path) -> None:
+    """A pure-name unpack of a display is the one reduce-time unpack, a chain
+    is ChainedAssign -- neither is a store unpack (#7757 S2).
 
-    This branch must not convert name-only targets into UnpackStoreAssignSugar.
-    Each shape constructs exactly one assignment statement, of the named kind,
-    and that statement's own face is an ``ExitSet`` with no halt: binding
-    names to formals cannot raise.
+    Each shape constructs exactly one assignment statement, of the named
+    kind, and the function has no halt: unpacking a display of the right
+    arity, or binding names to formals, cannot raise.
     """
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-
     for index, (source, expected_kind) in enumerate(PURE_NAME_SHAPES):
-        faces = _assign_faces(tmp_path, source, f"pure{index}")
-        assert [kind for kind, _face in faces] == [expected_kind], source
-        ((_kind, face),) = faces
-        assert isinstance(face, ExitSet), source
-        assert face.halts() == (), (source, face)
-        assert any(isinstance(exit_, Completed) for exit_ in face.exits), source
-
-    sugar = _function_sugar(tmp_path, PURE_NAME_SHAPES[0][0], stem="purekind")
-    assert any(isinstance(stmt, MultiAssignSugar) for stmt in sugar.statements)
-    assert not any(
-        isinstance(stmt, UnpackStoreAssignSugar) for stmt in sugar.statements
-    )
-    chained = _function_sugar(tmp_path, PURE_NAME_SHAPES[2][0], stem="purechain")
-    assert any(
-        type(stmt).__name__ == "ChainedAssignSugar" for stmt in chained.statements
-    )
-    assert not any(
-        isinstance(stmt, UnpackStoreAssignSugar) for stmt in chained.statements
-    )
+        assert _assign_kinds(tmp_path, source, f"pure{index}") == [
+            expected_kind
+        ], source
+        outcome = _outcome(tmp_path, source, f"pureout{index}")
+        assert outcome.halts() == (), (source, outcome)
+        assert any(isinstance(exit_, Completed) for exit_ in outcome.exits), source
 
     # Discrimination arm: an unpack-with-store shape is a different sugar kind.
-    store_shape = _function_sugar(
+    assert _assign_kinds(
         tmp_path, "def f(p, q):\n    x, o.a = p, q\n    return x\n", stem="disc"
-    )
-    assert any(
-        isinstance(stmt, UnpackStoreAssignSugar) for stmt in store_shape.statements
-    )
-    assert not any(
-        isinstance(stmt, MultiAssignSugar) for stmt in store_shape.statements
-    )
+    ) == ["DynamicUnpackStoreAssignSugar"]
 
 
 # ---------------------------------------------------------------------------
@@ -504,8 +510,8 @@ def test_star_against_opaque_iterable_stays_loud(tmp_path: Path) -> None:
     Post-starred-unpack: ``DynamicUnpackAssignSugar`` constructs for
     ``a, *rest = xs``; desugar keeps an undetermined raise as one arm,
     binding nothing, and completes only under the starred unpack's
-    completes atom, ``a`` its first member's projection. Display twins still
-    construct via MultiAssignSugar.
+    completes atom, ``a`` its first member's projection. A display is the
+    same reduce-time unpack, over a decided tuple (#7757 S2).
     """
     from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
     outcome = _function_sugar(
@@ -520,12 +526,10 @@ def test_star_against_opaque_iterable_stays_loud(tmp_path: Path) -> None:
     # Discrimination arm: a starred unpack against a CONCRETE display is a
     # different shape and must still construct -- "loud" is about the opaque
     # iterable, not about the star.
-    sugar = _function_sugar(
-        tmp_path,
-        "def f(p, q, r):\n    a, *rest = p, q, r\n    return a\n",
-        stem="stardisplay",
-    )
-    assert any(isinstance(stmt, MultiAssignSugar) for stmt in sugar.statements)
+    display = "def f(p, q, r):\n    a, *rest = p, q, r\n    return a\n"
+    assert _assign_kinds(tmp_path, display, stem="stardisplay") == [
+        "DynamicUnpackAssignSugar"
+    ]
 
 
 def test_source_visible_subscript_leaves_construct_after_store_coordinate_law(
@@ -543,18 +547,18 @@ def test_source_visible_subscript_leaves_construct_after_store_coordinate_law(
         "def f(a, b, i, j, p, q):\n    a[i], b[j] = p, q\n    return p\n",
         "sub2",
     )
-    assert len(dual.stores) == 2
+    assert len(_stores(dual)) == 2
     namesub = _unpack(
         tmp_path, "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n", "namesub"
     )
-    assert len(namesub.bindings) == 1
-    assert len(namesub.stores) == 1
+    assert len(_name_targets(namesub)) == 1
+    assert len(_stores(namesub)) == 1
 
     # Discrimination arm: Attribute sibling remains admitted.
     unpack = _unpack(
         tmp_path, "def f(p, q):\n    x, o.a = p, q\n    return x\n", stem="nameattr"
     )
-    assert len(unpack.stores) == 1
+    assert len(_stores(unpack)) == 1
 
 
 def test_formal_subscript_unpack_desugar_stays_undischarged(tmp_path: Path) -> None:
@@ -595,12 +599,13 @@ def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
     from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
 
     unpack = _unpack(tmp_path, TWO_ATTRIBUTE, stem="dual")
-    assert len(unpack.stores) == 2
+    stores = _stores(unpack)
+    assert len(stores) == 2
     # Each store target is its own keyed statement around the one field
     # store, as a chained assignment's store target is.
-    assert all(isinstance(store, KeyedStoreSugar) for store in unpack.stores)
-    assert [store.store.attr for store in unpack.stores] == ["x", "y"]
-    assert unpack.bindings == ()
+    assert all(isinstance(store, KeyedStoreSugar) for store in stores)
+    assert [store.store.attr for store in stores] == ["x", "y"]
+    assert _name_targets(unpack) == ()
 
 
 # ---------------------------------------------------------------------------
