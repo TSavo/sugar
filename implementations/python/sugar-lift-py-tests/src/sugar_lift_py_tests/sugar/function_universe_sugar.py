@@ -1178,6 +1178,21 @@ class FunctionUniverseSugar(Sugar):
     #: is handed (``UniverseValue.field_facts``, ``python:call_leaves``).
     leaving_calls: tuple = dataclass_field(default=(), compare=False)
 
+    def contract_formals(self) -> tuple:
+        """Every formal the contract states: the parameters, then each input
+        (``inputs``) after them.  One tuple whatever arms the reduction
+        leaves: the completed arm's universe states it (``desugar``), and a
+        reduction with no completed arm states it off this sugar
+        (``tree_enumerate.reduction_rows``), so a halt guard over an input is
+        scoped the same either way."""
+        return self.formals + tuple(item.formal for item in self.inputs)
+
+    def contract_formal_coordinates(self) -> tuple:
+        """The coordinate of each formal of ``contract_formals``, in order."""
+        return self.formal_coordinates + tuple(
+            item.coordinate for item in self.inputs
+        )
+
     @classmethod
     def witnesses(cls):
         # A function whose body returns its argument; the caller asserts the
@@ -1206,10 +1221,8 @@ class FunctionUniverseSugar(Sugar):
         ctx = bind_contract_inputs(
             ctx, self.inputs, owner="FunctionUniverseSugar.inputs"
         )
-        formals = self.formals + tuple(item.formal for item in self.inputs)
-        formal_coordinates = self.formal_coordinates + tuple(
-            item.coordinate for item in self.inputs
-        )
+        formals = self.contract_formals()
+        formal_coordinates = self.contract_formal_coordinates()
 
         from sugar_lift_py_tests.sugar.assert_sugar import (
             halts_where_its_asserts_fail,
