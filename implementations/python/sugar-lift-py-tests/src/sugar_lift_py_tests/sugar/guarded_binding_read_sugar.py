@@ -84,9 +84,59 @@ def _loop_exit_faces(state: LoopGuardedProjection):
     return dict(zip(kinds, minted, strict=True))
 
 
+def decided_loop_exit(state: LoopGuardedProjection, ctx):
+    """The completed face of ``state`` its loop left by on this path, where
+    the loop's own run decided it, else ``None``.
+
+    A loop whose items the reduction ran one by one decides its exit slot
+    (``binding_state.loop_exit_slot``) on every exit it publishes on
+    (``LoopRecurrenceSugar._exit_decision``): true when it left by
+    exhaustion (``NormalExhaustion``), false when it left by its own
+    ``break`` (``BreakExit``).  A read or a ``del`` after it takes that
+    face, whole, as a read of a ground ``if``'s binding takes the arm its
+    slot decided (``_decided_arm``): the other face is not taken here, and
+    the guard the recurrence states the face by (``python.loop.exhausted``,
+    the ``break``'s branch guard), which no input decides, is not stated on
+    a path that ran.  Undecided -- the recurrence, a context the loop's
+    publication did not reach -- the projection is read face by face under
+    each face's guard, as before."""
+    if state.target_cid is None:
+        return None
+    table = getattr(ctx, "ground_branch_results", None)
+    if not isinstance(table, dict):
+        return None
+    from sugar_lift_py_tests.sugar.call_site_sugar import branch_result_read
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+    from sugar_source_tree.binding_state import loop_exit_slot
+
+    bound = branch_result_read(table, loop_exit_slot(state.target_cid).slot_id)
+    if isinstance(bound, TrueBoolLiteralSugar):
+        kind = "NormalExhaustion"
+    elif isinstance(bound, FalseBoolLiteralSugar):
+        kind = "BreakExit"
+    else:
+        return None
+    faces = [face for face in state.completed_faces if face.completion_kind == kind]
+    if len(faces) != 1:
+        return None
+    return faces[0]
+
+
 def _read_loop_projection(
     state: LoopGuardedProjection, *, read_name: str, read_site, ctx
 ) -> ExitSet:
+    left_by = decided_loop_exit(state, ctx)
+    if left_by is not None:
+        # The loop ran in hand on this path and left by this face: the read
+        # is its binding, whole (``decided_loop_exit``).
+        return _read_arm(
+            left_by.state, read_name=read_name, read_site=read_site, ctx=ctx
+        )
     by_kind = _loop_exit_faces(state)
     exits = ExitSet(())
     for face in state.completed_faces:

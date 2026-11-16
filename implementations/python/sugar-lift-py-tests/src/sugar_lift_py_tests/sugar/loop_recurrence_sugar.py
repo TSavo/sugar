@@ -1349,6 +1349,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     entries=combined,
                     carried=self._latched(runtime, state, index),
                     items=index + 1,
+                    exhausted=False,
                 )
         return self._left_with(entries, (), halt=halt)
 
@@ -1997,7 +1998,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # The loop leaves with what the last item handed on (or the
             # pre-loop values when there was no item).
             return self._publish_runtime_bindings(
-                runtime, ctx, entries=entries, carried=carried, items=items
+                runtime,
+                ctx,
+                entries=entries,
+                carried=carried,
+                items=items,
+                exhausted=True,
             )
         # The else runs once, after every item.  It reads each carried name
         # through the header, bound here, outside every item, to what the last
@@ -2019,6 +2025,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 carried=self._after_else(runtime, context),
                 items=items,
                 else_ran=True,
+                exhausted=True,
                 **how,
             )
 
@@ -2081,6 +2088,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         items=0,
         else_ran=False,
         halt=None,
+        exhausted: bool,
     ):
         """Publish the value of each name carried under a binding coordinate
         (``_coordinate_names``) as the loop leaves: ``carried``,
@@ -2097,8 +2105,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         coordinate (a name first bound in the loop, a module binding) is
         published last, under its post-loop key, with its write slot decided
         on this exit (``_post_loop_writes``): ``items`` items ran, and the
-        ``else`` suite ran when ``else_ran``.  With ``halt`` (a halt leaving
-        the ``else`` suite), the loop leaves by it, carrying all this
+        ``else`` suite ran when ``else_ran``.  Last, the exit the loop left
+        by is decided on this path (``_exit_decision``): by exhaustion when
+        ``exhausted``, else by its own ``break``.  With ``halt`` (a halt
+        leaving the ``else`` suite), the loop leaves by it, carrying all this
         (``_left_with``)."""
         temporal = getattr(ctx, "temporal", None)
         if temporal is None:
@@ -2121,10 +2131,39 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         )
         return self._left_with(
             entries,
-            self._publication(tuple(values), posted),
+            (
+                *self._publication(tuple(values), posted),
+                self._exit_decision(exhausted),
+            ),
             halt=halt,
             fall_through=fall_through,
             can_fall_through=can_fall_through,
+        )
+
+    def _exit_decision(self, exhausted: bool):
+        """The exit this loop left by, decided on the path it publishes on:
+        its exit slot (``loop_exit_slot``) true when it left by exhaustion
+        (``NormalExhaustion``), false when it left by its own ``break``
+        (``BreakExit``).
+
+        A loop whose items the reduction ran one by one knows which way it
+        left: it ran them.  A read after it (``guarded_binding_read_sugar.
+        decided_loop_exit``) takes that face's binding, as a read of its
+        write slot takes one arm (``_publication``), never the face under
+        the guard the recurrence states it by (``python.loop.exhausted``,
+        the ``break``'s branch guard), which no input decides.  Read under
+        that guard, a function's return after a loop it ran in hand was a
+        post no caller's join could read: the unrolled loop it replaced
+        (#8957) had no such guard.  The decision is this path's own
+        (``BranchResultDecision``): the recurrence decides nothing, and its
+        read stays guarded and owed."""
+        from sugar_lift_py_tests.floor.branch_result_coordinate import (
+            BranchResultDecision,
+        )
+        from sugar_source_tree.binding_state import loop_exit_slot
+
+        return BranchResultDecision(
+            loop_exit_slot(self.target_cid), exhausted, self.site
         )
 
     def _left_with(

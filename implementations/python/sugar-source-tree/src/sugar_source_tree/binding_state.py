@@ -175,6 +175,19 @@ def loop_write_slot(post_key: str) -> BranchResultSlot:
     return BranchResultSlot(f"loop-wrote:{post_key}")
 
 
+def loop_exit_slot(target_cid: str) -> BranchResultSlot:
+    """The slot of the exit a live loop (``target_cid``, its owned target)
+    left by, read after the loop: true when it left by exhaustion (its
+    iterator exhausted, its ``while`` test false: ``NormalExhaustion``),
+    false when it left by its own ``break`` (``BreakExit``).  A loop whose
+    items the reduction runs one by one decides it on every exit it
+    publishes on (``LoopRecurrenceSugar._exit_decision``,
+    ``BranchResultDecision``), so a read after the loop takes the face it
+    left by, as a read of its write slot takes one arm.  The recurrence
+    decides nothing: its read stays guarded by each face's own guard."""
+    return BranchResultSlot(f"loop-exit:{target_cid}")
+
+
 @dataclass(frozen=True)
 class GuardedBinding:
     slot: BranchResultSlot
