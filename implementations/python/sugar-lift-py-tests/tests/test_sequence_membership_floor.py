@@ -216,7 +216,9 @@ def test_callsite_container_emits_py_in():
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     (halt,) = outcome.halts()
     assert isinstance(done.value.formula, _Atomic)
-    assert done.value.formula.name == "py.in"
+    # ``py.in`` keyed per evaluation (#7757 NEW-1).
+    assert done.value.formula.name == "python:compare_result"
+    assert done.value.formula.args[0].value == "In"
     assert "python:compare.completes" in repr(done.guard)
     assert type(halt.effect) is UndeterminedRaiseEffect
     assert halt.effect.producer_node_owner == "UndecidedCompare:In"

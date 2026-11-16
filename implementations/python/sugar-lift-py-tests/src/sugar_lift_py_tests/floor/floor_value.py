@@ -747,7 +747,9 @@ class FloorValue:
         The container's runtime type selects ``__contains__`` (or iteration
         with ``__eq__``), which this frame did not look at, so ``item in self``
         may raise anything -- the #7585 law.  It completes with the undecided
-        ``py.in(item, container)`` predicate only under
+        ``py.in(item, container)`` predicate, keyed per evaluation
+        (``python:compare_result("In", item, container, <key>)``,
+        ``comparison_op_sugar.keyed_comparison``), only under
         ``python:compare.completes(python:compare("In", item, container,
         site))`` and halts with
         an ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:In``) under the
@@ -1602,6 +1604,29 @@ def undecided_result_terms(name: str, operand_terms, key: str):
         [ctor(f"python:{name}_op", (term, str_const(key)))],
     )
     return term, completes
+
+
+def undecided_predicate_result(name: str, operand_terms, key: str):
+    """The one form of an undecided operation whose value is a truth -- a
+    comparison's (``python:compare_result("<Kind>", <left>, <right>,
+    <key>)``) or ``bool(x)``'s (``python:truth_result(<x>, <key>)``) -- one
+    per evaluation (#7757 NEW-1, the owner's key rule).
+
+    The atom ``python:<name>_result(*operands, <key>)`` is the predicate
+    counterpart of :func:`undecided_result_terms`' result term: ``key`` is
+    the occurrence key taken where the operation evaluates, the key its
+    completes atom (``python:compare.completes(python:compare(<kind>, ...,
+    <key>))``, ``python:truth.completes(python:truth(<x>, <key>))``) and its
+    halt already carry, so two evaluations over the same operand terms (a
+    counting ``__eq__`` asked twice, ``bool(p)`` in two live loop items) are
+    two unknowns, never one atom.  Where prove decides the operands' builtin
+    types (a joined actual, a stated ``int`` / ``str``), the SMT emitter
+    reads it exactly as the unkeyed ``py.eq`` / ``py.truthy`` it replaces
+    for undecided operands; otherwise it is the uninterpreted application.
+    """
+    from sugar_lift_py_tests.ir import atomic, str_const
+
+    return atomic(f"python:{name}_result", [*operand_terms, str_const(key)])
 
 
 def undecided_attribute_result(receiver, name: str, site, *, owner: str):

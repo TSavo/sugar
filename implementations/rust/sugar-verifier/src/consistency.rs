@@ -1225,27 +1225,72 @@ fn eval_ground_bool(node: &Json) -> Option<bool> {
 }
 
 fn eval_ground_atomic_bool(node: &Json) -> Option<bool> {
+    // The kit's keyed undecided comparison is the comparison it states, here
+    // over ground operands (#7757 NEW-1).
+    if let Some((name, left, right)) = keyed_python_comparison(node) {
+        return eval_ground_comparison(name, left, right);
+    }
     let name = node.get("name").and_then(|v| v.as_str())?;
     let args = node.get("args").and_then(|v| v.as_array())?;
     if args.len() != 2 {
         return None;
     }
+    eval_ground_comparison(name, &args[0], &args[1])
+}
 
+/// The comparison the kit's keyed undecided comparison result states:
+/// `python:compare_result("<Kind>", <left>, <right>, <key>)` (#7757 NEW-1,
+/// `floor_value.undecided_predicate_result`) read as the `py.eq` / `py.lt`
+/// / `py.le` / `py.gt` / `py.ge` / `py.in` atom over the same operands. The
+/// key only keeps two evaluations two atoms; over operands whose value is
+/// decided the answer is the comparison's. `None` for any other atom.
+fn keyed_python_comparison(node: &Json) -> Option<(&'static str, &Json, &Json)> {
+    if node.get("kind").and_then(Json::as_str) != Some("atomic")
+        || node.get("name").and_then(Json::as_str)
+            != Some(sugar_ir_compiler_smt_lib::PYTHON_COMPARE_RESULT)
+    {
+        return None;
+    }
+    let [kind, left, right, _key] = node.get("args").and_then(Json::as_array)?.as_slice() else {
+        return None;
+    };
+    let name = match str_const_value(kind)? {
+        "Eq" => "py.eq",
+        "Lt" => "py.lt",
+        "LtE" => "py.le",
+        "Gt" => "py.gt",
+        "GtE" => "py.ge",
+        "In" => "py.in",
+        _ => return None,
+    };
+    Some((name, left, right))
+}
+
+/// Python's `==` atom: `py.eq`, or the kit's keyed undecided `==`
+/// (`python:compare_result("Eq", ...)`, `keyed_python_comparison`).
+fn is_python_equality_atom(node: &Json) -> bool {
+    node.get("kind").and_then(Json::as_str) == Some("atomic")
+        && (node.get("name").and_then(Json::as_str) == Some("py.eq")
+            || keyed_python_comparison(node).is_some_and(|(name, _, _)| name == "py.eq"))
+}
+
+fn eval_ground_comparison(name: &str, left: &Json, right: &Json) -> Option<bool> {
+    let args = [left, right];
     // Python control-flow guards emit `py.eq` / `py.lt` / `identity` / `py.in`,
     // not bare IR `=` / `<`. Vendor posts specialize those guards at grounded
     // callsites (`py.eq(1,1) => out=7`); without evaluating them, implies arms
     // never open and lying arms stay SAT (#4398).
     if name == "py.in" {
-        return eval_ground_py_in(&args[0], &args[1]);
+        return eval_ground_py_in(args[0], args[1]);
     }
     if name == "identity" {
-        return eval_ground_identity(&args[0], &args[1]);
+        return eval_ground_identity(args[0], args[1]);
     }
 
     // Int comparisons: IR and Python predicate names share the same law.
     if let (Some(left), Some(right)) = (
-        int_const_value_i128(&args[0]),
-        int_const_value_i128(&args[1]),
+        int_const_value_i128(args[0]),
+        int_const_value_i128(args[1]),
     ) {
         return match name {
             "<" | "py.lt" => Some(left < right),
@@ -1260,14 +1305,14 @@ fn eval_ground_atomic_bool(node: &Json) -> Option<bool> {
 
     // Ground structural equality for non-int values (None, tuples, complex):
     // only when both sides are closed data values. Never orient free vars.
-    if matches!(name, "=" | "py.eq") && is_const_value(&args[0]) && is_const_value(&args[1]) {
-        return Some(ground_values_equal(&args[0], &args[1]));
+    if matches!(name, "=" | "py.eq") && is_const_value(args[0]) && is_const_value(args[1]) {
+        return Some(ground_values_equal(args[0], args[1]));
     }
     if matches!(name, "\u{2260}" | "!=" | "py.ne")
-        && is_const_value(&args[0])
-        && is_const_value(&args[1])
+        && is_const_value(args[0])
+        && is_const_value(args[1])
     {
-        return Some(!ground_values_equal(&args[0], &args[1]));
+        return Some(!ground_values_equal(args[0], args[1]));
     }
     None
 }
@@ -2153,7 +2198,8 @@ fn is_literal_equality(node: &Json) -> bool {
 /// binds each `global:<name>` to the value the contract states
 /// (`bind_own_inputs`): `assert X == 3` arrives as
 /// `python:compare.completes(python:compare("Eq", 3, 3, <key>))` and
-/// `py.eq(3, 3)`. The lift decided that claim before step 5; here it is
+/// `py.eq(3, 3)`, or its keyed form `python:compare_result("Eq", 3, 3,
+/// <key>)` (#7757 NEW-1). The lift decided that claim before step 5; here it is
 /// closed over literals, and Python's answer is forced
 /// (`decided_python_atom`), so it is stated as that answer: a closed literal
 /// formula (`is_closed_literal_formula`) every solver reads alike. An atom
@@ -2185,19 +2231,15 @@ fn fold_decided_python_atoms(node: &Json) -> Json {
 /// `Gt`, `GtE`) of two `int` literals always completes and one of an `int`
 /// and a `str` never does (`TypeError`). `None` for anything else.
 fn decided_python_atom(node: &Json) -> Option<bool> {
+    // The kit's keyed undecided `==` (`python:compare_result("Eq", a, b,
+    // <key>)`, #7757 NEW-1) over literals is `py.eq(a, b)`'s answer.
+    if let Some(("py.eq", left, right)) = keyed_python_comparison(node) {
+        return decided_literal_equality(left, right);
+    }
     let name = node.get("name").and_then(|v| v.as_str())?;
     let args = node.get("args").and_then(|v| v.as_array())?;
     match (name, args.as_slice()) {
-        ("=" | "py.eq", [left, right]) => {
-            let ints = (int_const_value_i128(left), int_const_value_i128(right));
-            if let (Some(a), Some(b)) = ints {
-                return Some(a == b);
-            }
-            if let (Some(a), Some(b)) = (str_const_value(left), str_const_value(right)) {
-                return Some(a == b);
-            }
-            None
-        }
+        ("=" | "py.eq", [left, right]) => decided_literal_equality(left, right),
         ("python:compare.completes", [operation]) => {
             if operation.get("kind").and_then(|k| k.as_str()) != Some("ctor")
                 || operation.get("name").and_then(|n| n.as_str()) != Some("python:compare")
@@ -2229,6 +2271,19 @@ fn decided_python_atom(node: &Json) -> Option<bool> {
         }
         _ => None,
     }
+}
+
+/// `left == right` of two `int` literals or two `str` literals: their
+/// equality. `None` for anything else.
+fn decided_literal_equality(left: &Json, right: &Json) -> Option<bool> {
+    let ints = (int_const_value_i128(left), int_const_value_i128(right));
+    if let (Some(a), Some(b)) = ints {
+        return Some(a == b);
+    }
+    if let (Some(a), Some(b)) = (str_const_value(left), str_const_value(right)) {
+        return Some(a == b);
+    }
+    None
 }
 
 /// The value of a `str` literal: a `const` of primitive sort `String`.
@@ -2506,10 +2561,11 @@ fn check_inv_consistency_with_vacuity_reason(
     }
 }
 
-/// Does `node` hold a `py.eq` atom anywhere?
+/// Does `node` hold a Python `==` atom (`py.eq`, or its keyed form,
+/// `is_python_equality_atom`) anywhere?
 fn reads_py_eq(node: &Json) -> bool {
     if node.get("kind").and_then(Json::as_str) == Some("atomic") {
-        return node.get("name").and_then(Json::as_str) == Some("py.eq");
+        return is_python_equality_atom(node);
     }
     node.get("body").is_some_and(reads_py_eq)
         || node
@@ -2547,7 +2603,10 @@ fn py_eq_over_builtins(node: &Json, positive: bool, changed: &mut bool) -> Optio
     };
     match node.get("kind").and_then(Json::as_str) {
         Some("atomic") => {
-            if node.get("name").and_then(Json::as_str) != Some("py.eq") {
+            // The keyed `==` (`python:compare_result("Eq", a, b, <key>)`) is
+            // read as `py.eq(a, b)` is; its operator and key are literals,
+            // which the filter below leaves out.
+            if !is_python_equality_atom(node) {
                 return Some(node.clone());
             }
             let builtins: Vec<Json> = node

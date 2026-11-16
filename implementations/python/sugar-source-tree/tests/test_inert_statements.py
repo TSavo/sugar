@@ -71,7 +71,9 @@ def test_nonlocal_is_inert():
 def test_import_does_not_block_a_later_fact():
     v = _val("def A(z):\n    import m\n    assert z == 1\n    return z\n")
     assert len(v.invs()) == 1
-    assert v.invs()[0].name == "py.eq"
+    # The undecided ``==``, keyed per evaluation (#7757 NEW-1).
+    assert v.invs()[0].name == "python:compare_result"
+    assert v.invs()[0].args[0].value == "Eq"
     assert v.post().args[1].name == "z"
 
 

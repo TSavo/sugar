@@ -168,7 +168,8 @@ GUARDED_SYMBOLIC_ELSE = "def A(c, p, q):\n    a, b = ((p, q) if c else p)\n    r
 def _discharged_on_an_undecided_condition(tmp_path: Path, source: str, stem: str):
     """``... if c else ...`` on a formal ``c``: ``bool(c)`` is the one truth
     rule's two faces (#7757 NEW-1), as the statement form's is -- no carrier
-    waits on a caller's actual.  Its completed truth is ``py.truthy(c)``;
+    waits on a caller's actual.  Its completed truth is
+    ``python:truth_result(c, <key>)``, keyed per evaluation;
     the arms join under that formula, and its halt is kept beside them."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
@@ -213,10 +214,11 @@ def test_guarded_arm_effect_rides_the_branch_guard(tmp_path: Path) -> None:
     Only the ``else`` arm is a runtime unpack: ``p``, a value no caller has
     supplied.  The ``if`` arm is the display ``(p, q)``, and a 2-tuple
     always unpacks into two names -- Python never raises there, so no
-    unpack halt is owed on that arm (law 6).  The one halt rides
-    ``not py.truthy(c)``, never ``py.truthy(c)``.
+    unpack halt is owed on that arm (law 6).  The one halt rides the
+    negated truth of ``c``, never its truth.  That truth is keyed per
+    evaluation (``python:truth_result(c, <key>)``, #7757 NEW-1).
     """
-    from sugar_lift_py_tests.ir import not_
+    from sugar_lift_py_tests.ir import _Atomic, not_
 
     outcome = _discharged_on_an_undecided_condition(
         tmp_path, GUARDED_SYMBOLIC_ELSE, "guarded_else"
@@ -225,8 +227,17 @@ def test_guarded_arm_effect_rides_the_branch_guard(tmp_path: Path) -> None:
     assert len(halted) == 1, outcome
     (halt,) = halted
     conjuncts = _conjuncts(halt.guard)
-    assert not_(GUARD) in conjuncts, halt.guard
-    assert GUARD not in conjuncts, halt.guard
+    (truth,) = {
+        conjunct.operands[0]
+        for conjunct in conjuncts
+        if getattr(conjunct, "kind", None) == "not"
+        and isinstance(conjunct.operands[0], _Atomic)
+        and conjunct.operands[0].name == "python:truth_result"
+    }
+    assert truth.args[0] == make_var("c"), halt.guard
+    assert not_(truth) in conjuncts, halt.guard
+    assert truth not in conjuncts, halt.guard
+    assert GUARD not in conjuncts and not_(GUARD) not in conjuncts, halt.guard
     # Both arms complete on their faces: the halts never claim every exit.
     assert len(outcome.halts()) < len(outcome.exits), outcome
 

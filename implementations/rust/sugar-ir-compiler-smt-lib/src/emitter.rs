@@ -3960,6 +3960,16 @@ const PY_TRUTHY: &str = "py.truthy";
 const PYTHON_TRUTH: &str = "python:truth";
 const PYTHON_TRUTH_COMPLETES: &str = "python:truth.completes";
 
+/// The kit's undecided truth and comparison values, keyed per evaluation
+/// (#7757 NEW-1, `floor_value.undecided_predicate_result`):
+/// `python:truth_result(<operand>, <key>)` and
+/// `python:compare_result("<Kind>", <left>, <right>, <key>)`. Over operands
+/// whose builtin types are decided or stated they read exactly as the
+/// unkeyed `py.truthy` / `py.eq` / ordering do; the key only keeps two
+/// evaluations two atoms where nothing decides them.
+pub const PYTHON_TRUTH_RESULT: &str = "python:truth_result";
+pub const PYTHON_COMPARE_RESULT: &str = "python:compare_result";
+
 /// Python's truth of a decided builtin value, as an SMT condition over its
 /// value: an `int` (a `bool` is one) is true where it is not 0; a `str`, a
 /// list, a tuple, and a dict (its keys) where it is not empty.  `None` for an
@@ -4863,27 +4873,38 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
     // states its result is the int 0 (`py_literal_type_axioms`), so the
     // caller's `bool()` of it is false and the face that needed it true is
     // ruled out; with nothing stated both faces stand, as before.
-    if name == PY_TRUTHY {
-        if let [operand] = args {
-            if let Some(decided) = py_decided(operand) {
-                if let Some(truth) = py_builtin_truth(&decided) {
-                    let atom = emit_atomic(name, args)?;
-                    return Ok(Some(smt_ite(&decided.holds(), &truth, &atom)));
-                }
-            }
-            if let Some(PySide::Undecided(_)) = py_side(operand) {
-                let mut rendered = emit_atomic(name, args)?;
-                for ty in [PyType::Str, PyType::Int] {
-                    if let Some(stated) = py_stated(operand, ty) {
-                        if let Some(truth) = py_builtin_truth(&stated) {
-                            rendered = smt_ite(&stated.holds(), &truth, &rendered);
-                        }
-                    }
-                }
-                return Ok(Some(rendered));
-            }
-        }
-        return Ok(None);
+    //
+    // The kit's keyed undecided truth, `python:truth_result(<operand>,
+    // <key>)`, is the same read (`py_truth_reading`), its own atom standing
+    // where nothing decides the operand.
+    if name == PY_TRUTHY || name == PYTHON_TRUTH_RESULT {
+        let operand = match (name, args) {
+            (PY_TRUTHY, [operand]) | (PYTHON_TRUTH_RESULT, [operand, _]) => operand,
+            _ => return Ok(None),
+        };
+        let atom = emit_atomic(name, args)?;
+        return Ok(py_truth_reading(operand, &atom));
+    }
+    // The kit's keyed undecided comparison, `python:compare_result("<Kind>",
+    // <left>, <right>, <key>)` (#7757 NEW-1): `Eq` is `py.eq`'s read
+    // (`py_equality_reading`), an ordering is the integer order over two
+    // decided or stated `int`s (`py_ordering_reading`), each with its own
+    // atom standing where nothing decides the operands. `In` names no read
+    // here, as `py.in` does not.
+    if name == PYTHON_COMPARE_RESULT {
+        let [Term::Const {
+            value: serde_json::Value::String(kind),
+            ..
+        }, left, right, _key] = args
+        else {
+            return Ok(None);
+        };
+        let atom = emit_atomic(name, args)?;
+        return Ok(match kind.as_str() {
+            "Eq" => py_equality_reading(true, left, right, &atom),
+            "Lt" | "LtE" | "Gt" | "GtE" => py_ordering_reading(kind, left, right, &atom),
+            _ => None,
+        });
     }
     if let [Term::Ctor {
         name: protocol,
@@ -4974,40 +4995,111 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
         "=" if is_operation(left) || is_operation(right) => {}
         _ => return Ok(None),
     }
-    let (Some(left), Some(right)) = (py_side(left), py_side(right)) else {
-        return Ok(None);
-    };
     let atom = emit_atomic(name, args)?;
+    Ok(py_equality_reading(name == "py.eq", left, right, &atom))
+}
+
+/// `bool(operand)` as Python reads it (`py.truthy` and the kit's keyed
+/// `python:truth_result`): of a decided builtin value its own truth
+/// (`py_builtin_truth`) where the value holds; of an undecided Int-universe
+/// value the same truth at each builtin type the value is stated to have
+/// (`py_stated`), `atom` where none is. `None` (the atom as `emit_atomic`
+/// renders it) for any other operand.
+fn py_truth_reading(operand: &Term, atom: &str) -> Option<String> {
+    if let Some(decided) = py_decided(operand) {
+        if let Some(truth) = py_builtin_truth(&decided) {
+            return Some(smt_ite(&decided.holds(), &truth, atom));
+        }
+    }
+    if let Some(PySide::Undecided(_)) = py_side(operand) {
+        let mut rendered = atom.to_string();
+        for ty in [PyType::Str, PyType::Int] {
+            if let Some(stated) = py_stated(operand, ty) {
+                if let Some(truth) = py_builtin_truth(&stated) {
+                    rendered = smt_ite(&stated.holds(), &truth, &rendered);
+                }
+            }
+        }
+        return Some(rendered);
+    }
+    None
+}
+
+/// `left == right` as Python reads it (`python_eq`: `py.eq` and the kit's
+/// keyed `python:compare_result("Eq", ...)`), or an `=` binding a decided
+/// operation (`python_eq` false): by value over decided operands, guarded
+/// by the undecided operand's stated builtin type, `atom` where nothing
+/// decides it. `None` when an operand is not a Python-value side.
+fn py_equality_reading(python_eq: bool, left: &Term, right: &Term, atom: &str) -> Option<String> {
+    let (Some(left), Some(right)) = (py_side(left), py_side(right)) else {
+        return None;
+    };
     let rendered = match (left, right) {
         (PySide::Decided(a), PySide::Decided(b)) => {
             let ready = smt_and(&[a.holds().as_str(), b.holds().as_str()]);
             let same = if a.ty != b.ty {
                 "false".to_string()
-            } else if a.ty.is_container() && name == "py.eq" {
+            } else if a.ty.is_container() && python_eq {
                 // `==` compares the items (#7757 step 7).
-                py_container_equality(a.ty, &a.value, &b.value, &atom)
+                py_container_equality(a.ty, &a.value, &b.value, atom)
             } else if a.ty == PyType::Dict {
                 format!("(and (= {} {}) (= {} {}))", a.value, b.value, a.aux, b.aux)
             } else {
                 format!("(= {} {})", a.value, b.value)
             };
-            smt_ite(&ready, &same, &atom)
+            smt_ite(&ready, &same, atom)
         }
         (PySide::Decided(decided), PySide::Undecided(undecided))
         | (PySide::Undecided(undecided), PySide::Decided(decided)) => {
-            let read = if name == "py.eq" {
-                py_eq_guarded(&decided, &undecided, &atom)
+            let read = if python_eq {
+                py_eq_guarded(&decided, &undecided, atom)
             } else {
                 py_value_is(&decided, &undecided)
             };
-            smt_ite(&decided.holds(), &read, &atom)
+            smt_ite(&decided.holds(), &read, atom)
         }
-        // Only `py.eq` reaches here: an `=` arm has a decided operation.
+        // Only Python's `==` reaches here: an `=` arm has a decided operation.
         (PySide::Undecided(left), PySide::Undecided(right)) => {
-            py_eq_both_undecided(&left, &right, &atom)
+            py_eq_both_undecided(&left, &right, atom)
         }
     };
-    Ok(Some(rendered))
+    Some(rendered)
+}
+
+/// An ordering (`Lt`, `LtE`, `Gt`, `GtE`) of the kit's keyed undecided
+/// comparison (`python:compare_result`) between two `int`s: Python's integer
+/// order, the SMT-LIB order `py.lt` / `py.le` / `py.gt` / `py.ge` render as.
+/// A decided `int` is its own `holds`; an undecided operand is an `int`
+/// where its exact stated type is (`python:value.is_int`, not `is_str`), as
+/// `py.eq` reads it. Anything else (a `str`, whose order this backend's
+/// universe does not state, a container, an unstated operand) is `atom`, the
+/// keyed application. `None` when an operand is not a Python-value side or
+/// is a decided value that is not an `int`.
+fn py_ordering_reading(kind: &str, left: &Term, right: &Term, atom: &str) -> Option<String> {
+    let order = match kind {
+        "Lt" => "<",
+        "LtE" => "<=",
+        "Gt" => ">",
+        "GtE" => ">=",
+        _ => return None,
+    };
+    let an_int = |side: PySide| -> Option<(String, String)> {
+        match side {
+            PySide::Decided(decided) if decided.ty == PyType::Int => {
+                Some((decided.holds(), decided.value))
+            }
+            PySide::Decided(_) => None,
+            PySide::Undecided(undecided) => {
+                let (is_str, is_int) = py_type_guards(&undecided);
+                Some((format!("(and {is_int} (not {is_str}))"), undecided))
+            }
+        }
+    };
+    let (left_int, left_value) = an_int(py_side(left)?)?;
+    let (right_int, right_value) = an_int(py_side(right)?)?;
+    let ready = smt_and(&[left_int.as_str(), right_int.as_str()]);
+    let ordered = format!("({order} {left_value} {right_value})");
+    Some(smt_ite(&ready, &ordered, atom))
 }
 
 /// Rewrite qualifying `=(subject, IntConst)` atoms into `int32.eq-const`

@@ -38,8 +38,16 @@ def test_concrete_for_unrolls_the_body_per_element():
         "def A(z):\n    for x in [1, 2, 3]:\n        assert x == z\n    return z\n"
     )
     assert len(invs) == 3
-    assert [i.args[0].value for i in invs] == [1, 2, 3]  # x = each element
-    assert all(i.name == "py.eq" and i.args[1].name == "z" for i in invs)
+    # Each is the undecided ``==``, keyed per evaluation (#7757 NEW-1):
+    # ``python:compare_result("Eq", x, z, <key>)``, one key per item.
+    assert [i.args[1].value for i in invs] == [1, 2, 3]  # x = each element
+    assert all(
+        i.name == "python:compare_result"
+        and i.args[0].value == "Eq"
+        and i.args[2].name == "z"
+        for i in invs
+    )
+    assert len({i.args[-1] for i in invs}) == 3
 
 
 def test_empty_concrete_for_states_nothing():

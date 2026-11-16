@@ -273,14 +273,54 @@ def test_two_evaluations_of_one_formal_operation_are_two_unknowns() -> None:
 
 def test_a_formals_truth_is_two_faced_and_owes_it() -> None:
     """#7757 NEW-1: ``bool(p)`` asked of a parameter is the one undecided
-    truth (``bool_op_sugar._unanswered_truth``): ``py.truthy`` under
-    ``python:truth.completes``, an undetermined halt under its complement."""
+    truth (``bool_op_sugar._unanswered_truth``): ``python:truth_result(p,
+    <key>)`` under ``python:truth.completes(python:truth(p, <key>))``, an
+    undetermined halt at the same key under its complement."""
+    from sugar_lift_py_tests.ir import str_const
+
     formal = SymbolicValue(make_var("p"), formal_coordinate=object())
     faces = formal.truth(_Site())
     _assert_two_faced_and_owed(faces, "SymbolicValue.truth")
     (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
+    (halt,) = [arm for arm in faces.exits if isinstance(arm, Halted)]
     assert "python:truth.completes" in repr(done.guard)
-    assert "py.truthy" in repr(done.value.formula)
+    assert done.value.formula == atomic(
+        "python:truth_result",
+        [make_var("p"), str_const(halt.effect.occurrence)],
+    )
+    assert "py.truthy" not in repr(done.value.formula)
+
+
+def test_two_evaluations_of_one_comparison_or_truth_are_two_unknowns() -> None:
+    """#7757 NEW-1 key rule, comparisons and truth (option (b)): the value
+    of ``p == q`` and of ``bool(p)`` names its own occurrence, so two
+    evaluations at two sites (a counting ``__eq__`` asked twice) are two
+    atoms, and a truthful ``(p == q) != (p == q)`` cannot read ``unsat``."""
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import str_const
+    from sugar_lift_py_tests.sugar.comparison_op_sugar import undecided_dispatch_faces
+
+    class _Other(_Site):
+        class _Span:
+            start_line, start_col, end_line, end_col = 4, 4, 4, 12
+
+        line_col_span = _Span()
+
+    formal = SymbolicValue(make_var("p"), formal_coordinate=object())
+    equality = atomic("py.eq", [make_var("p"), make_var("q")])
+    for operate in (
+        lambda site: undecided_dispatch_faces(
+            PredicateValue(equality, site), site, "Eq"
+        ),
+        lambda site: formal.truth(site),
+    ):
+        first = operate(_Site())
+        second = operate(_Other())
+        (one,) = [arm for arm in first.exits if isinstance(arm, Completed)]
+        (two,) = [arm for arm in second.exits if isinstance(arm, Completed)]
+        (halt,) = [arm for arm in first.exits if isinstance(arm, Halted)]
+        assert one.value.formula != two.value.formula
+        assert one.value.formula.args[-1] == str_const(halt.effect.occurrence)
 
 
 def test_next_on_an_opaque_operator_result_owes_its_call() -> None:

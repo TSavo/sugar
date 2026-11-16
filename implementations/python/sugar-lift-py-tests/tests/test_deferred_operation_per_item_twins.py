@@ -49,6 +49,16 @@ it stands, its value ``python:unary_result("<op>", c, <key>)`` /
 inside the live item, so each item's operation is still its own
 (``test_each_item_evaluates_its_own_deferred_operation``).
 
+A comparison (``c == 0``) and a truth test (``not c``) on a formal are the
+undecided two faces, and their value is keyed per evaluation too (#7757
+NEW-1, option (b)): ``python:compare_result("Eq", c, 0, <key>)`` and
+``python:truth_result(c, <key>)`` (``floor_value.undecided_predicate_result``),
+the key their completes atom and their halt already carry.  A counting
+``__eq__`` or ``__bool__`` answers differently each time, so two evaluations
+-- in two live items, or twice in one body -- are two atoms, and the truth
+``r[0] != r[1]`` is never ``unsat`` (``compare-per-item``,
+``compare-twice``, ``truth-per-item``).
+
 A lying claim is never ``sat``; a truthful one is never ``unsat``.  Each
 half goes through ``run_source_through_real_solver``: real ``sugar mint``
 then real ``sugar prove``.
@@ -99,6 +109,18 @@ _COUNTING_READER = (
     "    def __getattr__(self, name):\n"
     "        self.k += 1\n"
     "        return self.k\n"
+    "\n"
+    "\n"
+)
+
+_COUNTING_EQ = (
+    "class Equaler:\n"
+    "    def __init__(self):\n"
+    "        self.k = 0\n"
+    "\n"
+    "    def __eq__(self, other):\n"
+    "        self.k += 1\n"
+    "        return self.k == 1\n"
     "\n"
     "\n"
 )
@@ -252,6 +274,61 @@ _SHAPES = {
         "\n"
         "def test_twice():\n"
         "    r = twice(iter([1, 2]))\n"
+        "    assert {claim}\n",
+        "r[0] != r[1]",
+        "r[0] == r[1]",
+    ),
+    # A comparison on a formal is the undecided ``==``, its value keyed per
+    # evaluation (#7757 NEW-1, option (b)): a counting ``__eq__`` answers
+    # True, then False.
+    "compare-per-item": (
+        _COUNTING_EQ + "def twice(c):\n"
+        "    out = []\n"
+        "    for _ in (1, 2):\n"
+        "        out.append(c == 0)\n"
+        "    return out\n"
+        "\n"
+        "\n"
+        "def test_twice():\n"
+        "    r = twice(Equaler())\n"
+        "    assert {claim}\n",
+        "r[0] != r[1]",
+        "r[0] == r[1]",
+    ),
+    # ``(p == q) != (p == q)``: the same comparison twice in one body, two
+    # sites, two evaluations of the counting ``__eq__``.
+    "compare-twice": (
+        _COUNTING_EQ + "def both(p, q):\n"
+        "    return [p == q, p == q]\n"
+        "\n"
+        "\n"
+        "def test_twice():\n"
+        "    r = both(Equaler(), 0)\n"
+        "    assert {claim}\n",
+        "r[0] != r[1]",
+        "r[0] == r[1]",
+    ),
+    # A truth test on a formal is the one truth rule's two faces, its value
+    # keyed per evaluation: a counting ``__bool__`` answers True, then False.
+    "truth-per-item": (
+        "class Truther:\n"
+        "    def __init__(self):\n"
+        "        self.k = 0\n"
+        "\n"
+        "    def __bool__(self):\n"
+        "        self.k += 1\n"
+        "        return self.k == 1\n"
+        "\n"
+        "\n"
+        "def twice(c):\n"
+        "    out = []\n"
+        "    for _ in (1, 2):\n"
+        "        out.append(not c)\n"
+        "    return out\n"
+        "\n"
+        "\n"
+        "def test_twice():\n"
+        "    r = twice(Truther())\n"
         "    assert {claim}\n",
         "r[0] != r[1]",
         "r[0] == r[1]",

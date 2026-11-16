@@ -48,8 +48,11 @@ def test_assert_consumes_the_coordinate():
         _fn("def A(s):\n    assert s.upper() == s\n    return s\n"),
         owner="UndecidedCompare:Eq",
     ).invs()[0]
-    assert inv.name == "py.eq"
-    assert inv.args[0].name == "call:upper"
+    # Keyed per evaluation (#7757 NEW-1): ``python:compare_result("Eq",
+    # call:upper(s), s, <key>)``.
+    assert inv.name == "python:compare_result"
+    assert inv.args[0].value == "Eq"
+    assert inv.args[1].name == "call:upper"
 
 
 def test_keyword_args_lift():
