@@ -204,16 +204,19 @@ class FloorValue:
     def denotes_a_value(self) -> bool:
         """Does this floor testify that it DENOTES a value?
 
-        A membership test needs to know the difference between "I am a value
-        whose identity is not decidable yet" and "I am not a member at all".
-        The first is an obligation (emit the typed ``python.*.contains`` atom);
-        the second is a gap. Nothing about the carrier's SHAPE separates them
-        -- ``LambdaCallable`` carries a term exactly like ``SymbolicValue``
-        does, and is a callable, never a member -- so this is testimony the
-        floor states about itself, not something a caller infers.
+        Membership's value equality (``membership.member_equal``) needs to
+        know the difference between "I am a value whose equality is not
+        decidable yet" (undecided, ``None``) and "I am an object the floor
+        has no value equality for" -- a class, a function, a bound method
+        (``NotImplemented``).  Nothing about the carrier's SHAPE separates
+        them -- ``LambdaCallable`` carries a term exactly like
+        ``SymbolicValue`` does -- so this is testimony the floor states about
+        itself, not something a caller infers.  The second is still a
+        member like any object: membership answers its ``==`` by identity
+        where Python does (``object_identity.equality_by_identity``), else
+        undecided -- never a refusal (#7757 H11).
 
-        Default: no. A floor that denotes a value says so by overriding, which
-        keeps every unwritten floor loud rather than quietly admitted.
+        Default: no.
         """
         return False
 

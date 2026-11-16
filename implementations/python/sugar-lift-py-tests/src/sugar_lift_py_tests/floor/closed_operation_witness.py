@@ -18,7 +18,6 @@ _CLOSED_OPERATIONS = frozenset(
         "python.issubclass",
         "python.isinstance",
         "python.len",
-        "python.set.contains",
         "python.set.union",
         "python.set.intersection",
         "python.set.difference",

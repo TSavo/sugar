@@ -179,26 +179,8 @@ class ListValue(GuardStableValue):
             return distributed
         from sugar_lift_py_tests.floor.membership import membership
 
-        decided = membership(
-            self,
-            item,
-            self.elements,
-            kind="list",
-            member_role="member",
-            container_role="list",
-            hashed=False,
-            site=site,
-        )
-        if decided is not None:
-            return decided
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        construction_panic_gap(
-            owner="ListValue.contains",
-            blame=str(site),
-            observed=type(item).__name__,
-            requested="constructed finite member or typed symbolic membership operand",
-            fix="construct member equality on the Python floor or keep it loud",
+        return membership(
+            self, item, self.elements, kind="list", hashed=False, site=site
         )
 
     def append_with(self, value, site):

@@ -102,6 +102,12 @@ def publish_undecided_membership_edges(left, right, site, op_kind: str, outcome)
 
     Operand order is needle then container (the producer already swapped for
     ``in`` / ``not in`` so the floor call is ``container.contains(item)``).
+
+    A builtin list/tuple/set/dict display answers its own undecided
+    membership with its two faces (``floor.membership``, #7757 H10), so it
+    never reaches the bare-predicate check below.  The floors that still
+    answer a bare ``py.in`` (``StringValue``, ``ComprehensionValue``,
+    ``MutableGlobalValue``'s dict, a ``GuardedValue`` rejoin) still do.
     """
     return _publish_undecided_dispatch_edges(
         left,

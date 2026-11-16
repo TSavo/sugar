@@ -191,19 +191,9 @@ class SetValue(GuardStableValue):
             return distributed
         from sugar_lift_py_tests.floor.membership import membership
 
-        decided = membership(
-            self,
-            item,
-            self.elements,
-            kind="set",
-            member_role="member",
-            container_role="set",
-            hashed=True,
-            site=site,
+        return membership(
+            self, item, self.elements, kind="set", hashed=True, site=site
         )
-        if decided is not None:
-            return decided
-        return _unsupported_member(item, site)
 
     def subtract(self, other, site, ctx):
         if type(other) is SetValue:
@@ -350,16 +340,4 @@ def _bool_result(value, site):
 
     return ExitSet.completed(
         TrueBoolLiteralSugar(site=site) if value else FalseBoolLiteralSugar(site=site)
-    )
-
-
-def _unsupported_member(item, site):
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-    construction_panic_gap(
-        owner="SetValue.contains",
-        blame=str(site),
-        observed=type(item).__name__,
-        requested="constructed finite member or typed symbolic membership operand",
-        fix="construct member equality on the Python floor or keep it loud",
     )
