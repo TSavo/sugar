@@ -253,6 +253,21 @@ def _publish_undecided_dispatch_edges(
     if reads_an_effect_slot(left) or reads_an_effect_slot(right):
         return undecided_dispatch_faces(predicate, site, op_kind)
 
+    # A class object testifies to no value either (``denotes_value``).
+    # ``==`` with one is its metaclass's ``__eq__``: where that is decided to
+    # be ``type``'s against another such class or a singleton, the floor
+    # already answered by identity (``object_identity.equality_by_identity``,
+    # ``term_identity``).  A bare ``py.eq`` still standing over a class (a
+    # class whose metaclass is not decided, or an operand whose own
+    # ``__eq__`` may answer first) is the same free predicate: the undecided
+    # dispatch, which owes.
+    if (
+        law is CompareLaw.EQUALITY
+        and _bare_equality(predicate)
+        and (_class_object(left) or _class_object(right))
+    ):
+        return undecided_dispatch_faces(predicate, site, op_kind)
+
     denotes_left = getattr(left, "denotes_value", None)
     denotes_right = getattr(right, "denotes_value", None)
     if not callable(denotes_left) or not callable(denotes_right):
@@ -276,6 +291,29 @@ def _publish_undecided_dispatch_edges(
     # ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
     # complement.  No exception type is named: the halt is undetermined.
     return undecided_dispatch_faces(predicate, site, op_kind)
+
+
+def _bare_equality(predicate) -> bool:
+    """``predicate`` is one ``py.eq`` atom, the equality the floor emitted
+    without deciding it."""
+    from sugar_lift_py_tests.ir import _Atomic
+
+    formula = predicate.formula
+    return isinstance(formula, _Atomic) and formula.name == "py.eq"
+
+
+def _class_object(value) -> bool:
+    """``value`` is a class object (a source class, a builtin or installed
+    exception class, a class lowered for recognition)."""
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+    from sugar_lift_py_tests.floor.class_value import ClassValue
+    from sugar_lift_py_tests.floor.exception_class_value import (
+        ExceptionClassValue,
+    )
+
+    return isinstance(value, (ClassDefinitionValue, ClassValue, ExceptionClassValue))
 
 
 def undecided_dispatch_faces(predicate, site, op_kind: str):
