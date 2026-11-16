@@ -2356,7 +2356,9 @@ fn check_inv_consistency_with_vacuity_reason(
     // Fold grounded primitive applications (`call:abs(-5)` → `5`) before
     // structural dual / SMT. Without this, vendor posts that return a grounded
     // constructor stay uninterpreted and lying arms SAT (#4398).
-    let folded = fold_decided_python_atoms(&fold_ground_applications(&inv));
+    let folded = fold_decided_python_atoms(&fold_ground_applications(
+        &key_object_states_by_call(&inv),
+    ));
     let inv = with_local_forall_instances(canonicalize_formula_json(&folded), property_name);
     let local_inst_us = t_local.elapsed().as_micros();
     // VACUITY GUARD. A lone constraint (count < 2) has no sibling to contradict.
@@ -7653,6 +7655,62 @@ fn unanswered_operations(pool: &MementoPool) -> BTreeMap<String, (String, String
     operations
 }
 
+/// `python:call_state(<call>, <occurrence>)`: the call itself, as what the
+/// state of an object after it is keyed by (`key_object_states_by_call`).
+const PYTHON_CALL_STATE: &str = "python:call_state";
+
+/// `formula` with every `python:after(python:call_result(<call>, <occ>),
+/// <label>)` read as `python:after(python:call_state(<call>, <occ>),
+/// <label>)`: the state of an object after a call is keyed by the call, never
+/// by the value the call returned (#7757).
+///
+/// `python:after(<x>, <label>)` names an object as the call `<x>` left it
+/// (the kit's `source_call_resolution.object_after_call`). The join
+/// substitutes a contract's `out` by the caller's `python:call_result(...)`,
+/// which is also the call's returned value, and the solver equates two
+/// returned values wherever the posts state them equal: two calls that both
+/// return `None` (a setter and an `__init__`, `p(b)` and
+/// `type(o).__init__(o, n)`) had one `python:after(<None>, "0")`, so what one
+/// left in its receiver was read as what the other left in its own, and a
+/// true claim was refuted. Keyed by the call, two calls' states are related
+/// only by what the posts state of them. Applied to both sides alike, where a
+/// formula reaches the solver, so every reader and every contract still
+/// names one term; a joined post is still found by its `python:call_result`
+/// (the join reads the formula before this).
+fn key_object_states_by_call(node: &Json) -> Json {
+    match node {
+        Json::Array(items) => Json::Array(items.iter().map(key_object_states_by_call).collect()),
+        Json::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (key, value) in map {
+                out.insert(key.clone(), key_object_states_by_call(value));
+            }
+            let is_after = out.get("kind").and_then(|v| v.as_str()) == Some("ctor")
+                && out.get("name").and_then(|v| v.as_str()) == Some(PYTHON_AFTER);
+            if is_after {
+                if let Some(first) = out
+                    .get_mut("args")
+                    .and_then(|v| v.as_array_mut())
+                    .and_then(|args| args.first_mut())
+                {
+                    let is_result = first.get("kind").and_then(|v| v.as_str()) == Some("ctor")
+                        && first.get("name").and_then(|v| v.as_str()) == Some(PYTHON_CALL_RESULT);
+                    if is_result {
+                        if let Some(call) = first.as_object_mut() {
+                            call.insert(
+                                "name".to_string(),
+                                Json::String(PYTHON_CALL_STATE.to_string()),
+                            );
+                        }
+                    }
+                }
+            }
+            Json::Object(out)
+        }
+        other => other.clone(),
+    }
+}
+
 /// Does the solver answer `goal` with `verdict`? The plan proves a goal by
 /// refuting its negation: `Discharged` is "valid", `Unsatisfied` is "its
 /// negation is satisfiable". Anything else (unknown, timeout, an encoding
@@ -7664,7 +7722,9 @@ fn joined_goal_has_verdict(
     registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> bool {
-    let goal = canonicalize_formula_json(&fold_ground_applications(&goal));
+    let goal = canonicalize_formula_json(&fold_ground_applications(
+        &key_object_states_by_call(&goal),
+    ));
     match CompilerInput::decode_json(goal) {
         Ok(input) => run_plan_with_compilers(plan, registry, compilers, &input).0 == verdict,
         Err(_) => false,
@@ -8446,7 +8506,13 @@ fn linked_ambient_post_instances_for_inv(
                 // no completes atom): the post is not a decided fact here,
                 // and the row that reads it is not decided on it
                 // (`owed_in_definition`, #8984).
-                for entry in owed_in_definition(&post.binding, &instance, ambient) {
+                for entry in owed_in_definition(
+                    &post.binding,
+                    &instance,
+                    &post.post,
+                    &post.halt_guards,
+                    ambient,
+                ) {
                     if !dropped.contains(&entry) {
                         dropped.push(entry);
                     }
@@ -8550,6 +8616,8 @@ fn settle_owed_operations(
 fn owed_in_definition(
     binding: &BridgeBinding,
     instance: &Json,
+    contract_post: &Json,
+    contract_halt_guards: &[Json],
     ambient: &[AmbientPost],
 ) -> Vec<DroppedAmbientPost> {
     let Some(definition) = &binding.definition else {
@@ -8565,6 +8633,23 @@ fn owed_in_definition(
             .iter()
             .filter_map(|term| call_result_parts(term).map(|(_call, site)| site)),
     );
+    // An operation whose completes atom the contract states, and that the
+    // instance no longer reads, was settled by the join itself: a guard the
+    // namespaces decided (`decide_plain_stores`: a field store's
+    // `or(plain_store, <completes>)` is `true`) or a ground application it
+    // folded (`fold_ground_applications`: `n > 5` at `n = 3`) removed the
+    // atom with the arm it guarded. It is no free value in the instance, so
+    // the post is a decided fact over it. An atom the instance still reads,
+    // keyed by its `python:occurrence(...)` term, stays charged as before.
+    let mut stated = std::collections::BTreeSet::new();
+    completes_sites(contract_post, &mut stated);
+    for guard in contract_halt_guards {
+        completes_sites(guard, &mut stated);
+    }
+    let mut still_read = std::collections::BTreeSet::new();
+    completes_sites(instance, &mut still_read);
+    let settled: std::collections::BTreeSet<String> =
+        stated.difference(&still_read).cloned().collect();
     ambient
         .iter()
         .filter(|owed| owed.refusal.as_ref().is_some_and(|reason| reason.is_owed()))
@@ -8573,7 +8658,9 @@ fn owed_in_definition(
                 .as_ref()
                 .is_some_and(|operation| operation.owed_by(definition))
         })
-        .filter(|owed| !named.contains(owed.site_cid.as_str()))
+        .filter(|owed| {
+            !named.contains(owed.site_cid.as_str()) && !settled.contains(&owed.site_cid)
+        })
         .map(|owed| DroppedAmbientPost {
             source_symbol: owed.binding.source_symbol.clone(),
             target_cid: String::new(),
@@ -8585,6 +8672,53 @@ fn owed_in_definition(
             spelling: binding.source_symbol.clone(),
         })
         .collect()
+}
+
+/// The site an operation's completes atom is keyed on, read either way the
+/// kit keys one: a string constant last (`completes_atom_site`), or the
+/// operation's `python:occurrence(<site>, <path>...)` term (the kit's
+/// `occurrence.occurrence_term`, the store carrier's and the unanswered
+/// native operation's), whose first argument is the site.
+fn completes_atom_any_site(atom: &Json) -> Option<String> {
+    if let Some(site) = completes_atom_site(atom) {
+        return Some(site.to_string());
+    }
+    let protocol = atom.get("name")?.as_str()?.strip_suffix(".completes")?;
+    let [operation] = atom.get("args")?.as_array()?.as_slice() else {
+        return None;
+    };
+    let (name, args) = ctor_parts(operation)?;
+    if name != protocol {
+        return None;
+    }
+    args.iter().find_map(|arg| match ctor_parts(arg) {
+        Some((PYTHON_OCCURRENCE, parts)) => parts.first().and_then(const_str).map(|key| {
+            key.split_once('@')
+                .map_or(key, |(site, _path)| site)
+                .to_string()
+        }),
+        _ => None,
+    })
+}
+
+/// Every site a completes atom of `node` is keyed on, outside a quantifier
+/// (`completes_atom_any_site`).
+fn completes_sites(node: &Json, out: &mut std::collections::BTreeSet<String>) {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("atomic") => {
+            if let Some(site) = completes_atom_any_site(node) {
+                out.insert(site);
+            }
+        }
+        Some("forall") | Some("exists") => {}
+        _ => {
+            if let Some(operands) = node.get("operands").and_then(|v| v.as_array()) {
+                for operand in operands {
+                    completes_sites(operand, out);
+                }
+            }
+        }
+    }
 }
 
 fn with_ambient_posts_with_instances(
@@ -16208,6 +16342,59 @@ mod tests {
             "name": PYTHON_PLAIN_STORE,
             "args": [class, string_const(field)],
         })
+    }
+
+    #[test]
+    fn an_object_state_after_a_call_is_keyed_by_the_call_never_its_value() {
+        // `p(b)` and `type(o).__init__(o, n)` both return `None`: keyed by
+        // the returned value, what one left in its receiver was what the
+        // other left in its own (#7757).
+        let result = |name: &str| {
+            json!({"kind": "ctor", "name": PYTHON_CALL_RESULT, "args": [
+                {"kind": "ctor", "name": name, "args": []},
+                string_const("site"),
+            ]})
+        };
+        let after = |object: Json, label: &str| {
+            json!({"kind": "ctor", "name": PYTHON_AFTER, "args": [object, string_const(label)]})
+        };
+        let formula = json!({"kind": "atomic", "name": "=", "args": [
+            after(result("call:p"), "0"),
+            after(var("x"), "0"),
+        ]});
+        let keyed = key_object_states_by_call(&formula);
+        let sides = keyed["args"].as_array().unwrap();
+        assert_eq!(sides[0]["args"][0]["name"], json!(PYTHON_CALL_STATE));
+        assert_eq!(sides[0]["args"][0]["args"], result("call:p")["args"]);
+        assert_eq!(sides[1], after(var("x"), "0"));
+        // A call's result anywhere else is the value it returned, unchanged.
+        let bare = json!({"kind": "atomic", "name": "=", "args": [result("call:p"), var("y")]});
+        assert_eq!(key_object_states_by_call(&bare), bare);
+    }
+
+    #[test]
+    fn a_completes_atom_keyed_by_its_occurrence_names_its_site() {
+        // A field store's carrier keys its completes atom by its
+        // `python:occurrence(<site>, <path>...)` term (#7757 step 7).
+        let occurrence = json!({"kind": "ctor", "name": PYTHON_OCCURRENCE, "args": [
+            string_const("site-a"),
+            string_const("iteration-1"),
+        ]});
+        let operation = json!({
+            "kind": "ctor",
+            "name": "python:unanswered_native_operation",
+            "args": [string_const("setattr_named"), occurrence],
+        });
+        let atom = json!({
+            "kind": "atomic",
+            "name": "python:unanswered_native_operation.completes",
+            "args": [operation],
+        });
+        assert_eq!(completes_atom_any_site(&atom).as_deref(), Some("site-a"));
+        let guard = json!({"kind": "or", "operands": [plain_store(var("class:b"), "n"), atom]});
+        let mut sites = std::collections::BTreeSet::new();
+        completes_sites(&guard, &mut sites);
+        assert_eq!(sites.into_iter().collect::<Vec<_>>(), vec!["site-a".to_string()]);
     }
 
     /// `Box.__init__(self, n)` storing `self.n = n`, as its contract states
