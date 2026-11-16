@@ -9512,6 +9512,14 @@ fn class_read_runs_no_code(namespaces: &BTreeMap<String, ClassNamespace>, symbol
 /// decides it; `super_check_facts` does.
 const PYTHON_SUPER_CHECK_OF: &str = "python:super_check_of";
 
+/// `python:builtin_iterator_class("builtins.<t>")` (the Python kit's
+/// `builtin_super_value.BUILTIN_ITERATOR_CLASS`): the class of `iter()` of an
+/// exact instance of the builtin type `<t>`, a builtin iterator class. It is
+/// what a zero-argument `super()` in a generator expression tests against
+/// `__class__` where the generator's outermost iterable's type is decided
+/// (its `.0` iterator, #7757 NEW-2).
+const PYTHON_BUILTIN_ITERATOR_CLASS: &str = "python:builtin_iterator_class";
+
 /// The ground instances of the super check law `inv` reads (#7757): for each
 /// `python:super_check_of.completes(python:super_check_of(<class>, "<C>",
 /// <occ>))`, CPython's `supercheck` (Objects/typeobject.c) where the proofs
@@ -9528,6 +9536,13 @@ const PYTHON_SUPER_CHECK_OF: &str = "python:super_check_of";
 /// - `<class>` a class object some row states (`python:class_object`) whose
 ///   order, headed by its own symbol, holds `C`: the atom (`obj` is a type
 ///   and a subtype of `__class__`).
+/// - `<class>` a builtin iterator class
+///   (`python:builtin_iterator_class("builtins.<t>")`) and `C` a source
+///   class some row states: the atom's negation. No builtin class's order
+///   holds a source class (a builtin type is made before any source class
+///   and never subclasses one), and no builtin iterator class binds
+///   `__class__`: the slow path reads `object`'s getter, `type(obj)` again,
+///   and `supercheck` raises `TypeError` (#7757 NEW-2).
 ///
 /// Anything else is left as it stands: the check stays owed, both faces
 /// kept.
@@ -9557,6 +9572,22 @@ fn super_check_facts(inv: &Json, namespaces: &BTreeMap<String, ClassNamespace>) 
                 else {
                     continue;
                 };
+                if let Some((PYTHON_BUILTIN_ITERATOR_CLASS, iterated)) = ctor_parts(class) {
+                    let builtin = iterated
+                        .first()
+                        .and_then(const_str)
+                        .is_some_and(|symbol| symbol.starts_with(BUILTIN_CLASS_PREFIX));
+                    if builtin
+                        && !cell.starts_with(BUILTIN_CLASS_PREFIX)
+                        && namespaces.get(cell).is_some_and(|stated| !stated.mro.is_empty())
+                    {
+                        let fact = IrFormula::Not(node.clone()).to_value();
+                        if !facts.contains(&fact) {
+                            facts.push(fact);
+                        }
+                    }
+                    continue;
+                }
                 let instance_of = match ctor_parts(class) {
                     Some((PYTHON_INSTANCE | PYTHON_CONSTRUCTED, args)) => {
                         args.first().and_then(const_str)
@@ -17098,6 +17129,56 @@ mod tests {
             ]}
         ]});
         assert!(super_check_facts(&unstated_cell, &namespaces).is_empty());
+    }
+
+    #[test]
+    fn a_builtin_iterator_never_passes_the_super_check() {
+        // #7757 NEW-2: a zero-argument `super()` in a generator expression
+        // tests its `.0` iterator; over a decided builtin iterable the lift
+        // states the iterator's class as `python:builtin_iterator_class(
+        // "builtins.<t>")`, and prove decides the check fails (the
+        // `TypeError` face) against any source class a row states. A cell
+        // no row states, or a class the lift did not read, stays owed.
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.Base".to_string(),
+            namespace(&["python:m.Base", "builtins.object"], &[]),
+        );
+        let check = |class: Json, cell: &str| {
+            json!({"kind": "atomic", "name": "python:super_check_of.completes", "args": [
+                {"kind": "ctor", "name": "python:super_check_of", "args": [
+                    class, string_const(cell), string_const("m.py:7:21")
+                ]}
+            ]})
+        };
+        let iterator_of = |iterated: &str| {
+            json!({"kind": "ctor", "name": PYTHON_BUILTIN_ITERATOR_CLASS, "args": [
+                string_const(iterated)
+            ]})
+        };
+        let not = |atom: Json| json!({"kind": "not", "operands": [atom]});
+
+        for iterated in ["builtins.list", "builtins.str", "builtins.generator"] {
+            let fails = check(iterator_of(iterated), "python:m.Base");
+            assert_eq!(
+                super_check_facts(&fails, &namespaces),
+                vec![not(fails.clone())],
+                "{iterated}"
+            );
+        }
+        for owed in [
+            check(iterator_of("builtins.list"), ""),
+            check(iterator_of("builtins.list"), "python:m.Unstated"),
+            check(iterator_of("python:m.Base"), "python:m.Base"),
+            check(
+                json!({"kind": "ctor", "name": "python:super_receiver_class", "args": [
+                    string_const("m.py:7:21")
+                ]}),
+                "python:m.Base",
+            ),
+        ] {
+            assert!(super_check_facts(&owed, &namespaces).is_empty(), "{owed:?}");
+        }
     }
 
     #[test]

@@ -27,6 +27,17 @@ SUPER_CHECK_OF = "python:super_check_of"
 #: check over it, so the check stays owed.
 SUPER_RECEIVER_CLASS = "python:super_receiver_class"
 
+#: ``python:builtin_iterator_class("builtins.<t>")``: the class of ``iter()``
+#: of an exact instance of the builtin type ``<t>`` -- a builtin iterator
+#: class (``list_iterator``, ``dict_keyiterator``, a ``generator`` itself,
+#: ...), named by the type it iterates, never by the version-dependent name
+#: CPython gives it.  The class a generator expression's ``.0`` is, where its
+#: outermost iterable's type is decided
+#: (``builtin_semantic_callable.zero_argument_super_generator_iterable_type``).
+#: Prove decides the check over it fails against any source class
+#: (``consistency::super_check_facts``); the lift decides nothing (#7757 NEW-2).
+BUILTIN_ITERATOR_CLASS = "python:builtin_iterator_class"
+
 
 def formal_class_input(receiver, site):
     """``class:<p>`` (the free input) where ``receiver`` is the plain value of
@@ -72,8 +83,12 @@ def super_check_class(receiver, site):
       or a same-file class call's result: its class as a dispatched call
       supplies it (``receiver_dispatch.class_value``:
       ``python:instance("<D>", ...)``, ``python:constructed("<D>")``);
+    - no receiver -- a generator expression's ``.0`` iterator, which no value
+      here holds -- over an outermost iterable whose exact builtin type is
+      decided (``zero_argument_super_generator_iterable_type``): its builtin
+      iterator class, ``python:builtin_iterator_class("builtins.<t>")``;
     - anything else (an instance that arrived by binding, a value of no
-      decided class, the ``.0`` iterator no value here holds):
+      decided class, a ``.0`` iterator over any other iterable):
       ``python:super_receiver_class(<occurrence>)``, a class not read."""
     from sugar_lift_py_tests.floor.class_definition_value import (
         ClassDefinitionValue,
@@ -86,6 +101,16 @@ def super_check_class(receiver, site):
     from sugar_lift_py_tests.occurrence import occurrence_term
     from sugar_lift_py_tests.receiver_dispatch import class_value
 
+    if receiver is None:
+        from sugar_lift_py_tests.floor.builtin_semantic_callable import (
+            zero_argument_super_generator_iterable_type,
+        )
+        from sugar_lift_py_tests.ir import str_const
+
+        iterable_type = zero_argument_super_generator_iterable_type(site)
+        if iterable_type is not None:
+            return ctor(BUILTIN_ITERATOR_CLASS, (str_const(iterable_type),))
+        return ctor(SUPER_RECEIVER_CLASS, (occurrence_term(site),))
     formal = formal_class_input(receiver, site)
     if formal is not None:
         return formal
@@ -120,7 +145,7 @@ class BuiltinSuperValue(FloorValue):
     receiver: object
 
     @classmethod
-    def constructed(cls, current_class, receiver, site):
+    def constructed(cls, current_class, receiver, site, *, cell=None):
         """``super()`` built over ``current_class`` and ``receiver``: CPython's
         ``supercheck``, stated once and decided at prove (#7757).  It
         completes with the super object when ``obj`` is an instance or
@@ -132,16 +157,20 @@ class BuiltinSuperValue(FloorValue):
         "<cell class>", <occurrence>))`` (``super_check_class``), which
         ``consistency::super_check_facts`` decides -- or its negation --
         where the proofs state the class's order.  Nothing here reads an
-        order to decide it.  A cell class that names no join symbol (no
-        workspace root) is spelled ``""``: no row states it, so the check
-        stays owed."""
+        order to decide it.  The cell class is ``cell``, the class statement
+        the frame's ``__class__`` cell holds, where the caller read it off
+        the frame (a generator expression's ``.0`` check, whose cell class
+        no value here may hold), else ``current_class``'s own statement.  A
+        cell class that names no join symbol (no workspace root) is spelled
+        ``""``: no row states it, so the check stays owed."""
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
         from sugar_lift_py_tests.ir import atomic, ctor, str_const
         from sugar_lift_py_tests.occurrence import occurrence_key, occurrence_term
         from sugar_lift_py_tests.outcome import ExitSet
 
         key = occurrence_key(site)
-        cell = getattr(current_class, "class_definition", None)
+        if cell is None:
+            cell = getattr(current_class, "class_definition", None)
         cell_symbol = None if cell is None else cell.bridge_source_symbol()
         completes = atomic(
             SUPER_CHECK_OF + ".completes",

@@ -15,10 +15,12 @@
    its negation (``obj`` not an instance of ``__class__``: the
    ``TypeError``), where the proofs state the class's order.
 4. In a generator expression the frame's first argument is the ``.0``
-   iterator.  Over a builtin iterable (a display, ``range(...)``, ...) it is
-   decided no instance of ``__class__``: the ``TypeError``.  Over anything
-   else it may be one (``__iter__`` returning ``self``): the check is
-   undecided, two-faced and owed.
+   iterator, and the check is the same one term.  Over a builtin iterable (a
+   display, ``range(...)``, ...) the class it tests is the builtin iterator
+   class (``python:builtin_iterator_class``), which prove decides is no
+   subclass of ``__class__``: the ``TypeError``.  Over anything else it may
+   be one (``__iter__`` returning ``self``): a class not read, owed.  The
+   lift decides neither (#7757 NEW-2).
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.floor.builtin_semantic_callable import (
     zero_argument_super,
     zero_argument_super_class_cell,
-    zero_argument_super_generator_iterator_is_builtin,
+    zero_argument_super_generator_iterable_type,
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Halted
@@ -367,10 +369,14 @@ def test_an_undecided_check_is_two_faced_and_owed() -> None:
     assert outcome.owed_items()
 
 
-# --- (4) a generator expression's .0 fails the check -----------------------------
+# --- (4) a generator expression's .0 is the one check, decided at prove ------------
 
 
-def test_super_in_a_generator_expression_is_the_type_error() -> None:
+def test_super_in_a_generator_expression_states_the_one_check(tmp_path) -> None:
+    # The ``.0`` over ``[1]`` is a ``list_iterator``: the lift states the one
+    # check over its builtin iterator class beside the cell ``Derived``, and
+    # prove decides it fails (``super_check_facts``: the TypeError face).
+    # The lift never decides the TypeError (#7757 NEW-2).
     source = (
         "class Base:\n"
         "    def m(self):\n"
@@ -380,21 +386,64 @@ def test_super_in_a_generator_expression_is_the_type_error() -> None:
         "    def m(self):\n"
         "        return list(super().m() for _ in [1])\n"
     )
-    tree, context, classes = _parsed(source, "generator_check.py")
+    tree, context, classes = _parsed(source, "generator_check.py", tmp_path)
     receiver = classes["Derived"].fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     outcome = zero_argument_super(
         _super_site(tree), _frame(context, classes["Derived"], receiver)
     )
 
-    assert _raised(outcome) == ["TypeError"]
+    made, tested, cell = _the_one_check(outcome)
+    assert isinstance(made, BuiltinSuperValue)
+    assert made.receiver is None
+    assert tested.name == "python:builtin_iterator_class"
+    assert tested.args[0].value == "builtins.list"
+    assert cell == "python:generator_check.Derived"
+
+
+def test_super_in_a_generator_expression_with_no_class_value_states_the_check(
+    tmp_path,
+) -> None:
+    # The frame's cell is read off its own symtable block even where no
+    # ``__class__`` value is bound: the check is still the one term over
+    # the cell's statement, never a ground TypeError nor a refusal.
+    source = (
+        "class Base:\n"
+        "    def m(self):\n"
+        "        return [1]\n"
+        "\n"
+        "class Derived(Base):\n"
+        "    def m(self):\n"
+        "        return list(super().m() for _ in (1, 2))\n"
+    )
+    tree, context, _classes = _parsed(source, "generator_no_value.py", tmp_path)
+
+    outcome = zero_argument_super(_super_site(tree), context)
+
+    made, tested, cell = _the_one_check(outcome)
+    assert made.current_class is None
+    assert tested.name == "python:builtin_iterator_class"
+    assert tested.args[0].value == "builtins.tuple"
+    assert cell == "python:generator_no_value.Derived"
 
 
 @pytest.mark.parametrize(
-    "iterable",
-    ["(1, 2)", "{1: 2}", "'ab'", "range(2)", "[x for x in [1]]", "zip([1], [2])"],
+    ("iterable", "iterated"),
+    [
+        ("(1, 2)", "builtins.tuple"),
+        ("{1: 2}", "builtins.dict"),
+        ("'ab'", "builtins.str"),
+        ("b'ab'", "builtins.bytes"),
+        ("range(2)", "builtins.range"),
+        ("[x for x in [1]]", "builtins.list"),
+        ("(x for x in [1])", "builtins.generator"),
+        ("sorted([2, 1])", "builtins.list"),
+        ("zip([1], [2])", "builtins.zip"),
+    ],
 )
-def test_a_builtin_iterator_is_decided_no_instance(iterable: str) -> None:
+def test_a_builtin_iterable_names_its_iterator_class(
+    iterable: str, iterated: str
+) -> None:
     source = (
         "class Base:\n"
         "    def m(self):\n"
@@ -406,7 +455,7 @@ def test_a_builtin_iterator_is_decided_no_instance(iterable: str) -> None:
     )
     tree, _context, _classes = _parsed(source, "generator_builtin.py")
 
-    assert zero_argument_super_generator_iterator_is_builtin(_super_site(tree))
+    assert zero_argument_super_generator_iterable_type(_super_site(tree)) == iterated
 
 
 def test_an_iterator_that_may_be_an_instance_leaves_the_check_undecided() -> None:
@@ -428,7 +477,7 @@ def test_an_iterator_that_may_be_an_instance_leaves_the_check_undecided() -> Non
     site = _super_site(tree)
     receiver = classes["Walker"].fresh_receiver("receiver", allocation=FRAME_FRESH)
 
-    assert not zero_argument_super_generator_iterator_is_builtin(site)
+    assert zero_argument_super_generator_iterable_type(site) is None
     outcome = zero_argument_super(site, _frame(context, classes["Walker"], receiver))
 
     (halt,) = outcome.halts()
