@@ -1078,25 +1078,14 @@ class FloorValue:
         from sugar_lift_py_tests.floor.object_identity import (
             answers_identity_by_object,
             object_identity,
+            term_identity,
         )
 
         if answers_identity_by_object(self) or answers_identity_by_object(other):
             return object_identity(self, other, site)
-        # Otherwise EMIT. Identity is the ONE comparison whose SMT lowering is
-        # honestly `=` -- reflexive, sort-independent, total. Fold only
-        # language singletons (None / True / False) in overrides.
-        # Panic lives inside to_term when a side cannot enter FOL at all.
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import identity
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(
-            PredicateValue(
-                identity(self.to_term(owner=str(site)), other.to_term(owner=str(site))),
-                site,
-                operand_callsites=(*self.callsites(), *other.callsites()),
-            )
-        )
+        # Otherwise the identity is stated over the operands' own terms, and
+        # owes wherever nothing decides it (``term_identity``).
+        return term_identity(self, other, site)
 
     def less_than(self, other, site, ctx):
         # Operator-owned double dispatch: the RHS answers ``less_than_from_left``.

@@ -140,11 +140,12 @@ def slot_identity(slot, other, site, outcome):
             if slot.slot_id == other.slot_id:
                 return outcome
             break
-    from sugar_lift_py_tests.floor.branch_result_coordinate import (
-        owing_undecided_slot,
-    )
+    # Even against a language singleton (``e is None``): the slot's term is
+    # a coordinate nothing states the value of, so ``term_identity``'s
+    # singleton reading has no value to read.  The one rule.
+    from sugar_lift_py_tests.floor.object_identity import undecided_identity
 
-    return owing_undecided_slot(outcome, site)
+    return undecided_identity(outcome, site)
 
 
 def _language_exception_class_for_coordinate(coordinate):
