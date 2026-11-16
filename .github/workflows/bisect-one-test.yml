@@ -4,7 +4,9 @@ name: Bisect one test
 #
 # When a test turns red across several merges and nobody can find the cause by
 # reading, CI answers it: run that one test at each named commit and print
-# PASS/FAIL per commit. Nobody runs tests by hand; this is the measurement.
+# PASS/FAIL per commit, or ERROR when no verdict was reached (an infrastructure
+# error is never a regression). Nobody runs tests by hand; this is the
+# measurement.
 # Dispatch with the commits (oldest first) and the pytest node id, relative to
 # implementations/python.
 
@@ -49,18 +51,61 @@ jobs:
         env:
           SHAS: ${{ inputs.shas }}
           TEST: ${{ inputs.test }}
+        # One pipeline per commit (#8416). The python kit testifies the
+        # sourceStamp of the checkout it runs from; the sugar binary embeds the
+        # sourceStamp it was built from; a mismatch is "refusing to mint from a
+        # split pipeline" and no verdict. So for each commit: drop every binary
+        # override a previous iteration left (sugarbin answers SUGAR_BIN /
+        # SUGAR_BINARY_DIR before it looks at the source, which served the
+        # FIRST commit's binary to every later one), compute THIS checkout's
+        # stamp, resolve the release binary for exactly that stamp (shelf hit,
+        # or a build in the shared per-host cargo cache under
+        # SUGAR_BINARY_CACHE_DIR), check the binary's manifest names the same
+        # stamp, and hand binary + stamp + this checkout's .sugar and
+        # PYTHONPATH to the one pytest run only.
+        #
+        # Output: BISECT <sha> PASS|FAIL|ERROR. ERROR means no verdict was
+        # reached (checkout, stamp, binary, split pipeline, pytest could not
+        # run the node) and is never a regression.
         run: |
           set +e -uo pipefail
+          unset SUGAR_BIN SUGAR_BINARY_DIR SUGAR_BINARY_SOURCE_STAMP
           for sha in $SHAS; do
-            git checkout -q --force "$sha" || { echo "BISECT $sha CHECKOUT-FAILED"; continue; }
-            # The sugar binary for this commit, from bin/sugarbin's shelf or built once.
-            export SUGAR_BIN="$("$GITHUB_WORKSPACE/bin/sugarbin" --profile release 2>"$RUNNER_TEMP/sugarbin-$sha.log")" \
-              || { echo "BISECT $sha SUGARBIN-FAILED"; tail -n 5 "$RUNNER_TEMP/sugarbin-$sha.log"; continue; }
-            PYTHONPATH="$(python3 tools/managed_checkout_pythonpath.py --repo-root "$GITHUB_WORKSPACE")" \
+            log="$RUNNER_TEMP/bisect-$sha.log"
+            binlog="$RUNNER_TEMP/sugarbin-$sha.log"
+            error() { echo "BISECT $sha ERROR $*"; }
+            git checkout -q --force "$sha" || { error "checkout failed"; continue; }
+            subject="$(git log -1 --format=%s HEAD | cut -c1-90)"
+            stamp="$(env -u SUGAR_BINARY_SOURCE_STAMP "$GITHUB_WORKSPACE/bin/sugarbin" --print-source-stamp 2>"$binlog")"
+            if [ $? -ne 0 ] || [ -z "$stamp" ]; then
+              error "no source stamp for this checkout"; tail -n 5 "$binlog"; continue
+            fi
+            bin="$(env -u SUGAR_BIN -u SUGAR_BINARY_DIR SUGAR_BINARY_SOURCE_STAMP="$stamp" \
+              "$GITHUB_WORKSPACE/bin/sugarbin" --profile release 2>>"$binlog")"
+            if [ $? -ne 0 ] || [ -z "$bin" ] || [ ! -x "$bin" ]; then
+              error "missing sugar binary for stamp ${stamp:0:24}"; tail -n 5 "$binlog"; continue
+            fi
+            built="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceStamp"])' "$bin.sugarbin.json" 2>/dev/null)"
+            if [ "$built" != "$stamp" ]; then
+              error "split pipeline: binary ${built:-unstamped} != checkout ${stamp:0:24}"; continue
+            fi
+            echo "bisect: $sha binary $bin stamp ${stamp:0:24}"
+            SUGAR_BIN="$bin" SUGAR_BINARY_SOURCE_STAMP="$stamp" SUGAR_HOME="$GITHUB_WORKSPACE/.sugar" \
+              PYTHONPATH="$(python3 tools/managed_checkout_pythonpath.py --repo-root "$GITHUB_WORKSPACE")" \
               python -m pytest "implementations/python/$TEST" -q -p no:cacheprovider -p no:randomly \
-              > "$RUNNER_TEMP/bisect-$sha.log" 2>&1
+              > "$log" 2>&1
             rc=$?
-            if [ "$rc" -eq 0 ]; then verdict=PASS; else verdict=FAIL; fi
-            echo "BISECT $sha $verdict (exit $rc) $(git log -1 --format=%s "$sha" | cut -c1-90)"
-            grep -a -E '^(FAILED|ERROR) |passed|failed' "$RUNNER_TEMP/bisect-$sha.log" | tail -n 6
+            if grep -a -q 'refusing to mint from a split pipeline' "$log"; then
+              verdict="ERROR split pipeline (exit $rc)"
+            elif grep -a -q 'did not resolve a release sugar binary' "$log"; then
+              verdict="ERROR missing sugar binary (exit $rc)"
+            elif [ "$rc" -eq 0 ]; then
+              verdict="PASS (exit 0)"
+            elif [ "$rc" -eq 1 ]; then
+              verdict="FAIL (exit 1)"
+            else
+              verdict="ERROR pytest exit $rc, no verdict"
+            fi
+            echo "BISECT $sha $verdict $subject"
+            grep -a -E '^(FAILED|ERROR) |passed|failed|error|split pipeline' "$log" | tail -n 6
           done
