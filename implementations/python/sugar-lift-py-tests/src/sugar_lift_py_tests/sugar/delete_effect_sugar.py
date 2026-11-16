@@ -69,7 +69,7 @@ class SubscriptDeleteEffectSugar(Sugar):
     index: Sugar
     site: object = dataclass_field(compare=False)
     # The delete's halted face reached nothing inside this statement: the
-    # reducer gives it the prefix (``store_faces``).
+    # reducer gives it the prefix (``undecided_item_mutation_faces``).
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod

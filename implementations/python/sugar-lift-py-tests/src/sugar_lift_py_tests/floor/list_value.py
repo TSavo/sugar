@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field, replace
-from sugar_lift_py_tests.effect import runtime_effect_evidence
 
 from .guard_stable_value import GuardStableValue
 
@@ -380,10 +379,14 @@ class ListValue(GuardStableValue):
         # An index's bound is read only from contents that are current
         # (``object_identity.contents_current``), whichever caller reached
         # this store (the one door, an augmented store, a carrier's
-        # discharge); otherwise it is the store's undecided form.
+        # discharge); otherwise, and for an index that is no ground int, it
+        # is the one undecided item mutation.
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
+        )
 
         from .object_identity import contents_current
 
@@ -392,7 +395,9 @@ class ListValue(GuardStableValue):
 
         if type(index) is TermValue and type(index.value) is int:
             if not contents_current(self):
-                return stale_item_mutation(site, "__setitem__", "ListValue.setitem")
+                return undecided_item_mutation_faces(
+                    site, method="__setitem__", owner="ListValue.setitem"
+                )
             i = index.value
             n = len(self.elements)
             if -n <= i < n:
@@ -415,16 +420,8 @@ class ListValue(GuardStableValue):
                 length=n,
                 site=site,
             )
-        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
-        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
-
-        return store_faces(
-            SubscriptStoreRuntimeEffect(
-                "list subscript store requires a concrete integer index or "
-                "ground SliceValue; "
-                f"owner=ListValue.setitem site={site}",
-                **runtime_effect_evidence("py.setitem", index, site),
-            )
+        return undecided_item_mutation_faces(
+            site, method="__setitem__", owner="ListValue.setitem"
         )
 
     def _setitem_slice(self, index, value, site, ctx):
@@ -439,6 +436,9 @@ class ListValue(GuardStableValue):
             SliceAssignIterableOperation,
         )
         from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
+        )
 
         from .object_identity import contents_current
 
@@ -450,17 +450,8 @@ class ListValue(GuardStableValue):
                 exception_name="TypeError", site=site, owner="ListValue.setitem"
             )
         if not _slice_bounds_ground(bounds):
-            from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
-            from sugar_lift_py_tests.floor.store_outcome_coordinate import (
-                store_faces,
-            )
-
-            return store_faces(
-                SubscriptStoreRuntimeEffect(
-                    "list slice assignment depends on runtime slice bounds; "
-                    f"owner=ListValue.setitem site={site}",
-                    **runtime_effect_evidence("py.setitem", index, site),
-                )
+            return undecided_item_mutation_faces(
+                site, method="__setitem__", owner="ListValue.setitem"
             )
         lower, upper, step = _slice_bound_ints(bounds)
         if step == 0:
@@ -486,15 +477,16 @@ class ListValue(GuardStableValue):
             if not isinstance(members, (tuple, list)):
                 # An undecided RHS: the store's own completed face, whose
                 # members no lift-time value names (its halted face is the
-                # sibling arm) -- a ``RuntimeEffectTestimony``, or the
-                # receiver after the store (``stale_item_mutation``) when the
-                # RHS's contents are not current.
+                # sibling arm) -- the receiver after the store, unknown
+                # (``undecided_item_mutation_faces``).
                 return ExitSet.completed(members)
             if not contents_current(self):
                 # The receiver's contents are not current: which positions the
                 # slice covers (and an extended slice's length check) is not
                 # read from them.
-                return stale_item_mutation(site, "__setitem__", "ListValue.setitem")
+                return undecided_item_mutation_faces(
+                    site, method="__setitem__", owner="ListValue.setitem"
+                )
             elements = list(self.elements)
             try:
                 elements[slice(lower, upper, step)] = list(members)
@@ -517,12 +509,18 @@ class ListValue(GuardStableValue):
         """Authenticated finite members for slice-assignment RHS -- the
         list's contents now (``object_identity.contents_current``).  Otherwise
         no members are in hand: the store is the undecided item mutation
-        (``stale_item_mutation``), the receiver after it unknown."""
+        (``undecided_item_mutation_faces``), the receiver after it unknown."""
         del ctx
         from .object_identity import contents_current
 
         if not contents_current(self):
-            return stale_item_mutation(operation.blame, "__setitem__", operation.owner)
+            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                undecided_item_mutation_faces,
+            )
+
+            return undecided_item_mutation_faces(
+                operation.blame, method="__setitem__", owner=operation.owner
+            )
         from sugar_lift_py_tests.outcome import ExitSet
 
         return ExitSet.completed(self.elements)
@@ -530,11 +528,15 @@ class ListValue(GuardStableValue):
     def delitem(self, index, site, ctx):
         # Which members go is read only from contents that are current
         # (``object_identity.contents_current``), whichever caller reached
-        # this delete; otherwise it is the delete's undecided form.
+        # this delete; otherwise, and for an index or slice bound that is no
+        # ground int, it is the one undecided item mutation.
         del ctx
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
+        )
 
         from .object_identity import contents_current
 
@@ -562,8 +564,8 @@ class ListValue(GuardStableValue):
                         owner="ListValue.delitem",
                     )
                 if not current:
-                    return stale_item_mutation(
-                        site, "__delitem__", "ListValue.delitem"
+                    return undecided_item_mutation_faces(
+                        site, method="__delitem__", owner="ListValue.delitem"
                     )
                 selected = set(range(len(self.elements))[slice(lower, upper, step)])
                 return ExitSet.completed(
@@ -576,22 +578,15 @@ class ListValue(GuardStableValue):
                         ),
                     )
                 )
-            from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
-            from sugar_lift_py_tests.floor.store_outcome_coordinate import (
-                store_faces,
-            )
-
-            return store_faces(
-                SubscriptStoreRuntimeEffect(
-                    "list slice deletion depends on runtime slice bounds; "
-                    f"owner=ListValue.delitem site={site}",
-                    **runtime_effect_evidence("py.delitem", index, site),
-                )
+            return undecided_item_mutation_faces(
+                site, method="__delitem__", owner="ListValue.delitem"
             )
 
         if type(index) is TermValue and type(index.value) is int:
             if not current:
-                return stale_item_mutation(site, "__delitem__", "ListValue.delitem")
+                return undecided_item_mutation_faces(
+                    site, method="__delitem__", owner="ListValue.delitem"
+                )
             i = index.value
             n = len(self.elements)
             if -n <= i < n:
@@ -616,37 +611,9 @@ class ListValue(GuardStableValue):
                 length=n,
                 site=site,
             )
-        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
-        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
-
-        return store_faces(
-            SubscriptStoreRuntimeEffect(
-                "list subscript delete requires a concrete integer index; "
-                f"owner=ListValue.delitem site={site}",
-                **runtime_effect_evidence("py.delitem", index, site),
-            )
+        return undecided_item_mutation_faces(
+            site, method="__delitem__", owner="ListValue.delitem"
         )
-
-
-def stale_item_mutation(site, method: str, owner: str):
-    """``r[k] = v`` / ``del r[k]`` / ``r[a:b] = xs`` that would read a
-    ``list``/``dict``'s contents that are not current
-    (``object_identity.contents_current``): an index's bound, a key's
-    presence, a slice's span, or the members of a stale right-hand side.
-
-    The undecided item mutation (``undecided_item_mutation_faces``): it
-    completes, leaving the receiver after it unknown, only under its
-    site-keyed completes atom, and halts with an undetermined raise under the
-    complement.  No ``IndexError``/``KeyError``/``ValueError`` is decided
-    from contents the object may no longer hold, and none is dropped.  Every
-    reader reaches it, inside the one door or outside it (an augmented
-    store, a caller's discharge of a formal's store)."""
-    from sugar_lift_py_tests.sugar.store_effect_sugar import (
-        undecided_item_mutation_faces,
-    )
-
-    noun = "delitem" if method == "__delitem__" else "setitem"
-    return undecided_item_mutation_faces(site, noun=noun, method=method, owner=owner)
 
 
 def _slice_bound_omitted(bound) -> bool:

@@ -92,11 +92,13 @@ class ListIteratorValue(FloorValue):
         any other name holds, which is not threaded, so its members stay an
         undecided RHS -- never ``TypeError``."""
         del ctx
-        from sugar_lift_py_tests.floor.comprehension_value import (
-            _undecided_slice_rhs,
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
         )
 
-        return _undecided_slice_rhs(operation, self)
+        return undecided_item_mutation_faces(
+            operation.blame, method="__setitem__", owner=operation.owner
+        )
 
     def next_with(self, operation, ctx):
         del ctx
@@ -156,11 +158,13 @@ class TupleIteratorValue(FloorValue):
         any other name holds, which is not threaded, so its members stay an
         undecided RHS -- never ``TypeError``."""
         del ctx
-        from sugar_lift_py_tests.floor.comprehension_value import (
-            _undecided_slice_rhs,
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
         )
 
-        return _undecided_slice_rhs(operation, self)
+        return undecided_item_mutation_faces(
+            operation.blame, method="__setitem__", owner=operation.owner
+        )
 
     def next_with(self, operation, ctx):
         del ctx

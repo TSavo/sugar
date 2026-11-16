@@ -21,7 +21,9 @@ Success versus halt for an external attribute/subscript store is
 RUNTIME-SELECTED, so it is carried by an authenticated store-occurrence
 coordinate with complementary outcome guards -- the same mechanism
 ``IfSugar`` uses for a runtime-selected branch (``BranchResultCoordinate``),
-not a second one. See ``floor/store_outcome_coordinate.py``.
+not a second one. An item or attribute store nothing decides is the one
+undecided mutation (``store_effect_sugar.undecided_item_mutation_faces``,
+``undecided_attribute_mutation_faces``), keyed per evaluation.
 
 Every test here asserts the ACTUAL constructed ``ExitSet`` arm structure or the
 post formula, and each carries a discrimination arm showing that perturbing the

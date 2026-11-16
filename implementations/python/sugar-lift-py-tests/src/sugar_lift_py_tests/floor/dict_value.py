@@ -112,13 +112,18 @@ class DictValue(GuardStableValue):
         """Project insertion-ordered authenticated keys for slice assignment
         -- the dict's keys now (``object_identity.contents_current``).
         Otherwise no members are in hand: the store is the undecided item
-        mutation (``list_value.stale_item_mutation``)."""
+        mutation (``store_effect_sugar.undecided_item_mutation_faces``)."""
         del ctx
-        from .list_value import stale_item_mutation
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
+        )
+
         from .object_identity import contents_current
 
         if not contents_current(self):
-            return stale_item_mutation(operation.blame, "__setitem__", operation.owner)
+            return undecided_item_mutation_faces(
+                operation.blame, method="__setitem__", owner=operation.owner
+            )
         from sugar_lift_py_tests.outcome import ExitSet
 
         return ExitSet.completed(tuple(key for key, _value in self.entries))
@@ -326,18 +331,14 @@ class DictValue(GuardStableValue):
                 entries.append((index, value))
             # The same object: it keeps its ``allocation``.
             return ExitSet.completed(replace(self, entries=tuple(entries)))
-        from sugar_lift_py_tests.effect import (
-            SubscriptStoreRuntimeEffect,
-            runtime_effect_evidence,
+        # Whether the key is held is not decided (its hash or its equality
+        # against a stored key is open): the one undecided item mutation.
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
         )
-        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
 
-        return store_faces(
-            SubscriptStoreRuntimeEffect(
-                "dict subscript store requires a concrete key; "
-                f"owner=DictValue.setitem site={site}",
-                **runtime_effect_evidence("py.setitem", index, site),
-            )
+        return undecided_item_mutation_faces(
+            site, method="__setitem__", owner="DictValue.setitem"
         )
 
     def _guarded_setitem(self, index, value, site, ctx):
@@ -369,16 +370,21 @@ class DictValue(GuardStableValue):
     def delitem(self, index, site, ctx):
         # Whether the key is held (else ``KeyError``) is read only from
         # entries that are current (``object_identity.contents_current``),
-        # whichever caller reached this delete; otherwise it is the
-        # delete's undecided form.
+        # whichever caller reached this delete; otherwise, and for a key
+        # whose presence is not decided, it is the one undecided item
+        # mutation.
         del ctx
         from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
+        )
 
-        from .list_value import stale_item_mutation
         from .object_identity import contents_current
 
         if not contents_current(self):
-            return stale_item_mutation(site, "__delitem__", "DictValue.delitem")
+            return undecided_item_mutation_faces(
+                site, method="__delitem__", owner="DictValue.delitem"
+            )
         found = _key_position(self.entries, index)
         if found is not None:
             if found >= 0:
@@ -396,19 +402,8 @@ class DictValue(GuardStableValue):
                 site=site,
                 owner="DictValue.delitem",
             )
-
-        from sugar_lift_py_tests.effect import (
-            SubscriptStoreRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
-
-        return store_faces(
-            SubscriptStoreRuntimeEffect(
-                "dict subscript delete requires a concrete key; "
-                f"owner=DictValue.delitem site={site}",
-                **runtime_effect_evidence("py.delitem", index, site),
-            )
+        return undecided_item_mutation_faces(
+            site, method="__delitem__", owner="DictValue.delitem"
         )
 
 

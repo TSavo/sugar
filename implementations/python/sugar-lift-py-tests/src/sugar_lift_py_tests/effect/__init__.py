@@ -62,8 +62,6 @@ from .sequence_repetition_runtime_effect import SequenceRepetitionRuntimeEffect
 from .sequence_concatenation_runtime_effect import SequenceConcatenationRuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
 from .starred_positional_runtime_effect import StarredPositionalRuntimeEffect
-from .subscript_store_runtime_effect import SubscriptStoreRuntimeEffect
-from .subscript_delete_runtime_effect import SubscriptDeleteRuntimeEffect
 from .subscript_result_runtime_effect import SubscriptResultRuntimeEffect
 from .subtract_runtime_effect import SubtractRuntimeEffect, runtime_subtract
 from .type_error_runtime_effect import TypeErrorRuntimeEffect
@@ -130,8 +128,6 @@ __all__ = [
     "SequenceConcatenationRuntimeEffect",
     "SourceOracleEffect",
     "StarredPositionalRuntimeEffect",
-    "SubscriptStoreRuntimeEffect",
-    "SubscriptDeleteRuntimeEffect",
     "SubscriptResultRuntimeEffect",
     "SubtractRuntimeEffect",
     "runtime_subtract",

@@ -9,7 +9,7 @@ import sugar_lift_py_tests.effect as effects
 from sugar_lift_py_tests.effect import (
     RuntimeEffect,
     RuntimeEffectWitness,
-    SubscriptStoreRuntimeEffect,
+    AppendRuntimeEffect,
     genuine_runtime_operand,
     is_lift_time_decidable,
     runtime_effect_evidence,
@@ -40,7 +40,7 @@ def test_runtime_effect_requires_operation_operand_and_site_witness() -> None:
     )
     assert witness.locus == f"{site.filename}:{site.line}:{site.col}"
 
-    effect = SubscriptStoreRuntimeEffect(
+    effect = AppendRuntimeEffect(
         "runtime store",
         runtime_operand=witness.runtime_operand,
         witness=witness,

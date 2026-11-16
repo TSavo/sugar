@@ -283,17 +283,14 @@ class FloorValue:
                 site=site,
                 owner=owner,
             )
-        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
-        from sugar_lift_py_tests.effect import runtime_effect_evidence
-        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
-
-        return store_faces(
-            SubscriptStoreRuntimeEffect(
-                "list slice assignment RHS iterability is undecided at lift; "
-                f"owner={owner} site={site}",
-                **runtime_effect_evidence("py.setitem", self, site),
-            )
+        # Whether this right-hand side iterates, and what it yields, is not
+        # decided: the store is the one undecided item mutation, the receiver
+        # after it unknown.
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
         )
+
+        return undecided_item_mutation_faces(site, method="__setitem__", owner=owner)
 
     def iter_with(
         self, operation: IteratorOperation, ctx: ReduceContext | None
