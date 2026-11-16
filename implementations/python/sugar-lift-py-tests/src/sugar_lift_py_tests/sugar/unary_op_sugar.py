@@ -19,10 +19,10 @@ Python semantic law for ``not`` (distinct from BoolOp):
      enclosing ``pytest.raises`` expectation (the boundary verifies, it cannot
      create).
 
-Formal operands ride the existing ``NativeOperationExitCarrierV1`` as the
-``unary_truth`` operation (#6583 three-way resolution; #6591 caller
-discharge), whose discharge takes the actual's truth through the one truth
-rule (``bool_op_sugar.truth_of``).
+A formal operand defers nothing (#7757 NEW-1): ``not p`` takes ``bool(p)``
+through the one truth rule (``bool_op_sugar.truth_of``), its two faces, and
+``-p`` / ``+p`` / ``~p`` are the undecided two faces
+(``FloorValue.undecided_unary``), each owed, its halt kept.
 """
 
 from __future__ import annotations
@@ -97,12 +97,7 @@ class UnaryOpSugar(ConstructedTermSugar):
         """``bool(value)`` through the one truth rule ``a and b`` and ``a !=
         b`` take it by (``bool_op_sugar.truth_of``): an undecided value is
         its two faces (the truth completes under its guard or halts
-        undetermined).
-
-        A formal's ``unary_truth`` carrier completes, after discharge, with
-        the actual's truth (taken by this rule at discharge; a decided truth
-        is its own truth) or, when the caller has no actual, with the
-        unanswered result: a value whose truth is taken here too, so it is
+        undetermined), a formal's included (#7757 NEW-1).  The value is
         never asked to negate itself."""
         from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
 
@@ -119,7 +114,6 @@ class UnaryOpSugar(ConstructedTermSugar):
             def project_not(value):
                 from sugar_lift_py_tests.floor.block_value import BlockValue
                 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-                from sugar_lift_py_tests.floor.none_value import NoneValue
                 from sugar_lift_py_tests.floor.return_value import ReturnValue
 
                 # Method calls with authenticated bodies
@@ -144,24 +138,8 @@ class UnaryOpSugar(ConstructedTermSugar):
                     if len(returns) == 1:
                         value = returns[0]
 
-                formal_coordinate = getattr(value, "formal_coordinate", None)
-                if formal_coordinate is not None:
-                    # Defer bool(value) until authenticated actuals arrive.
-                    # Second operand is an inert unit (null coordinate) so the
-                    # existing two-slot carrier can record a one-operand op.
-                    # Its discharge takes the actual's truth through the one
-                    # truth rule (``unary_truth``).
-                    from sugar_lift_py_tests.caller_parameter_contract import (
-                        NativeOperationExitCarrierV1,
-                    )
-
-                    return NativeOperationExitCarrierV1.mint(
-                        site=self.site,
-                        operator="unary_truth",
-                        operands=(value, NoneValue()),
-                        coordinates=(formal_coordinate, None),
-                    ).and_then(self._truth)
-
+                # A formal's truth is taken here too, by the one truth rule:
+                # its two faces (#7757 NEW-1).
                 return self._truth(value)
 
             # Negate only completed truth faces.  A raise (a Halted exit)

@@ -4,8 +4,8 @@ from .inplace_binary_operator_operation import (
     InplaceBinaryOperatorOperation,
     discharge_inplace,
 )
-from .iterator_operation import IteratorOperation, discharge_iter
-from .next_operation import NextOperation, discharge_next
+from .iterator_operation import IteratorOperation
+from .next_operation import NextOperation
 from .positional_unpack_operation import (
     PositionalUnpackOperation,
     UnpackMemberRoster,
@@ -20,6 +20,4 @@ __all__ = [
     "SequenceProjectionOperation",
     "UnpackMemberRoster",
     "discharge_inplace",
-    "discharge_iter",
-    "discharge_next",
 ]

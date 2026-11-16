@@ -442,9 +442,11 @@ class FloorValue:
         The receiver's runtime type and ``__iter__`` (or ``__getitem__``) are
         not decided here, so ``iter`` may hand back any iterator or raise
         anything.  It is the same one two-faced unanswered outcome as
-        :meth:`undecided_subscript`: the opaque iterator ``py.iter(<receiver>)``
-        completes only under ``python:iter.completes(python:iter(<term>,
-        <site>))``, the complement halts with an ``UndeterminedRaiseEffect``
+        :meth:`undecided_subscript`: the opaque iterator
+        ``py.iter(<receiver>, <site>)``, one per evaluation
+        (``per_evaluation``), completes only under
+        ``python:iter.completes(python:iter(<term>, <site>))``, the
+        complement halts with an ``UndeterminedRaiseEffect``
         (producer ``owner``), and both arms owe the ``undecided`` member
         (reason ``unanswered``) at the call's site.  No ``TypeError`` is
         guessed.  A ``for`` over an iterable the reduction has not decided
@@ -458,6 +460,7 @@ class FloorValue:
             owner=owner,
             read=f"iter({type(self).__name__})",
             node="Call",
+            per_evaluation=True,
         )
 
     def undecided_next(self, site, *, owner: str):
@@ -467,8 +470,8 @@ class FloorValue:
         ``next`` may yield any value or raise anything -- ``StopIteration``
         among them, never named here.  The same one two-faced unanswered
         outcome as :meth:`undecided_subscript`: the opaque next value
-        ``py.next(<receiver>)`` completes only under
-        ``python:next.completes(python:next(<term>, <site>))``, the
+        ``py.next(<receiver>, <site>)``, one per evaluation, completes only
+        under ``python:next.completes(python:next(<term>, <site>))``, the
         complement halts with an ``UndeterminedRaiseEffect`` (producer
         ``owner``), and both arms owe the ``undecided`` member at the call's
         site.
@@ -480,6 +483,32 @@ class FloorValue:
             owner=owner,
             read=f"next({type(self).__name__})",
             node="Call",
+            per_evaluation=True,
+        )
+
+    def undecided_unary(self, protocol: str, site, *, owner: str, read: str):
+        """``-self`` / ``+self`` / ``~self`` whose ``__neg__`` / ``__pos__`` /
+        ``__invert__`` is not decided here: the two faces.
+
+        The same one two-faced unanswered outcome as :meth:`undecided_next`:
+        ``py.<protocol>(<receiver>, <site>)``, one per evaluation, completes
+        only under
+        ``python:<protocol>.completes(python:<protocol>(<term>, <site>))``,
+        the complement halts with an ``UndeterminedRaiseEffect`` (producer
+        ``owner``), and both arms owe the ``undecided`` member at the
+        operation's site.  No ``TypeError`` is guessed and no result is
+        folded.  A formal operand takes it (``SymbolicValue.unary_minus``,
+        #7757 NEW-1); an operand that is no formal and whose type is
+        undecided still refuses by name (:meth:`_undecided_unary_law`).
+        """
+        return self._undecided_protocol_faces(
+            protocol,
+            (),
+            site,
+            owner=owner,
+            read=f"{read}{type(self).__name__}",
+            node="UnaryOp",
+            per_evaluation=True,
         )
 
     def undecided_truth(self, site, *, owner: str):
@@ -524,7 +553,15 @@ class FloorValue:
         )
 
     def _undecided_protocol_faces(
-        self, protocol: str, operands, site, *, owner: str, read: str, node: str
+        self,
+        protocol: str,
+        operands,
+        site,
+        *,
+        owner: str,
+        read: str,
+        node: str,
+        per_evaluation: bool = False,
     ):
         """The one producer of an undecided protocol read's two faces.
 
@@ -535,6 +572,15 @@ class FloorValue:
         ``UndeterminedRaiseEffect`` owned by ``owner``; ``ExitSet.two_faced``
         owes the read at ``site`` on both arms.  A siteless read is the
         lifter's own gap and refuses by name.
+
+        ``per_evaluation``: the value term names its evaluation too (the
+        occurrence key, under the path it runs on, as the binary law's
+        ``python:binary_result(op, l, r, <key>)`` does), so two evaluations
+        over one operand term are two unknowns: two ``next(it)`` of one
+        iterator, or one ``-p`` per loop item, are never forced equal, and a
+        truthful ``a != b`` cannot read ``unsat`` (#7757 NEW-1).  A protocol
+        the prover decides over its operands' arity (``py.subscript``) does
+        not take it.
         """
         if site is None:
             _siteless_undecided_read(owner, read, node)
@@ -545,6 +591,7 @@ class FloorValue:
         from sugar_lift_py_tests.occurrence import occurrence_key
         from sugar_lift_py_tests.outcome import ExitSet
 
+        key = occurrence_key(site)
         term = ctor(
             f"py.{protocol}",
             [
@@ -553,9 +600,9 @@ class FloorValue:
                     identity_term(operand, site, f"operand{position}", owner=owner)
                     for position, operand in enumerate(operands)
                 ),
+                *((str_const(key),) if per_evaluation else ()),
             ],
         )
-        key = occurrence_key(site)
         completes = atomic(
             f"python:{protocol}.completes",
             [ctor(f"python:{protocol}", (term, str_const(key)))],

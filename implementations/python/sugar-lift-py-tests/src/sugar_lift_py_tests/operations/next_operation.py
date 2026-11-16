@@ -39,9 +39,3 @@ class NextOperation:
     def submit(self, receiver: Any, ctx: Any = None) -> Any:
         """Ask the iterator for the next value. The iterator owns the answer."""
         return receiver.next_with(self, ctx)
-
-
-def discharge_next(receiver, site, ctx, *, owner: str = "project_next"):
-    """Production projector body: established ``next_with`` floor edge, under
-    the caller's context."""
-    return NextOperation(owner=owner, blame=site).submit(receiver, ctx)

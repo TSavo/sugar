@@ -200,21 +200,57 @@ def test_next_on_an_undecided_value_is_two_faced_and_owes_its_call() -> None:
     assert "StopIteration" not in repr(faces)
 
 
-def test_the_named_iter_and_next_projectors_answer_the_same_faces() -> None:
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        project_iter,
-        project_next,
-    )
+def test_a_formals_iter_and_next_are_the_same_two_faces() -> None:
+    """#7757 NEW-1: a parameter's ``iter`` / ``next`` mints no carrier
+    waiting on a caller's actual; it is the one two-faced form, the same a
+    symbolic value with no formal coordinate takes."""
     from sugar_lift_py_tests.operations import IteratorOperation, NextOperation
 
-    receiver = SymbolicValue(make_var("s"))
-    site = _Site()
-    assert project_iter(receiver, site, None) == IteratorOperation(
-        owner="project_iter", blame=site
-    ).submit(receiver, None)
-    assert project_next(receiver, site, None) == NextOperation(
-        owner="project_next", blame=site
-    ).submit(receiver, None)
+    formal = SymbolicValue(make_var("s"), formal_coordinate=object())
+    free = SymbolicValue(make_var("s"))
+    for operation, owner in (
+        (IteratorOperation(owner="t", blame=_Site()), "SymbolicValue.iter"),
+        (NextOperation(owner="t", blame=_Site()), "SymbolicValue.next"),
+    ):
+        faces = operation.submit(formal, None)
+        _assert_two_faced_and_owed(faces, owner)
+        assert faces == operation.submit(free, None)
+
+
+@pytest.mark.parametrize(
+    ("method", "protocol"),
+    [
+        ("unary_minus", "unary_neg"),
+        ("unary_plus", "unary_pos"),
+        ("bitwise_invert", "unary_invert"),
+    ],
+)
+def test_a_formals_unary_operator_is_two_faced_and_owes_it(
+    method: str, protocol: str
+) -> None:
+    """#7757 NEW-1: ``-p`` / ``+p`` / ``~p`` on a parameter is the undecided
+    two faces (``FloorValue.undecided_unary``), owed, its halt kept: no
+    carrier, no ``TypeError`` guessed, no result folded."""
+    formal = SymbolicValue(make_var("p"), formal_coordinate=object())
+    faces = getattr(formal, method)(_Site())
+    _assert_two_faced_and_owed(faces, f"SymbolicValue.{method}")
+    (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
+    assert f"python:{protocol}.completes" in repr(done.guard)
+    assert f"py.{protocol}" in repr(done.value)
+    assert faces.completed_value() is None
+    assert "TypeError" not in repr(faces)
+
+
+def test_a_formals_truth_is_two_faced_and_owes_it() -> None:
+    """#7757 NEW-1: ``bool(p)`` asked of a parameter is the one undecided
+    truth (``bool_op_sugar._unanswered_truth``): ``py.truthy`` under
+    ``python:truth.completes``, an undetermined halt under its complement."""
+    formal = SymbolicValue(make_var("p"), formal_coordinate=object())
+    faces = formal.truth(_Site())
+    _assert_two_faced_and_owed(faces, "SymbolicValue.truth")
+    (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
+    assert "python:truth.completes" in repr(done.guard)
+    assert "py.truthy" in repr(done.value.formula)
 
 
 def test_next_on_an_opaque_operator_result_owes_its_call() -> None:

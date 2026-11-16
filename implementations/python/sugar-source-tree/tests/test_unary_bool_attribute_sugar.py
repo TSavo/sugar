@@ -35,15 +35,35 @@ def _carrier(src, operator):
 # ---- UnaryOp -----------------------------------------------------------------
 
 
-def test_undecided_unary_ops_are_named_refusals():
-    """Deleted expectation: formal unary operations panicked before caller binding."""
-    for source, operator in (
+def _undecided_owners(src):
+    """The owners of the undetermined halts of ``src``'s function, which
+    mints no carrier (#7757 NEW-1)."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import ExitSet, Halted
+
+    outcome = _fn(src).sugar().desugar()
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), outcome
+    assert isinstance(outcome, ExitSet), outcome
+    assert outcome.owed_items(), outcome
+    return {
+        face.effect.producer_node_owner
+        for face in outcome.exits
+        if isinstance(face, Halted) and type(face.effect) is UndeterminedRaiseEffect
+    }
+
+
+def test_undecided_unary_ops_are_the_undecided_two_faces():
+    """A formal's unary operation is the undecided two faces, owed, its halt
+    kept; no carrier waits on a caller's actual (#7757 NEW-1)."""
+    for source, method in (
         ("def A(z):\n    return -z\n", "unary_minus"),
         ("def A(z):\n    return ~z\n", "bitwise_invert"),
         ("def A(z):\n    return +z\n", "unary_plus"),
     ):
-        carrier = _carrier(source, operator)
-        assert carrier.operands[0].to_term(owner="unary carrier tooth").name == "z"
+        assert f"SymbolicValue.{method}" in _undecided_owners(source)
 
 
 def _equalities(src):
@@ -89,12 +109,12 @@ def test_or_disjoins_operand_truthiness():
     ) == {("z", 1), ("z", 2)}
 
 
-def test_bare_operands_refuse_undecided_truth():
-    """Deleted expectation: bare formal BoolOp truth panicked before binding."""
-    carrier = _carrier(
-        "def A(a, b):\n    assert a and b\n    return a\n", "boolop_truth"
+def test_bare_operands_take_the_undecided_truth():
+    """A bare formal BoolOp operand's truth is the one truth rule's two
+    faces, its halt kept; no carrier (#7757 NEW-1)."""
+    assert "BoolOpSugar.truth" in _undecided_owners(
+        "def A(a, b):\n    assert a and b\n    return a\n"
     )
-    assert carrier.operands[0].to_term(owner="boolop truth carrier tooth").name == "a"
 
 
 # ---- Attribute ---------------------------------------------------------------

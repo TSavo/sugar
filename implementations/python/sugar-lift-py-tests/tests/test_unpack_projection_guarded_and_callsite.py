@@ -166,21 +166,17 @@ GUARDED_SYMBOLIC_ELSE = "def A(c, p, q):\n    a, b = ((p, q) if c else p)\n    r
 
 
 def _discharged_on_an_undecided_condition(tmp_path: Path, source: str, stem: str):
-    """``... if c else ...`` on a formal ``c`` waits for the caller's actual to
-    answer ``bool(c)`` (``NativeOperationExitCarrierV1``, operator ``truth``),
-    as the statement form does: the function alone is never a completion.
-    The caller hands a value nothing decides, whose truth is ``py.truthy(c)``;
-    the arms join under that formula."""
+    """``... if c else ...`` on a formal ``c``: ``bool(c)`` is the one truth
+    rule's two faces (#7757 NEW-1), as the statement form's is -- no carrier
+    waits on a caller's actual.  Its completed truth is ``py.truthy(c)``;
+    the arms join under that formula, and its halt is kept beside them."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
-    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
-    carrier = _outcome(tmp_path, source, stem)
-    assert isinstance(carrier, NativeOperationExitCarrierV1), type(carrier)
-    assert carrier.demand.operator == "truth"
-    (condition,) = carrier.demand.operand_coordinate_cids
-    return carrier.discharge(None, {condition: SymbolicValue(make_var("c"))})
+    outcome = _outcome(tmp_path, source, stem)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
+    return outcome
 
 
 def _halted_unpack_exits(outcome):

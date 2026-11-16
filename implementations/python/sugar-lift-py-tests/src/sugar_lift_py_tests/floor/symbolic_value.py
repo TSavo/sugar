@@ -200,17 +200,20 @@ class SymbolicValue(FloorValue):
         return self.term
 
     def truth(self, site):
-        if self.formal_coordinate is not None:
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
+        """``bool(self)`` asked of the value itself.
 
-            return NativeOperationExitCarrierV1.mint(
-                site=site,
-                operator="truth",
-                operands=(self,),
-                coordinates=(self.formal_coordinate,),
-            )
+        A formal's truth is the undecided member's two faces, the one truth
+        rule's (``bool_op_sugar._unanswered_truth``): its ``__bool__`` /
+        ``__len__`` is a protocol with a fallback that no one dispatched
+        method states, so it completes under ``python:truth.completes`` and
+        halts undetermined under the complement, owed either way (#7757
+        NEW-1).  It waits on no caller's actual: a caller's actual joined on
+        the formal at prove decides the completes atom where its type is a
+        builtin's."""
+        if self.formal_coordinate is not None:
+            from sugar_lift_py_tests.sugar.bool_op_sugar import _unanswered_truth
+
+            return _unanswered_truth(self, site, owner="SymbolicValue.truth")
         # A symbolic value EMITS the Python truth relation; the sort adjudicates later.
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
@@ -268,19 +271,13 @@ class SymbolicValue(FloorValue):
         )
 
     def unary_minus(self, site):
-        # Formal operands: defer to authenticated discharge (same door as
-        # truth / binary).  A free/open symbol still cannot invent success vs
-        # TypeError — that remains the undecided refusal on the base law.
+        # A formal operand: ``-p`` is the undecided two faces (#7757 NEW-1),
+        # owed, its halt kept -- no single dunder prove states decides it for
+        # a class nothing here decided.  A free/open symbol still cannot
+        # invent success vs TypeError: the undecided refusal on the base law.
         if self.formal_coordinate is not None:
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            return NativeOperationExitCarrierV1.mint(
-                site=site,
-                operator="unary_minus",
-                operands=(self,),
-                coordinates=(self.formal_coordinate,),
+            return self.undecided_unary(
+                "unary_neg", site, owner="SymbolicValue.unary_minus", read="-"
             )
         return super().unary_minus(site)
 
@@ -374,33 +371,24 @@ class SymbolicValue(FloorValue):
         return self._runtime_bitwise_dispatch(other, site, ctx, "@")
 
     def unary_plus(self, site):
-        # Formal operands: authenticated discharge.  Open symbols stay refused
-        # (success vs TypeError is not source-decidable without a type).
+        # A formal operand: ``+p`` is the undecided two faces (#7757 NEW-1),
+        # owed, its halt kept -- no single dunder prove states decides it for
+        # a class nothing here decided.  A free/open symbol still cannot
+        # invent success vs TypeError: the undecided refusal on the base law.
         if self.formal_coordinate is not None:
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            return NativeOperationExitCarrierV1.mint(
-                site=site,
-                operator="unary_plus",
-                operands=(self,),
-                coordinates=(self.formal_coordinate,),
+            return self.undecided_unary(
+                "unary_pos", site, owner="SymbolicValue.unary_plus", read="+"
             )
         return super().unary_plus(site)
 
     def bitwise_invert(self, site):
-        # Formal operands: authenticated discharge.  Open symbols stay refused.
+        # A formal operand: ``~p`` is the undecided two faces (#7757 NEW-1),
+        # owed, its halt kept -- no single dunder prove states decides it for
+        # a class nothing here decided.  A free/open symbol still cannot
+        # invent success vs TypeError: the undecided refusal on the base law.
         if self.formal_coordinate is not None:
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            return NativeOperationExitCarrierV1.mint(
-                site=site,
-                operator="bitwise_invert",
-                operands=(self,),
-                coordinates=(self.formal_coordinate,),
+            return self.undecided_unary(
+                "unary_invert", site, owner="SymbolicValue.bitwise_invert", read="~"
             )
         return super().bitwise_invert(site)
 
@@ -520,47 +508,24 @@ class SymbolicValue(FloorValue):
     def iter_with(self, operation, ctx):
         """``iter(symbolic)``.
 
-        A formal's ``iter`` is decided by its caller's actual: the ``iter``
-        carrier, discharged through ``project_iter`` (as every other
-        operation on a formal is).  Any other symbolic receiver's
-        ``__iter__`` is not decided here, so the call is the one two-faced
-        unanswered outcome (:meth:`undecided_iteration`).  A ``for`` over a
+        A symbolic receiver's ``__iter__`` is not decided here -- a formal's
+        included: iteration is ``__iter__`` then the ``__getitem__`` sequence
+        protocol, a fallback no one dispatched method states (#7757 NEW-1) --
+        so the call is the one two-faced unanswered outcome
+        (:meth:`undecided_iteration`), owed, its halt kept.  A ``for`` over a
         symbolic iterable submits this operation too: the loop's recurrence
         is what follows the face it completes on
         (``LoopRecurrenceSugar._desugar_with_iterable``)."""
         del ctx
-        if self.formal_coordinate is not None:
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            return NativeOperationExitCarrierV1.mint(
-                site=operation.blame,
-                operator="iter",
-                operands=(self,),
-                coordinates=(self.formal_coordinate,),
-            )
         return self.undecided_iteration(operation.blame, owner="SymbolicValue.iter")
 
     def next_with(self, operation, ctx):
         """``next(symbolic)``.
 
-        A formal's ``next`` is decided by its caller's actual: the ``next``
-        carrier, discharged through ``project_next``.  Any other symbolic
-        receiver's ``__next__`` is not decided here, so the call is the one
-        two-faced unanswered outcome (:meth:`undecided_next`)."""
+        A symbolic receiver's ``__next__`` is not decided here, a formal's
+        included (#7757 NEW-1), so the call is the one two-faced unanswered
+        outcome (:meth:`undecided_next`), owed, its halt kept."""
         del ctx
-        if self.formal_coordinate is not None:
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            return NativeOperationExitCarrierV1.mint(
-                site=operation.blame,
-                operator="next",
-                operands=(self,),
-                coordinates=(self.formal_coordinate,),
-            )
         return self.undecided_next(operation.blame, owner="SymbolicValue.next")
 
     def project_sequence_with(self, operation, ctx):

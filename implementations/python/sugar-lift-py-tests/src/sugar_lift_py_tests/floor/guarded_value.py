@@ -705,14 +705,12 @@ class GuardedValue(FloorValue):
         -- every arm halts, or the arm's truth is not decided here and is
         its two faces -- keeps its faces under its own polarity, beside the
         other arm's (:func:`_siblings`): neither the halt nor the other
-        arm's truth is dropped.  An arm whose truth waits on its caller's
-        actual is carried beside the other (:func:`_beside`)."""
+        arm's truth is dropped.  A formal arm's truth is such a truth: no
+        truth waits on a caller's actual (#7757 NEW-1)."""
         from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
 
         true_truth = truth_of(self.when_true, site, owner="GuardedValue.truth")
         false_truth = truth_of(self.when_false, site, owner="GuardedValue.truth")
-        if _deferred(true_truth) or _deferred(false_truth):
-            return _beside(self.guard, true_truth, false_truth)
         if (
             true_truth.completed_value() is None
             or false_truth.completed_value() is None
