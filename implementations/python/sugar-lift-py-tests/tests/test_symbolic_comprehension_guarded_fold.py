@@ -31,28 +31,34 @@ excludes a member without raising.
 import os
 import tempfile
 
-from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.ir import _Lambda, _Var, ctor as _ctor, make_var, num
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _outcome_of(source, path=None):
-    """The function's outcome as its own proof states it."""
+    """The function's outcome as its own proof states it.
+
+    The source is opened through the workspace-relative door, rooted at its
+    own directory, as the lift opens every file.  An in-hand comprehension
+    steps its members through the loop's one item runner (#9020), whose last
+    ``next`` is the authenticated ``StopIteration`` ground exit; a ground exit
+    refuses an absolute locus by name (``ground_raise_effect``)."""
     if path is None:
         path = os.path.join(tempfile.mkdtemp(), "m.py")
     with open(path, "w") as handle:
         handle.write(source)
     function = list(
         SourceFile(
-            path_source(path),
+            workspace_path_source(path, root=os.path.dirname(path)),
             construction_context=TreeConstructionContextV1.for_test_without_workspace(),
         ).functions()
     )[0]
     from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
 
-    # ``iter(xs)`` over a formal waits on the caller's actual: the function's
-    # own proof discharges it with none (``as_its_own_proof_states``).
+    # ``iter(xs)`` over a formal is the undecided two faces (#9018); the
+    # function's own proof states them as they are (``as_its_own_proof_states``).
     return as_its_own_proof_states(function.sugar().desugar(None), None)
 
 
@@ -714,8 +720,15 @@ def test_a_comprehension_substituted_into_a_dict_value_is_constructed():
     # `ys` does not depend on the outer member, so whatever it iterates is
     # the formal `xs` -- the discrimination against the twins above, where
     # the inner comprehension iterated the member.  Same shape, different
-    # scope.
-    assert not _halts(outcome, "SymbolicValue.iter"), _owners(outcome)
+    # scope.  ``iter`` of a formal and of a member are one undecided read
+    # (#9018, owner ``SymbolicValue.iter`` for both), so the discrimination
+    # is the iterated operand of every ``iter`` halt: `xs`, never a member.
+    iterations = _halts(outcome, "SymbolicValue.iter")
+    assert iterations, _owners(outcome)
+    for halt in iterations:
+        iterated = _terms_named(halt.guard, "python:iter_result")
+        assert iterated, halt.guard
+        assert all(term.args[0] == _Var("xs") for term in iterated), iterated
 
 
 def test_a_walrus_in_a_comprehension_element_over_an_undecided_iterator_is_refused_by_name():
