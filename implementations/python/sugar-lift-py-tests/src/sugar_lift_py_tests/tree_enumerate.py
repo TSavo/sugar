@@ -1038,6 +1038,14 @@ def function_universe_outcome(fn):
     class call reaches it through the dispatched ``__init__`` edge, joined at
     prove; no receiver is made here.
 
+    A method whose own frame has a ``__class__`` cell (PEP 3135: it reads
+    ``super`` or ``__class__``, ``_class_cell_statement``) runs with that cell
+    holding the class its statement bound, read through the statement's key
+    in the state the module's one run left (``_class_statement_read``), as
+    the class's own contract reads it: a zero-argument ``super()`` in it is
+    then the dispatched call after that class (#7757 entry 6), in an
+    ``__init__`` as in any method.
+
     A function's contract is stated over its inputs (#7757 step 5, #8292:
     one contract per function).  Each module global a call of it reads
     (``nodes._contract_inputs``: assignment, loop and branch-merge
@@ -1065,12 +1073,99 @@ def function_universe_outcome(fn):
     from sugar_source_tree.nodes import current_module_execution_site
 
     sugar = fn.contract_universe()
-    entry = with_module_final_globals(
-        bind_global_inputs(None, fn, owner="function_universe_outcome"),
-        (fn,),
-        site=current_module_execution_site(),
+    site = current_module_execution_site()
+    cell = _class_cell_statement(fn)
+    if cell is None:
+        entry = with_module_final_globals(
+            bind_global_inputs(None, fn, owner="function_universe_outcome"),
+            (fn,),
+            site=site,
+        )
+        return as_its_own_proof_states(sugar.desugar(entry), entry)
+
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
     )
-    return as_its_own_proof_states(sugar.desugar(entry), entry)
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_source_tree.panic import SugarNotWritten
+
+    entry = with_module_final_globals(
+        bind_global_inputs(
+            ReduceContext.root(owner="function_universe_outcome"),
+            fn,
+            owner="function_universe_outcome",
+        ),
+        (fn,),
+        site=site,
+    )
+
+    def in_its_cell(read):
+        value = peel_walrus_binds(read)[1]
+        if not isinstance(value, ClassDefinitionValue):
+            raise SugarNotWritten(
+                owner="function_universe_outcome",
+                blame=fn.fragment,
+                observed=(
+                    f"the class statement's key holds a {type(value).__name__}"
+                ),
+                requested="the class its __class__ cell holds (PEP 3135)",
+                fix="seat the cell with the class its statement bound",
+            )
+        held = entry.with_temporal(
+            entry.temporal.bind_value(
+                "__class__", value, blame=f"{value.class_name}.{fn.name}"
+            )
+        )
+        return as_its_own_proof_states(sugar.desugar(held), held)
+
+    return _class_statement_read(cell, entry).and_then(in_its_cell)
+
+
+def _class_cell_statement(fn):
+    """The class statement whose class the ``__class__`` cell of ``fn``'s own
+    frame holds (PEP 3135, ``SourceUnit.frame_class_cell``): a ``def`` in a
+    class body whose code reads ``super`` or ``__class__``.  None where its
+    frame has no cell, and where no reader after import reads that class (a
+    class statement in a function body binds it in no module state,
+    ``_class_statement_read``)."""
+    from sugar_source_tree.nodes import (
+        AsyncFunctionDef,
+        ClassDef,
+        FunctionDef,
+        Lambda,
+    )
+    from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
+
+    if not isinstance(fn, (FunctionDef, AsyncFunctionDef)):
+        return None
+    # A statement that runs in ``fn``'s own frame: never a nested scope's.
+    inside = next(
+        (
+            statement
+            for statement in fn.body
+            if not isinstance(
+                statement, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)
+            )
+        ),
+        None,
+    )
+    if inside is None:
+        return None
+    decided, cell = fn.unit.frame_class_cell(inside.line_col_span())
+    if not decided or cell is None:
+        return None
+    module_classes = {
+        SourceOccurrenceIdentityV1.of(statement)
+        for statement in fn.unit.typed_module.body
+        if isinstance(statement, ClassDef)
+    }
+    if (
+        SourceOccurrenceIdentityV1.of(cell) in module_classes
+        or _enclosing_class(cell) is not None
+    ):
+        return cell
+    return None
 
 
 def class_universe_outcome(cls):

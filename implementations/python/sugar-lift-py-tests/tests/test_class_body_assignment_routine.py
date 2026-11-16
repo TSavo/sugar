@@ -359,65 +359,68 @@ def _initializer_universe(source: str):
 
 
 @pytest.mark.parametrize("call", [*_MAY_RAISE_OVER_A_GLOBAL[:1], *_MAY_RAISE_CALLS])
-def test_the_initializer_universe_of_a_may_raise_class_runs_on_the_class_it_built(
+def test_the_initializer_universe_of_a_may_raise_class_is_its_own_method_contract(
     call: str,
 ) -> None:
-    """An ``__init__`` universe runs on the receiver its class call makes
-    (``ClassConstructorBodySugar.enter_initializer``), on the class its
-    statement bound in the module's one run.  With a field call that may
-    raise (``limit = float(S)``, ``S`` a module global nothing here decides,
-    the run pinned above; ``limit = os.getcwd()``) that run binds the class
-    on its completed arm, and the statement's halt is the run's, not this
-    universe's: the universe is one completed face.
-
-    In the module's run ``limit = os.getcwd()`` is the
-    ``ContainerMutationStatement`` the module threading makes of ``x =
-    r.m()`` on the import ``os``.  The class body admits it as every simple
-    statement the block reduces (``ClassDef._require_class_members``), and
-    ``limit`` is read off the block's state under the key the statement
-    binds it under (``rebinds``); the state of ``os`` after the call is the
-    module's, not a class field."""
+    """An ``__init__`` is an ordinary method (#7757 B2): its universe reads
+    no class statement and runs on no receiver a class call makes, so a
+    class field that may raise (``limit = float(S)``, ``limit =
+    os.getcwd()``) is no face of it.  It completes where its own field store
+    does (the store owes its plain-store guard over ``class:self``)."""
     completed, halts = _faces(
         _initializer_universe(f"class Box:\n    limit = {call}\n" + _INIT)
     )
 
-    assert (completed, halts) == (1, ())
+    assert completed == 1
+    assert not any("ValueError" in halt or "OSError" in halt for halt in halts), halts
 
 
-def test_the_initializer_universe_of_a_decided_raising_call_is_its_halt() -> None:
-    """``limit = int("x")`` always raises ``ValueError`` (a builtin over a
-    ground operand, decided): the module's run completes on no arm, so no
-    class exists, ``__init__`` never runs, and its universe is the run's
-    halts, as for ``limit = 1 // 0`` below."""
-    _halts_with_the_import(
-        _initializer_universe('class Box:\n    limit = int("x")\n' + _INIT),
-        "ValueError",
+@pytest.mark.parametrize(
+    ("field", "exception"),
+    [('int("x")', "ValueError"), ("1 // 0", "ZeroDivisionError")],
+    ids=["decided-raising-call", "raising-field"],
+)
+def test_the_initializer_universe_never_carries_the_class_statement_s_halt(
+    field: str, exception: str
+) -> None:
+    """``limit = int("x")`` / ``limit = 1 // 0`` halt the class statement, so
+    the module's run completes on no arm; that halt is the import's, never
+    the ``__init__``'s contract's (#7757 B2: the contract no longer enters
+    through the class statement).  A class call of ``Box`` never reaches the
+    ``__init__``: its class read is the run's halts."""
+    completed, halts = _faces(
+        _initializer_universe(f"class Box:\n    limit = {field}\n" + _INIT)
     )
 
+    assert completed == 1
+    assert not any(exception in halt for halt in halts), halts
 
-def test_the_initializer_universe_of_a_raising_class_is_its_halt() -> None:
-    """``limit = 1 // 0``: the module's run completes on no arm, so
-    ``__init__`` has no class to run on; its universe is the run's halts,
-    never the class statement's halt read off a second reduction of it."""
-    _halts_with_the_import(
-        _initializer_universe("class Box:\n" + _ALWAYS_RAISES["only-field"] + _INIT)
+
+def test_the_class_contract_under_an_unrun_source_new_refuses() -> None:
+    """``Box(n)`` runs ``Box.__new__`` before ``__init__``; the class row
+    refuses a source ``__new__`` it does not run (``refuse_unrun_source_new``
+    in ``ClassConstructorBodySugar._dispatched_initializer``).  The
+    ``__init__``'s own contract is an ordinary method's and is not refused
+    for it."""
+    from sugar_lift_py_tests.tree_enumerate import (
+        class_universe_outcome,
+        classes_with_contracts,
     )
-
-
-def test_the_initializer_universe_under_an_unrun_source_new_refuses() -> None:
-    """``Box(n)`` runs ``Box.__new__`` before ``__init__``; the class call
-    refuses a source ``__new__`` it does not run, and the ``__init__``
-    universe gets the same refusal from the same constructor."""
     from sugar_source_tree.panic import SugarNotWritten
 
+    source = (
+        "class Box:\n"
+        "    def __new__(cls, n):\n"
+        "        return object.__new__(cls)\n" + _INIT
+    )
+    tree = _tree(_PRELUDE + source)
+    (box,) = [item for item in classes_with_contracts(tree) if item.name == "Box"]
     with pytest.raises(
         SugarNotWritten, match="__new__ is source the class call does not run"
     ):
-        _initializer_universe(
-            "class Box:\n"
-            "    def __new__(cls, n):\n"
-            "        return object.__new__(cls)\n" + _INIT
-        )
+        class_universe_outcome(box)
+    completed, _halts = _faces(_initializer_universe(source))
+    assert completed == 1
 
 
 # ---------------------------------------------------------------------------
