@@ -549,7 +549,6 @@ def test_property_without_setter_reads_fine_and_halts_on_store_after_discharge()
             ObjectMethodValue(
                 name="field",
                 parameters=("self",),
-                body=_GetterBody(),
                 descriptor_kind="property",
             ),
         ),
@@ -600,7 +599,6 @@ def test_lying_read_path_does_not_authorize_completed_store() -> None:
             ObjectMethodValue(
                 name="field",
                 parameters=("self",),
-                body=_GetterBody(),
                 descriptor_kind="property",
             ),
         ),

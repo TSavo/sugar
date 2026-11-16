@@ -302,7 +302,10 @@ def frame_read_at_module_execution_site(frame, site):
 
 @dataclass(frozen=True)
 class SourceVisibleCallFrameV1:
-    """A body constructed by FunctionDef through the ordinary tree door."""
+    """A callable's call frame: its signature, formal and captured
+    coordinates and default keys, what the one binder binds a call by.  A
+    ``def``'s frame holds no body (``body`` None): its body is its own
+    universe's.  A lambda's and a class constructor's frame carry theirs."""
 
     source_identity_cid: str
     definition_site: SourceFragmentCoordinateV1

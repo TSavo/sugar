@@ -1,11 +1,11 @@
 """Recursion is a seat, not an unfolding (6 RecursionError files, 2026-09-05 board).
 
-A same-module callee's universe / frame is constructed inline at its call.
-Along ``ensure_key_mapped <-> _ensure_key_mapped_multiindex`` (pandas
-core/sorting.py) that re-entered the definition under construction until
-RecursionError. The fixpoint reference is the definition itself: re-entry
-raises ``SourceCallFrameCycle`` at the door and the asking call becomes a
-seat -- definition known, ``call-graph-cycle`` resolution gap, no second body.
+A call of a same-file ``def`` is its value's coordinate and edge, and the
+callee's frame is its signature: no body is constructed at a call (#7757).
+A call of a definition while its own universe is under construction (``f``
+calling ``f``) re-enters the frame door with the definition open: it raises
+``SourceCallFrameCycle`` and the asking call becomes a seat -- definition
+known, ``call-graph-cycle`` resolution gap, no second body.
 """
 
 from __future__ import annotations
@@ -172,36 +172,19 @@ def test_shared_callee_frame_is_constructed_once(tmp_path, monkeypatch) -> None:
     assert not _FRAMES_UNDER_CONSTRUCTION
 
 
-def test_frame_built_under_an_open_definition_is_not_served_elsewhere(
-    tmp_path, monkeypatch
-) -> None:
-    """Lying twin: a frame holding a recursion seat answers only that recursion.
-
-    ``ensure_mapped_multi`` built while ``ensure_mapped`` is open carries a
-    ``call-graph-cycle`` seat in place of ``ensure_mapped``'s frame. Serving
-    that frame to an asker with nothing open would report a recursion that
-    is not there, so the second asker constructs its own; the first asker,
-    asking again under the same open definition, reads the one it built.
-    """
+def test_a_frame_holds_no_body_and_builds_no_other_frame(tmp_path, monkeypatch) -> None:
+    """A ``def``'s frame is its signature (#7757): building it substitutes
+    and constructs nothing of the body, so it asks for no callee's frame and
+    holds no seat.  The body is the function's own universe's."""
     built = _count_frame_constructions(monkeypatch)
     source_file = _open(tmp_path, MUTUAL)
     functions = {f.name: f for f in source_file.functions()}
-    outer = functions["ensure_mapped"]
     inner = functions["ensure_mapped_multi"]
-    outer_cid = outer.fragment.seal().cid
 
-    _FRAMES_UNDER_CONSTRUCTION.add(outer_cid)
-    try:
-        inner.source_visible_call_frame()
-        assert built == {"ensure_mapped_multi": 1}
-        inner.source_visible_call_frame()
-        assert built == {"ensure_mapped_multi": 1}, "same open set reads the memo"
-    finally:
-        _FRAMES_UNDER_CONSTRUCTION.discard(outer_cid)
-
+    frame = inner.source_visible_call_frame()
+    assert frame.body is None
+    assert frame.parameters == ("values", "key")
+    assert built == {"ensure_mapped_multi": 1}
     inner.source_visible_call_frame()
-    assert built["ensure_mapped_multi"] == 2, (
-        "a frame built under an open definition was served with nothing open"
-    )
-    assert built["ensure_mapped"] == 1
+    assert built == {"ensure_mapped_multi": 1}, "the memo serves the one frame"
     assert not _FRAMES_UNDER_CONSTRUCTION

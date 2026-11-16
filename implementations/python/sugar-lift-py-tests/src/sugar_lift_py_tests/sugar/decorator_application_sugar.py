@@ -480,7 +480,7 @@ def _function_value(frame, site, *, defaults=()):
     sealed = (owner.fragment if owner is not None else site).seal()
     return LambdaCallable(
         parameters=tuple(frame.parameters),
-        body=frame.body,
+        body=None,
         construction_identity=(
             f"{sealed.source_cid}@{sealed.start}:{sealed.end}#{sealed.cid}"
         ),

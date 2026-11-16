@@ -990,7 +990,6 @@ def _replace_path(value, steps, post, check_shared):
         if (
             type(value) is not ObjectValue
             or instance_stale(value)
-            or value.deferred_helper_fields
         ):
             # An instance whose fields are not current (``instance_stale``)
             # has no field to find: the root after the call is opaque.

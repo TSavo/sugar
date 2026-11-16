@@ -55,7 +55,6 @@ from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import read_binding
 from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 from sugar_lift_py_tests.sugar.match_sugar import MatchSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
-from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
@@ -1049,7 +1048,7 @@ def test_a_call_in_the_module_body_reads_the_binding_at_that_call() -> None:
 
 def test_the_call_constructs_its_callee_frame_at_its_site() -> None:
     tree = _source(CALLED_DURING_IMPORT)
-    first, _second = _module_evaluations(tree)
+    _module_evaluations(tree)
     (call,) = _calls(tree)
     # A call of a plain ``def`` seats no frame by its name (#8647): it is the
     # call of the function the ``def`` statement built (``ComputedCallSugar``
@@ -1067,10 +1066,10 @@ def test_the_call_constructs_its_callee_frame_at_its_site() -> None:
     frame = sugar.callee.definition_frame
     assert frame is not None
     assert frame.module_execution_site == call.unit.module_execution_site(call)
-    returned = frame.body.statements[-1]
-    assert isinstance(returned, ReturnSugar)
-    assert isinstance(returned.value, EvaluationRefSugar)
-    assert returned.value.evaluation == first
+    # The frame is the signature: the body is the function's own universe's,
+    # and the global it reads is supplied on the edge where the call runs
+    # (``py.global``, ``global_value_at_call``), never read off a body here.
+    assert frame.body is None
 
 
 def test_a_call_reached_from_a_module_call_reads_the_binding_there() -> None:
@@ -1274,7 +1273,7 @@ def test_the_implicit_call_records_its_site_on_its_sugar(name: str) -> None:
 def test_the_dunder_frame_is_read_again_at_the_implicit_call(name: str) -> None:
     _method, _expression, kind, method_name = IMPLICIT_CALLS[name]
     tree = _source(_implicit_call_source(name))
-    first, second = _assignment_keys(tree, "x")
+    _assignment_keys(tree, "x")
     node = _only(tree, kind)
     site = node.unit.module_execution_site(node)
     # The method frame the class statement constructs: no call site.
@@ -1285,11 +1284,8 @@ def test_the_dunder_frame_is_read_again_at_the_implicit_call(name: str) -> None:
         site, lambda: frame_at_current_module_execution_site(frame)
     )
     assert at_call.module_execution_site == site
-    returned = at_call.body.statements[-1]
-    assert isinstance(returned, ReturnSugar)
-    assert isinstance(returned.value, EvaluationRefSugar)
-    assert returned.value.evaluation == first
-    assert returned.value.evaluation != second
+    # The frame is the signature: the body is the method's own universe's.
+    assert at_call.body is None
 
 
 def test_a_stamped_sugar_reduces_at_its_site() -> None:
@@ -1373,10 +1369,9 @@ def test_a_module_with_enters_reading_the_binding_at_the_with() -> None:
         site, lambda: frame_at_current_module_execution_site(frame)
     )
     assert at_with.module_execution_site == site
-    returned = at_with.body.statements[-1]
-    assert isinstance(returned, ReturnSugar)
-    assert isinstance(returned.value, EvaluationRefSugar)
-    assert returned.value.evaluation == first
+    # The frame is the signature: the body read at the site is the method's
+    # own universe's (``_returned`` above), never rebuilt in the frame.
+    assert at_with.body is None
 
 
 # -- x += e binds its evaluation, and the name only for a live loop -----------

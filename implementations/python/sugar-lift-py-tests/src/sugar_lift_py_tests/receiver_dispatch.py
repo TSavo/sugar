@@ -388,7 +388,6 @@ def class_value(value):
         if symbol is None:
             return None
         fields = {item.name for item in value.fields}
-        fields |= set(value.deferred_helper_fields)
         fields -= set(value.deleted_instance_fields)
         return instance_term(symbol, fields)
     builtin = builtin_class_name(value)

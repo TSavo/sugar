@@ -319,7 +319,6 @@ def test_property_without_setter_raises_attribute_error_not_completed(tmp_path):
             ObjectMethodValue(
                 name="attr",
                 parameters=("self",),
-                body=_GetterBody(),
                 descriptor_kind="property",
             ),
         ),
@@ -440,7 +439,6 @@ def test_property_read_does_not_license_completed_store(tmp_path):
             ObjectMethodValue(
                 name="attr",
                 parameters=("self",),
-                body=_GetterBody(),
                 descriptor_kind="property",
             ),
         ),
@@ -590,7 +588,6 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
             ObjectMethodValue(
                 name="name",
                 parameters=("self",),
-                body=_GetterBody(),
                 descriptor_kind="property",
             ),
         ),
