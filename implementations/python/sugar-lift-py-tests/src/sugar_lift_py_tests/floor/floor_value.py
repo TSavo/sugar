@@ -508,7 +508,7 @@ class FloorValue:
 
         The value's truth is the one keyed undecided truth,
         ``python:truth_result(<term>, <key>)``
-        (:func:`undecided_predicate_result`, the form the one truth rule's
+        (:func:`undecided_truth_result`, the form the one truth rule's
         two faces complete with), keyed on the exact source site so two truth
         tests of the same term are never forced to agree.  ``<term>`` is the
         container's identity (``object_identity.identity_term``: its contents
@@ -537,9 +537,8 @@ class FloorValue:
         from sugar_lift_py_tests.occurrence import occurrence_key
         from sugar_lift_py_tests.outcome import ExitSet
 
-        truth = undecided_predicate_result(
-            "truth",
-            (identity_term(self, site, "receiver", owner=owner),),
+        truth = undecided_truth_result(
+            identity_term(self, site, "receiver", owner=owner),
             occurrence_key(site),
         )
         return ExitSet.completed(
@@ -677,8 +676,9 @@ class FloorValue:
         The container's runtime type selects ``__contains__`` (or iteration
         with ``__eq__``), which this frame did not look at, so ``item in self``
         may raise anything -- the #7585 law.  It completes with the undecided
-        ``py.in(item, container)`` predicate, keyed per evaluation
-        (``python:compare_result("In", item, container, <key>)``,
+        ``py.in(item, container)`` predicate, keyed per evaluation: the truth
+        of the comparison's value (``python:truth_result(
+        python:compare_result("In", item, container, <key>), <key>)``,
         ``comparison_op_sugar.keyed_comparison``), only under
         ``python:compare.completes(python:compare("In", item, container,
         site))`` and halts with
@@ -1522,27 +1522,44 @@ def undecided_result_terms(name: str, operand_terms, key):
     return term, completes
 
 
-def undecided_predicate_result(name: str, operand_terms, key: str):
-    """The one form of an undecided operation whose value is a truth -- a
-    comparison's (``python:compare_result("<Kind>", <left>, <right>,
-    <key>)``) or ``bool(x)``'s (``python:truth_result(<x>, <key>)``) -- one
-    per evaluation (#7757 NEW-1, the owner's key rule).
+def undecided_truth_result(operand, key: str):
+    """The one truth rule's atom: ``bool(<operand>)`` not decided here, one
+    per evaluation (#7757 NEW-1, the owner's key rule):
+    ``python:truth_result(<operand>, <key>)``.
 
-    The atom ``python:<name>_result(*operands, <key>)`` is the predicate
-    counterpart of :func:`undecided_result_terms`' result term: ``key`` is
-    the occurrence key taken where the operation evaluates, the key its
-    completes atom (``python:compare.completes(python:compare(<kind>, ...,
-    <key>))``, ``python:truth.completes(python:truth(<x>, <key>))``) and its
-    halt already carry, so two evaluations over the same operand terms (a
-    counting ``__eq__`` asked twice, ``bool(p)`` in two live loop items) are
-    two unknowns, never one atom.  Where prove decides the operands' builtin
-    types (a joined actual, a stated ``int`` / ``str``), the SMT emitter
-    reads it exactly as the unkeyed ``py.eq`` / ``py.truthy`` it replaces
-    for undecided operands; otherwise it is the uninterpreted application.
+    ``key`` is the occurrence key taken where the truth is taken, the key its
+    completes atom (``python:truth.completes(python:truth(<operand>,
+    <key>))``) and its halt already carry, so two evaluations over the same
+    operand term (``bool(p)`` in two live loop items) are two unknowns, never
+    one atom.  It is the only predicate an undecided operation states: an
+    undecided comparison is a value (:func:`undecided_compare_result`) and
+    its truth is this atom over that value.  Where prove decides the
+    operand's builtin type (a joined actual, a stated ``int`` / ``str``), or
+    the operand is a comparison value over such operands, the SMT emitter
+    reads it exactly as the unkeyed ``py.truthy`` / ``py.eq`` / ordering;
+    otherwise it is the uninterpreted application.
     """
     from sugar_lift_py_tests.ir import atomic, str_const
 
-    return atomic(f"python:{name}_result", [*operand_terms, str_const(key)])
+    return atomic("python:truth_result", [operand, str_const(key)])
+
+
+def undecided_compare_result(kind: str, left, right, key: str):
+    """The value of an undecided comparison, one per evaluation (#7757
+    NEW-1): ``python:compare_result("<Kind>", <left>, <right>, <key>)``.
+
+    A rich comparison returns whatever ``__eq__`` / ``__lt__`` /
+    ``__contains__`` returns, so ``l == r`` is a value, never a predicate:
+    stored (``out.append(c == 0)``) it is this term, and every truth test of
+    it is the one truth rule's atom over it (:func:`undecided_truth_result`),
+    keyed where that truth is taken.  ``key`` is the occurrence key taken
+    where the comparison evaluates, the key its completes atom
+    (``python:compare.completes(python:compare(<kind>, ..., <key>))``) and
+    its halt already carry.
+    """
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor("python:compare_result", [str_const(kind), left, right, str_const(key)])
 
 
 def undecided_attribute_result(

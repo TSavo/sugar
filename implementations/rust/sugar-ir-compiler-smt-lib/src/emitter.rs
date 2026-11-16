@@ -3960,13 +3960,15 @@ const PY_TRUTHY: &str = "py.truthy";
 const PYTHON_TRUTH: &str = "python:truth";
 const PYTHON_TRUTH_COMPLETES: &str = "python:truth.completes";
 
-/// The kit's undecided truth and comparison values, keyed per evaluation
-/// (#7757 NEW-1, `floor_value.undecided_predicate_result`):
-/// `python:truth_result(<operand>, <key>)` and
-/// `python:compare_result("<Kind>", <left>, <right>, <key>)`. Over operands
-/// whose builtin types are decided or stated they read exactly as the
-/// unkeyed `py.truthy` / `py.eq` / ordering do; the key only keeps two
-/// evaluations two atoms where nothing decides them.
+/// The kit's undecided truth and comparison, keyed per evaluation (#7757
+/// NEW-1): the one truth rule's atom `python:truth_result(<operand>, <key>)`
+/// (`floor_value.undecided_truth_result`), always a predicate, and an
+/// undecided comparison's value `python:compare_result("<Kind>", <left>,
+/// <right>, <key>)` (`floor_value.undecided_compare_result`), always a term:
+/// a comparison's truth is `python:truth_result(python:compare_result(...),
+/// <key>)`. Over operands whose builtin types are decided or stated they
+/// read exactly as the unkeyed `py.truthy` / `py.eq` / ordering do; the key
+/// only keeps two evaluations two atoms where nothing decides them.
 pub const PYTHON_TRUTH_RESULT: &str = "python:truth_result";
 pub const PYTHON_COMPARE_RESULT: &str = "python:compare_result";
 
@@ -4879,28 +4881,22 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
             _ => return Ok(None),
         };
         let atom = emit_atomic(name, args)?;
+        // The truth of the kit's keyed undecided comparison value,
+        // `python:compare_result("<Kind>", <left>, <right>, <key>)` (#7757
+        // NEW-1): over decided or stated builtin operands the comparison
+        // returns a `bool`, whose truth is itself, so it is the comparison's
+        // read (`py_compare_result_reading`), the atom standing where
+        // nothing decides the operands.
+        if let Term::Ctor {
+            name: value,
+            args: compared,
+        } = operand
+        {
+            if value == PYTHON_COMPARE_RESULT {
+                return Ok(py_compare_result_reading(compared, &atom));
+            }
+        }
         return Ok(py_truth_reading(operand, &atom));
-    }
-    // The kit's keyed undecided comparison, `python:compare_result("<Kind>",
-    // <left>, <right>, <key>)` (#7757 NEW-1): `Eq` is `py.eq`'s read
-    // (`py_equality_reading`), an ordering is the integer order over two
-    // decided or stated `int`s (`py_ordering_reading`), each with its own
-    // atom standing where nothing decides the operands. `In` names no read
-    // here, as `py.in` does not.
-    if name == PYTHON_COMPARE_RESULT {
-        let [Term::Const {
-            value: serde_json::Value::String(kind),
-            ..
-        }, left, right, _key] = args
-        else {
-            return Ok(None);
-        };
-        let atom = emit_atomic(name, args)?;
-        return Ok(match kind.as_str() {
-            "Eq" => py_equality_reading(true, left, right, &atom),
-            "Lt" | "LtE" | "Gt" | "GtE" => py_ordering_reading(kind, left, right, &atom),
-            _ => None,
-        });
     }
     if let [Term::Ctor {
         name: protocol,
@@ -5021,11 +5017,35 @@ fn py_truth_reading(operand: &Term, atom: &str) -> Option<String> {
     None
 }
 
-/// `left == right` as Python reads it (`python_eq`: `py.eq` and the kit's
-/// keyed `python:compare_result("Eq", ...)`), or an `=` binding a decided
-/// operation (`python_eq` false): by value over decided operands, guarded
-/// by the undecided operand's stated builtin type, `atom` where nothing
-/// decides it. `None` when an operand is not a Python-value side.
+/// The truth of the kit's keyed undecided comparison value, over its
+/// arguments `["<Kind>", <left>, <right>, <key>]`
+/// (`python:compare_result`, #7757 NEW-1): `Eq` is `py.eq`'s read
+/// (`py_equality_reading`), an ordering is the integer order over two
+/// decided or stated `int`s (`py_ordering_reading`), each with `atom`
+/// standing where nothing decides the operands. `In` names no read here, as
+/// `py.in` does not. `None` (the atom as `emit_atomic` renders it) for any
+/// other shape.
+fn py_compare_result_reading(compared: &[Term], atom: &str) -> Option<String> {
+    let [Term::Const {
+        value: serde_json::Value::String(kind),
+        ..
+    }, left, right, _key] = compared
+    else {
+        return None;
+    };
+    match kind.as_str() {
+        "Eq" => py_equality_reading(true, left, right, atom),
+        "Lt" | "LtE" | "Gt" | "GtE" => py_ordering_reading(kind, left, right, atom),
+        _ => None,
+    }
+}
+
+/// `left == right` as Python reads it (`python_eq`: `py.eq` and the truth
+/// of the kit's keyed `python:compare_result("Eq", ...)`), or an `=`
+/// binding a decided operation (`python_eq` false): by value over decided
+/// operands, guarded by the undecided operand's stated builtin type, `atom`
+/// where nothing decides it. `None` when an operand is not a Python-value
+/// side.
 fn py_equality_reading(python_eq: bool, left: &Term, right: &Term, atom: &str) -> Option<String> {
     let (Some(left), Some(right)) = (py_side(left), py_side(right)) else {
         return None;
@@ -5063,8 +5083,8 @@ fn py_equality_reading(python_eq: bool, left: &Term, right: &Term, atom: &str) -
 }
 
 /// An ordering (`Lt`, `LtE`, `Gt`, `GtE`) of the kit's keyed undecided
-/// comparison (`python:compare_result`) between two `int`s: Python's integer
-/// order, the SMT-LIB order `py.lt` / `py.le` / `py.gt` / `py.ge` render as.
+/// comparison (the truth of `python:compare_result`) between two `int`s:
+/// Python's integer order, the SMT-LIB order `py.lt` / `py.le` / `py.gt` / `py.ge` render as.
 /// A decided `int` is its own `holds`; an undecided operand is an `int`
 /// where its exact stated type is (`python:value.is_int`, not `is_str`), as
 /// `py.eq` reads it. Anything else (a `str`, whose order this backend's
@@ -5206,149 +5226,6 @@ pub(crate) fn apply_bv32_contagion(formula: &Formula) -> Formula {
     promote_bv32_siblings_formula(formula, &subjects)
 }
 
-/// A predicate the kit carries as a value is the truth of that value.
-///
-/// The kit projects a boolean atom it holds as a Python value to the
-/// same-name constructor term (`PredicateValue.to_term`): `out.append(c ==
-/// 0)` stores `python:compare_result("Eq", c, 0, <key>)` as a term, while
-/// `assert r[0] == r[1]` states a `python:compare_result(...)` atom. One
-/// head in term position and in boolean position was declared once, as the
-/// Int-valued ctor (`compile_formula`'s preamble skips a predicate a ctor
-/// already names), and then applied in Bool position: the script was
-/// ill-sorted, z3 and vampire rejected it and cvc5 hung up on its stdin.
-///
-/// Such an atom is rewritten to the Python truth of the value its head
-/// names, `py.truthy(<head>(<args>))`: the value stays the one Int-universe
-/// term, the atom reads its truth through the one truth reading
-/// (`py_truth_reading`), and a stored comparison and the comparison's
-/// truth are the same unknown. A formula in which no non-builtin predicate
-/// head is also a ctor head is returned unchanged.
-pub(crate) fn apply_predicate_value_truth(formula: &Formula) -> Formula {
-    let mut heads = BTreeSet::new();
-    collect_value_heads_formula(formula, &mut heads);
-    if heads.is_empty() {
-        return formula.clone();
-    }
-    predicate_value_truth_formula(formula, &heads)
-}
-
-fn collect_value_heads_formula(formula: &Formula, out: &mut BTreeSet<String>) {
-    match formula {
-        Formula::Atomic { args, .. } => {
-            for arg in args {
-                collect_value_heads_term(arg, out);
-            }
-        }
-        Formula::And { operands }
-        | Formula::Or { operands }
-        | Formula::Not { operands }
-        | Formula::Implies { operands } => {
-            for operand in operands {
-                collect_value_heads_formula(operand, out);
-            }
-        }
-        Formula::Forall { body, .. }
-        | Formula::Exists { body, .. }
-        | Formula::Choice { body, .. } => collect_value_heads_formula(body, out),
-        Formula::DivergenceBetween { source, target } => {
-            collect_value_heads_formula(source, out);
-            collect_value_heads_formula(target, out);
-        }
-        Formula::Substitute { .. } | Formula::Apply { .. } => {}
-    }
-}
-
-fn collect_value_heads_term(term: &Term, out: &mut BTreeSet<String>) {
-    match term {
-        Term::Ctor { name, args, .. } => {
-            out.insert(name.clone());
-            for arg in args {
-                collect_value_heads_term(arg, out);
-            }
-        }
-        Term::Lambda { body, .. } => collect_value_heads_term(body, out),
-        Term::Let { bindings, body } => {
-            for binding in bindings {
-                collect_value_heads_term(&binding.bound_term, out);
-            }
-            collect_value_heads_term(body, out);
-        }
-        Term::Var { .. } | Term::Const { .. } => {}
-    }
-}
-
-/// Whether the atom `name(args)` is one the predicate-decl pass declares as
-/// an uninterpreted Bool predicate (`collect_predicate_decls_formula`), the
-/// declaration a same-name ctor displaces. `py.truthy` itself is the reading
-/// the rewrite lands on, so it is never rewritten.
-fn is_declared_predicate_atom(name: &str, args: &[Term]) -> bool {
-    !args.is_empty()
-        && name != "identity"
-        && name != PYTHON_VALUE_BUILTIN
-        && name != PY_TRUTHY
-        && !crate::literal_encoding::routes_to_bv32_theory(name)
-        && !is_builtin_atomic_predicate(name)
-}
-
-fn predicate_value_truth_formula(formula: &Formula, heads: &BTreeSet<String>) -> Formula {
-    let map = |operands: &Vec<Formula>| -> Vec<Formula> {
-        operands
-            .iter()
-            .map(|operand| predicate_value_truth_formula(operand, heads))
-            .collect()
-    };
-    match formula {
-        Formula::Atomic { name, args }
-            if heads.contains(name) && is_declared_predicate_atom(name, args) =>
-        {
-            Formula::Atomic {
-                name: PY_TRUTHY.to_string(),
-                args: vec![Term::Ctor {
-                    name: name.clone(),
-                    args: args.clone(),
-                }],
-            }
-        }
-        Formula::Atomic { .. } => formula.clone(),
-        Formula::And { operands } => Formula::And {
-            operands: map(operands),
-        },
-        Formula::Or { operands } => Formula::Or {
-            operands: map(operands),
-        },
-        Formula::Not { operands } => Formula::Not {
-            operands: map(operands),
-        },
-        Formula::Implies { operands } => Formula::Implies {
-            operands: map(operands),
-        },
-        Formula::Forall { name, sort, body } => Formula::Forall {
-            name: name.clone(),
-            sort: sort.clone(),
-            body: Box::new(predicate_value_truth_formula(body, heads)),
-        },
-        Formula::Exists { name, sort, body } => Formula::Exists {
-            name: name.clone(),
-            sort: sort.clone(),
-            body: Box::new(predicate_value_truth_formula(body, heads)),
-        },
-        Formula::Choice {
-            var_name,
-            sort,
-            body,
-        } => Formula::Choice {
-            var_name: var_name.clone(),
-            sort: sort.clone(),
-            body: Box::new(predicate_value_truth_formula(body, heads)),
-        },
-        Formula::DivergenceBetween { source, target } => Formula::DivergenceBetween {
-            source: Box::new(predicate_value_truth_formula(source, heads)),
-            target: Box::new(predicate_value_truth_formula(target, heads)),
-        },
-        Formula::Substitute { .. } | Formula::Apply { .. } => formula.clone(),
-    }
-}
-
 fn collect_string_tainted_subjects(formula: &Formula, out: &mut Vec<Term>) {
     match formula {
         Formula::Atomic { name, args } => {
@@ -5379,7 +5256,7 @@ fn collect_string_tainted_subjects(formula: &Formula, out: &mut Vec<Term>) {
 
 pub fn compile_formula(formula: &Formula) -> Result<CompiledFormula, CompileError> {
     reset_py_value_functions();
-    let formula = &apply_predicate_value_truth(&apply_bv32_contagion(formula));
+    let formula = &apply_bv32_contagion(formula);
     {
         let mut tainted = Vec::new();
         collect_string_tainted_subjects(formula, &mut tainted);
@@ -5544,7 +5421,7 @@ pub fn compile_formula(formula: &Formula) -> Result<CompiledFormula, CompileErro
 
 pub fn compile_asserted_formula(formula: &Formula) -> Result<CompiledFormula, CompileError> {
     reset_py_value_functions();
-    let formula = &apply_predicate_value_truth(&apply_bv32_contagion(formula));
+    let formula = &apply_bv32_contagion(formula);
     {
         let mut tainted = Vec::new();
         collect_string_tainted_subjects(formula, &mut tainted);

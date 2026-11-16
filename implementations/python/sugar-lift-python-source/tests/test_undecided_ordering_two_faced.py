@@ -33,7 +33,8 @@ SITE = "undecided-ordering-site"
 
 # Each operator's kind: the undecided ordering's value is
 # ``python:compare_result("<kind>", <left>, <right>, <key>)``, keyed per
-# evaluation (#7757 NEW-1).
+# evaluation (#7757 NEW-1), and its truth the one truth rule's atom over it,
+# ``python:truth_result(<value>, <key>)``.
 _OPS = {"<": "Lt", "<=": "LtE", ">": "Gt", ">=": "GtE"}
 
 
@@ -64,8 +65,9 @@ def test_floor_ordering_on_a_call_result_is_two_faced(method, op):
     (halted,) = [face for face in result.exits if isinstance(face, Halted)]
     op_kind = _OPS[op]
     assert completed.guard.name == "python:compare.completes"
-    assert completed.value.formula.name == "python:compare_result"
-    assert completed.value.formula.args[0].value == op_kind
+    assert completed.value.formula.name == "python:truth_result"
+    assert completed.value.formula.args[0].name == "python:compare_result"
+    assert completed.value.formula.args[0].args[0].value == op_kind
     assert isinstance(halted.effect, UndeterminedRaiseEffect)
     assert halted.effect.exception_name is None
     assert halted.effect.producer_node_owner == f"UndecidedCompare:{op_kind}"
@@ -80,8 +82,9 @@ def test_ordering_two_call_results_completes_undecided_or_raises(tmp_path, op):
     ((value, _),) = returns
     op_kind = _OPS[op]
     assert type(value) is PredicateValue
-    assert value.formula.name == "python:compare_result"
-    assert value.formula.args[0].value == op_kind
+    assert value.formula.name == "python:truth_result"
+    assert value.formula.args[0].name == "python:compare_result"
+    assert value.formula.args[0].args[0].value == op_kind
     assert f"UndecidedCompare:{op_kind}" in _owners(halts)
 
 
@@ -89,9 +92,11 @@ def test_a_number_against_a_call_result_reflects_and_is_two_faced(tmp_path):
     source = OPAQUE + "def f():\n    return 1 < textwrap.dedent('b')\n"
     returns, halts = _split(tmp_path, source)
     ((value, _),) = returns
-    assert value.formula.name == "python:compare_result"
-    assert value.formula.args[0].value == "Lt"
-    assert value.formula.args[1] == TermValue(1).to_term(owner="test")
+    assert value.formula.name == "python:truth_result"
+    compared = value.formula.args[0]
+    assert compared.name == "python:compare_result"
+    assert compared.args[0].value == "Lt"
+    assert compared.args[1] == TermValue(1).to_term(owner="test")
     assert "UndecidedCompare:Lt" in _owners(halts)
 
 
@@ -140,9 +145,10 @@ def test_a_chain_evaluates_its_middle_once_and_short_circuits(tmp_path):
     assert owners.count("UndecidedCompare:Lt") == 2
     # Two returns: the first comparison's falsy value, or the second's value.
     assert len(returns) == 2
-    # ``python:compare_result("Lt", <left>, <right>, <key>)``: the left
-    # operand follows the operator kind.
-    first = [v for v, _ in returns if v.formula.args[1] == TermValue(1).to_term(owner="t")]
+    # ``python:truth_result(python:compare_result("Lt", <left>, <right>,
+    # <key>), <key>)``: the left operand follows the operator kind.
+    one = TermValue(1).to_term(owner="t")
+    first = [v for v, _ in returns if v.formula.args[0].args[1] == one]
     assert len(first) == 1
     # The right operand runs only when the first comparison is truthy: its
     # call's halt is guarded by the first comparison's predicate, never its

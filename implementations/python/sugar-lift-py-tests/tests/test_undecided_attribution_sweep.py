@@ -69,9 +69,11 @@ def _assert_undecided_membership_faces(outcome) -> None:
     (completed,) = [f for f in outcome.exits if isinstance(f, Completed)]
     (halted,) = [f for f in outcome.exits if isinstance(f, Halted)]
     assert completed.guard.name == "python:compare.completes"
-    # The undecided membership, keyed per evaluation (#7757 NEW-1).
-    assert completed.value.formula.name == "python:compare_result"
-    assert completed.value.formula.args[0].value == "In"
+    # The truth of the undecided membership's value, keyed per evaluation
+    # (#7757 NEW-1).
+    assert completed.value.formula.name == "python:truth_result"
+    assert completed.value.formula.args[0].name == "python:compare_result"
+    assert completed.value.formula.args[0].args[0].value == "In"
     assert isinstance(halted.effect, UndeterminedRaiseEffect)
     assert halted.effect.producer_node_owner == "UndecidedCompare:In"
 

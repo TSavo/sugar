@@ -39,14 +39,18 @@ def test_concrete_for_unrolls_the_body_per_element():
     )
     assert len(invs) == 3
     # Each is the undecided ``==``, keyed per evaluation (#7757 NEW-1):
-    # ``python:compare_result("Eq", x, z, <key>)``, one key per item.
-    assert [i.args[1].value for i in invs] == [1, 2, 3]  # x = each element
+    # the truth of ``python:compare_result("Eq", x, z, <key>)``, one key per
+    # item.
+    assert all(i.name == "python:truth_result" for i in invs)
+    compared = [i.args[0] for i in invs]
+    assert [c.args[1].value for c in compared] == [1, 2, 3]  # x = each element
     assert all(
-        i.name == "python:compare_result"
-        and i.args[0].value == "Eq"
-        and i.args[2].name == "z"
-        for i in invs
+        c.name == "python:compare_result"
+        and c.args[0].value == "Eq"
+        and c.args[2].name == "z"
+        for c in compared
     )
+    assert len({c.args[-1] for c in compared}) == 3
     assert len({i.args[-1] for i in invs}) == 3
 
 

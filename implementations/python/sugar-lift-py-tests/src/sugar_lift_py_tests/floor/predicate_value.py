@@ -42,7 +42,7 @@ class PredicateValue(FloorValue):
         from sugar_lift_py_tests.ir import _Atomic, _Connective, ctor
 
         if isinstance(self.formula, _Atomic):
-            return ctor(self.formula.name, list(self.formula.args))
+            return _carried_atom_value(self.formula)
         if isinstance(self.formula, _Connective):
             return ctor(
                 f"py.{self.formula.kind}",
@@ -260,3 +260,32 @@ class PredicateValue(FloorValue):
                 self.then_bindings,
             )
         )
+
+
+def _carried_atom_value(formula):
+    """The Python value an atom carried as a value is.
+
+    The one truth rule's atom ``python:truth_result(<operand>, <key>)`` is a
+    predicate, never a value (#7757): its head never stands in term position.
+    Where it is a comparison's own truth -- its operand the comparison's value
+    ``python:compare_result(..., <key>)`` at the same key
+    (``comparison_op_sugar.keyed_comparison``) -- the value is that
+    comparison's result: ``out.append(c == 0)`` stores what ``__eq__``
+    returned.  Any other keyed truth (``bool(x)``, the truth a later test of
+    a stored comparison takes) carries the truth evaluation it is,
+    ``python:truth(<operand>, <key>)``, the term its completes atom
+    (``python:truth.completes``) already names.  Any other atom projects to
+    the same-name constructor term.
+    """
+    from sugar_lift_py_tests.ir import _Ctor, ctor
+
+    if formula.name == "python:truth_result" and len(formula.args) == 2:
+        operand, key = formula.args
+        if (
+            isinstance(operand, _Ctor)
+            and operand.name == "python:compare_result"
+            and operand.args[-1:] == (key,)
+        ):
+            return operand
+        return ctor("python:truth", [operand, key])
+    return ctor(formula.name, list(formula.args))

@@ -48,11 +48,13 @@ def test_assert_consumes_the_coordinate():
         _fn("def A(s):\n    assert s.upper() == s\n    return s\n"),
         owner="UndecidedCompare:Eq",
     ).invs()[0]
-    # Keyed per evaluation (#7757 NEW-1): ``python:compare_result("Eq",
-    # call:upper(s), s, <key>)``.
-    assert inv.name == "python:compare_result"
-    assert inv.args[0].value == "Eq"
-    assert inv.args[1].name == "call:upper"
+    # Keyed per evaluation (#7757 NEW-1): the truth of
+    # ``python:compare_result("Eq", call:upper(s), s, <key>)``.
+    assert inv.name == "python:truth_result"
+    compared = inv.args[0]
+    assert compared.name == "python:compare_result"
+    assert compared.args[0].value == "Eq"
+    assert compared.args[1].name == "call:upper"
 
 
 def test_keyword_args_lift():

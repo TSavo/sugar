@@ -45,16 +45,19 @@ def _compares(outcome):
 def test_not_equal_is_equals_negated():
     inv = _inv("def A(z):\n    assert z != 2\n    return z\n", "UndecidedCompare:NotEq")
     assert inv.kind == "not"
-    # The undecided ``==``, keyed per evaluation (#7757 NEW-1).
-    assert inv.operands[0].name == "python:compare_result"
-    assert inv.operands[0].args[0].value == "Eq"
+    # The truth of the undecided ``==``'s value, keyed per evaluation
+    # (#7757 NEW-1).
+    assert inv.operands[0].name == "python:truth_result"
+    assert inv.operands[0].args[0].name == "python:compare_result"
+    assert inv.operands[0].args[0].args[0].value == "Eq"
 
 
 def test_ordering_operators_emit_their_atoms():
     """A formal ordering is the undecided ordering: its value, keyed per
     evaluation (``python:compare_result("<kind>", z, <literal>, <key>)``,
-    #7757 NEW-1), completes only under ``python:compare.completes`` over
-    the formal and the literal."""
+    #7757 NEW-1), whose truth (``python:truth_result(<value>, <key>)``)
+    completes only under ``python:compare.completes`` over the formal and
+    the literal."""
     for spelling, kind, right_value in (
         ("<", "Lt", 10),
         ("<=", "LtE", 10),
@@ -65,10 +68,12 @@ def test_ordering_operators_emit_their_atoms():
         inv = undecided_function_value(
             function, owner=f"UndecidedCompare:{kind}"
         ).invs()[0]
-        assert inv.name == "python:compare_result"
-        assert inv.args[0].value == kind
-        assert inv.args[1].name == "z"
-        assert inv.args[2].value == right_value
+        assert inv.name == "python:truth_result"
+        compared = inv.args[0]
+        assert compared.name == "python:compare_result"
+        assert compared.args[0].value == kind
+        assert compared.args[1].name == "z"
+        assert compared.args[2].value == right_value
         compares = _compares(undecided_outcome(function))
         assert {op for op, _left, _right in compares} == {kind}
         assert {(left.name, right.value) for _op, left, right in compares} == {

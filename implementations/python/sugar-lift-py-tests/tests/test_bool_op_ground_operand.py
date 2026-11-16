@@ -91,13 +91,20 @@ def _z_eq_1() -> EqualityOpSugar:
 
 def _is_symbolic_z_eq_1(formula) -> bool:
     """``z == 1`` on an undecided ``z``: the one undecided comparison, keyed
-    per evaluation (#7757 NEW-1, ``floor_value.undecided_predicate_result``):
-    ``python:compare_result("Eq", z, 1, <key>)``, the key its completes atom
-    and its halt carry.  The unkeyed ``py.eq(z, 1)`` is no longer minted."""
+    per evaluation (#7757 NEW-1): the one truth rule's atom over the
+    comparison's value (``floor_value.undecided_truth_result`` /
+    ``undecided_compare_result``), ``python:truth_result(
+    python:compare_result("Eq", z, 1, <key>), <key>)``, the key its completes
+    atom and its halt carry.  The unkeyed ``py.eq(z, 1)`` is no longer
+    minted, and the comparison is never a predicate."""
+    if getattr(formula, "name", None) != "python:truth_result":
+        return False
+    value = formula.args[0]
     return (
-        getattr(formula, "name", None) == "python:compare_result"
-        and len(formula.args) == 4
-        and tuple(formula.args[:3]) == (str_const("Eq"), make_var("z"), num(1))
+        getattr(value, "name", None) == "python:compare_result"
+        and len(value.args) == 4
+        and tuple(value.args[:3]) == (str_const("Eq"), make_var("z"), num(1))
+        and formula.args[1] == value.args[3]
     )
 
 

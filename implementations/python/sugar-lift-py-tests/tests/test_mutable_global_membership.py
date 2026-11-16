@@ -105,9 +105,11 @@ def test_non_dict_mutable_global_does_not_borrow_dict_membership(
     (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
     assert completed.guard.name == "python:compare.completes"
     assert isinstance(completed.value, PredicateValue)
-    # The undecided membership, keyed per evaluation (#7757 NEW-1).
-    assert completed.value.formula.name == "python:compare_result"
-    assert completed.value.formula.args[0].value == "In"
+    # The truth of the undecided membership's value, keyed per evaluation
+    # (#7757 NEW-1).
+    assert completed.value.formula.name == "python:truth_result"
+    assert completed.value.formula.args[0].name == "python:compare_result"
+    assert completed.value.formula.args[0].args[0].value == "In"
     assert halted.guard == complement_guard(completed.guard)
     assert halted.effect.exception_name is None
     assert halted.effect.producer_node_owner == "UndecidedCompare:In"
@@ -138,7 +140,9 @@ def test_symbolic_source_membership_keeps_complementary_dispatch_faces(
     assert completed.value.site is site
     assert completed.guard.name == "python:compare.completes"
     assert completed.guard == complement_guard(halted.guard)
-    # The undecided membership, keyed per evaluation (#7757 NEW-1).
-    assert completed.value.formula.name == "python:compare_result"
-    assert completed.value.formula.args[0].value == "In"
+    # The truth of the undecided membership's value, keyed per evaluation
+    # (#7757 NEW-1).
+    assert completed.value.formula.name == "python:truth_result"
+    assert completed.value.formula.args[0].name == "python:compare_result"
+    assert completed.value.formula.args[0].args[0].value == "In"
     assert halted.owed and halted.owed == completed.owed
