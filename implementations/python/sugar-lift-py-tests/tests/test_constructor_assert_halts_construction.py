@@ -3,16 +3,15 @@ is never dropped).
 
 A symbolic ``assert`` states its test as a fact: the claim of the function
 whose body it is, with no failing arm where it stands (``AssertSugar``).
-A class call returns the object, never ``__init__``'s
-claims, so the fact left in the initializer's record was dropped from the
-class's contract: no panic locus stated the ``AssertionError``, and prove's
-completion fact read ``C(-1)`` as completing over ``assert n > 0``.  Each
-``assert`` fact of a completed initializer face is now the split it is
-(``assert_sugar.halts_where_its_asserts_fail``, the one rule every
-function's own universe applies too): the
-construction halts with ``AssertionError`` at the ``assert`` under the
-fact's complement, a halted arm the class row states as a panic locus like
-every other ``__init__`` raise.
+Each ``assert`` fact of a completed arm of a function's own universe is the
+split it is (``assert_sugar.halts_where_its_asserts_fail``, #8961): the
+function halts with ``AssertionError`` at the ``assert`` under the fact's
+complement, a halted arm its row states as a panic locus.  An ``__init__``
+is an ordinary method (#7757 B2), so its asserts are loci of its own row.
+The class row never applies ``__init__`` in place (#7757 B3): it makes the
+fresh instance and dispatches ``__init__`` on it, an edge whose halts are the
+class call's halts, joined at prove to the ``__init__``'s contract.  So
+``C(-1)`` over ``assert n > 0`` still never completes at prove.
 """
 
 from __future__ import annotations
@@ -42,6 +41,20 @@ def _contract_row(tmp_path, source, name):
     return row
 
 
+def _init_row(tmp_path, source):
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+    from sugar_lift_py_tests.tree_enumerate import function_contract_rows
+
+    producer = tmp_path / "producer.py"
+    producer.write_text(source)
+    tree = open_source_file_for_construction(producer, root=tmp_path)
+    init = [fn for fn in tree.functions() if fn.name == "__init__"][0]
+    _memento, rows = function_contract_rows(init, "producer.py")
+    assert rows is not None
+    (row,) = rows
+    return row
+
+
 def _assertion_loci(row) -> list:
     return [
         locus for locus in row.panic_loci if "AssertionError" in repr(locus.arg_term)
@@ -49,10 +62,9 @@ def _assertion_loci(row) -> list:
 
 
 def test_an_initializer_assert_over_a_formal_is_a_panic_locus(tmp_path):
-    row = _contract_row(
+    row = _init_row(
         tmp_path,
         "class C:\n    def __init__(self, n):\n        assert n > 0\n",
-        "C",
     )
 
     (locus,) = _assertion_loci(row)
@@ -60,21 +72,19 @@ def test_an_initializer_assert_over_a_formal_is_a_panic_locus(tmp_path):
 
 
 def test_an_initializer_assert_over_a_field_is_a_panic_locus(tmp_path):
-    row = _contract_row(
+    row = _init_row(
         tmp_path,
         "class C:\n    def __init__(self, n):\n        self.n = n\n"
         "        assert self.n > 0\n",
-        "C",
     )
 
     assert [locus.line for locus in _assertion_loci(row)] == [4]
 
 
 def test_an_initializer_assert_is_no_claim_of_the_class(tmp_path):
-    # The failing ``assert`` is the construction's halt (the locus above),
-    # never the class's claim: stated as one it held on no completed arm of
-    # the construction and read ``false``, refuting the class row and every
-    # caller joined to it, whatever the actual (scorecard at d95c22a49).
+    # The failing ``assert`` is the ``__init__``'s halt, reached through the
+    # class row's dispatched ``__init__`` edge, whose halted face is a halt
+    # of the class call; never the class's claim, and never applied here.
     row = _contract_row(
         tmp_path,
         "class C:\n    def __init__(self, n):\n        assert n > 0\n",
@@ -82,14 +92,15 @@ def test_an_initializer_assert_is_no_claim_of_the_class(tmp_path):
     )
 
     assert row.inv is None, row.inv
-    assert [locus.line for locus in _assertion_loci(row)] == [3]
+    assert not _assertion_loci(row)
+    assert row.panic_loci
+    assert "call:dispatch:__init__" in repr(row.post.ir_formula)
 
 
 def test_an_initializer_with_no_assert_states_no_assertion_locus(tmp_path):
-    row = _contract_row(
+    row = _init_row(
         tmp_path,
         "class C:\n    def __init__(self, n):\n        self.n = n\n",
-        "C",
     )
 
     assert not _assertion_loci(row)

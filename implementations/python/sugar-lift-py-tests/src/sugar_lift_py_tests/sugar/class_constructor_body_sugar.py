@@ -177,11 +177,9 @@ class ClassConstructorBodySugar(Sugar):
     # The class this constructor is entered on (``enter``): the value the
     # class statement bound under its evaluation key, which a read of the
     # class's name answered.  Set where the constructor is entered: by the
-    # class call, on its callee
-    # (``ClassDefinitionValue.callable_application_with``), and by an
-    # ``__init__``'s own universe, on the read of the statement's key in the
-    # state the module's one run left
-    # (``tree_enumerate.function_universe_outcome``).  None on the frame's
+    # class's own contract, on the read of the statement's key in the state
+    # the module's one run left (``tree_enumerate.class_universe_outcome``).
+    # None on the frame's
     # own body (``ClassDef.source_visible_constructor_frame``), which is
     # entered on no class and refuses by name.
     class_value: object | None = field(default=None, compare=False)
@@ -191,30 +189,25 @@ class ClassConstructorBodySugar(Sugar):
     # call's positional actuals as ``args`` (Objects/exceptions.c), so the
     # instance the call makes carries them.
     exception_args_coordinate_cid: str | None = field(default=None, compare=False)
-    # The initializer's first positional formal as its ``def`` declares it
-    # (``__init__(this, ...)`` declares ``this``): the frame local the fresh
-    # receiver is, which a zero-argument ``super()`` in the body reads
-    # (``builtin_semantic_callable.zero_argument_super_receiver``).  None when
-    # the initializer has no positional formal, or the body is not a source
-    # ``__init__`` (a dataclass's generated stores, a source ``__new__``).
-    receiver_formal: str | None = field(default=None, compare=False)
     # The class statement whose body defines the function this body runs:
-    # the PEP 3135 ``__class__`` cell a zero-argument ``super()`` in it reads.
-    # The class whose ``__init__`` the call runs -- for an inherited one, the
-    # base that wrote it (``ClassDef.initializer_entry``), never the called
-    # class; the class itself for its own ``__new__``.  None when the body is
-    # no source function's (a dataclass's generated stores have no cell).
+    # the PEP 3135 ``__class__`` cell a zero-argument ``super()`` in it reads:
+    # the class itself for its own ``__new__``.  None when the body is no
+    # source function's (a dataclass's generated stores have no cell, and a
+    # source ``__init__`` is dispatched, never run here).
     cell_class_definition: object | None = field(default=None, compare=False)
-    # The object the class call returns: a read of the receiver after the
-    # initializer's last statement (``nodes._read_where_the_body_ends``),
-    # reduced in the context the initializer's end record left
-    # (``_receiver_where_it_ends``) -- after every store on it, after every
-    # call the one exposure rule lets reach it, by the object's identity and
-    # never by the formal's name.  A face that leaves by a ``return`` reads
-    # the receiver that ``return`` carries (``InitializerReturnSugar``).
-    # None when no initializer binds the receiver by name (a source
-    # ``__new__`` returns its own).
+    # The object the class call returns where a dataclass's generated
+    # ``__init__`` runs here: a read of the receiver after its last store
+    # (``nodes._read_where_the_body_ends``), reduced in the context the
+    # stores' end record left (``_receiver_where_it_ends``).  None for any
+    # other constructor (a source ``__new__`` returns its own; a source
+    # ``__init__`` is dispatched, ``initializer_formals``).
     receiver_at_end: Sugar | None = field(default=None, compare=False)
+    # The source ``__init__`` this call runs, as the dispatched
+    # ``type(obj).__init__(obj, *args, **kw)`` on the fresh instance it
+    # makes (#7757 B3, ``_dispatched_initializer``): each formal of the
+    # constructor frame it forwards, ``((coordinate cid, kind, name), ...)``.
+    # None for every other constructor.
+    initializer_formals: tuple | None = field(default=None, compare=False)
     # The class call's own site, set where the call enters this body on its
     # class value (``ClassDefinitionValue.callable_application_with``): the
     # construction that makes the instance in
@@ -262,6 +255,13 @@ class ClassConstructorBodySugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        if self.initializer_formals is not None:
+            # A source ``__init__``: dispatched on the fresh instance, joined
+            # at prove; its body is never reduced here (#7757 B3).
+            return self.enter(
+                lambda value, _body: self._dispatched_initializer(value, ctx)
+            )
+
         def project_new_return(definition, block):
             """The receiver the authenticated source ``__new__`` returns.
 
@@ -309,9 +309,6 @@ class ClassConstructorBodySugar(Sugar):
             )
             from sugar_lift_py_tests.floor import BlockValue
             from sugar_lift_py_tests.floor import EllipsisValue
-            from sugar_lift_py_tests.sugar.assert_sugar import (
-                halts_where_its_asserts_fail,
-            )
             from sugar_lift_py_tests.sugar.function_universe_sugar import (
                 _ReducedBlock,
                 block_record,
@@ -334,19 +331,15 @@ class ClassConstructorBodySugar(Sugar):
             )
             if isinstance(records, NativeOperationExitCarrierV1):
                 # Each face it completes on is the suite's record
-                # (``block_values``), beneath the asserts it stated: an
-                # ``assert`` over a formal waits on the caller's actual like
-                # any operation on it, and still halts the construction where
-                # it fails (``halts_where_its_asserts_fail``, the one rule a
-                # function's own universe applies to its record: the class
-                # call runs ``__init__`` in place, so it applies it here).
-                def recorded(state):
-                    block = block_record(state)
-                    return halts_where_its_asserts_fail(
-                        block, ExitSet.completed(block)
-                    )
-
-                return records.and_then(recorded)
+                # (``block_values``).  What runs here is a dataclass's
+                # generated stores or a source ``__new__``'s stores, never a
+                # source ``__init__`` (dispatched, ``_dispatched_initializer``),
+                # so no ``assert`` of a body is split here: an ``__init__``'s
+                # asserts are halts of its own contract (#8961), reached
+                # through its edge.
+                return records.and_then(
+                    lambda state: ExitSet.completed(block_record(state))
+                )
             # One unconditional completed face is the whole initializer; only
             # then does an ellipsis-only body mean a stub constructor.
             sole = records.completed_value() is not None
@@ -391,12 +384,8 @@ class ClassConstructorBodySugar(Sugar):
                     # whatever the state ``__new__`` returned carried.
                     from dataclasses import replace
 
-                    return halts_where_its_asserts_fail(
-                        block, ExitSet.completed(replace(returned, **self._made()))
-                    )
-                return halts_where_its_asserts_fail(
-                    block, self._receiver_where_it_ends(record, initializer_ctx)
-                )
+                    return ExitSet.completed(replace(returned, **self._made()))
+                return self._receiver_where_it_ends(record, initializer_ctx)
 
             # ``Cls(x)`` is a call: the initializer's halted faces are the
             # call's halted faces, each completed face its own receiver, under
@@ -597,10 +586,9 @@ class ClassConstructorBodySugar(Sugar):
         (``class_value``) and this body.
 
         The class is the value its statement bound under its evaluation key,
-        read by whoever entered the constructor: a class call's callee
-        (``ClassDefinitionValue.callable_application_with``), or the read of
-        that key an ``__init__``'s own universe makes in the state the
-        module's one run left (``tree_enumerate.function_universe_outcome``).
+        read by whoever entered the constructor: the class's own contract,
+        in the state the module's one run left
+        (``tree_enumerate.class_universe_outcome``).
         The class statement is never reduced here (#7757 item 21): Python
         ran it once, where it stands, and a halt of it is a face of the run
         that ran it, never of a call of the class.  A body entered on no
@@ -624,21 +612,16 @@ class ClassConstructorBodySugar(Sugar):
         return step(self.class_value, self)
 
     def enter_initializer(self, ctx, initialize) -> ExitSet:
-        """THE class call up to its ``__init__``: the one place a receiver is
-        made for an initializer to run on.
+        """The class call up to what it runs here on the receiver it makes: a
+        dataclass's generated stores or a source ``__new__``'s stores (a
+        source ``__init__`` is dispatched instead,
+        ``_dispatched_initializer``).
 
         On the class this constructor was entered on (``enter``), an unrun
-        source ``__new__`` is refused by name, the
-        fresh receiver is seated at the receiver coordinate with the PEP 3135
-        ``__class__`` cell and the initializer's declared receiver formal
-        (``receiver_formal``), and ``initialize(value, ctx)`` runs
-        the initializer in that context.  A class with no initializer
-        completes with the fresh receiver itself.
-
-        ``desugar`` passes the class call's initializer body; an ``__init__``
-        universe (``tree_enumerate.function_universe_outcome``) passes the
-        initializer's own universe, so it runs on the receiver the class call
-        makes.
+        source ``__new__`` is refused by name, the fresh receiver is seated at
+        the receiver coordinate with the PEP 3135 ``__class__`` cell, and
+        ``initialize(value, ctx)`` runs the stores in that context.  A class
+        with nothing to run completes with the fresh receiver itself.
         """
 
         def construct(value):
@@ -661,14 +644,9 @@ class ClassConstructorBodySugar(Sugar):
                 if self.exception_args_coordinate_cid is not None:
                     receiver = self._carrying_exception_args(receiver, ctx)
                 return ExitSet.completed(receiver)
-            # Constructor CallSiteValue formals omit the receiver formal — they
-            # are the class-call arguments. Zero-argument ``super()`` still
-            # needs the PEP 3135 ``__class__`` cell and the bound first
-            # formal, under the name the initializer declares it
-            # (``receiver_formal``), never a spelling (#7757).
-            # ``ClassDefinitionValue`` already carries both when ``__init__``
-            # is invoked as a method; this door is the class call
-            # ``RaisesExc(...)`` used by a factory ``return``.
+            # The stores read the receiver through its coordinate; a source
+            # ``__new__``'s zero-argument ``super()`` reads the PEP 3135
+            # ``__class__`` cell.
             temporal = ctx.temporal.bind_value(
                 self.receiver_coordinate_cid, receiver
             )
@@ -678,9 +656,7 @@ class ClassConstructorBodySugar(Sugar):
 
             # The cell is the class whose body defines the function the call
             # runs (``cell_class_definition``), read as the class value this
-            # call's MRO holds for that statement: for an inherited
-            # ``__init__`` the base that wrote it, so a ``super()`` in it
-            # searches after that base, not after the called class (#7757).
+            # call's MRO holds for that statement (#7757).
             cell = (
                 value.class_value_of_statement(self.cell_class_definition)
                 if isinstance(value, ClassDefinitionValue)
@@ -690,23 +666,119 @@ class ClassConstructorBodySugar(Sugar):
                 temporal = temporal.bind_value(
                     "__class__",
                     cell,
-                    blame=f"{cell.class_name}.__init__",
-                )
-            if self.receiver_formal is not None:
-                # The initializer's own frame local: it shadows whatever an
-                # enclosing frame binds under the same name.
-                temporal = temporal.bind_value(
-                    self.receiver_formal,
-                    receiver,
-                    blame=(
-                        f"{value.class_name}.__init__"
-                        if isinstance(value, ClassDefinitionValue)
-                        else "ClassConstructorBodySugar.receiver"
-                    ),
+                    blame=f"{cell.class_name}.__new__",
                 )
             return initialize(value, ctx.with_temporal(temporal))
 
         return self.enter(lambda value, _body: construct(value))
+
+    def _dispatched_initializer(self, value, ctx) -> ExitSet:
+        """``Cls(*args, **kw)`` over a class whose source ``__init__`` the
+        call runs (#7757 B3): ``type.__call__`` makes a fresh instance of
+        ``value`` (an unrun source ``__new__`` refused by name, as
+        ``enter_initializer`` refuses it) and calls ``type(obj).__init__(obj,
+        *args, **kw)`` on it.
+
+        That call is the one dispatched method call on an instance this
+        construction made (``ObjectValue._dispatched_or_owed``): its
+        coordinate and the dispatched edge over ``python:instance(<class>)``
+        (the fresh ``__dict__`` is empty), forwarding each formal of the
+        constructor frame as the class call bound it -- a positional formal
+        by position, a keyword-only one by keyword.  Prove looks ``__init__``
+        up on the class's order and joins its contract (one MRO lookup, as
+        every dispatched call), so each halt the ``__init__``'s contract
+        states -- its asserts and raises (#8961) -- is a halt of this call,
+        and what it leaves in ``self`` is what the instance holds
+        (``consistency::initialized_instance``).  A frame with a ``*args`` or
+        ``**kwargs`` formal forwards a spread no edge states: the one
+        unanswered call of ``__init__``, owed, its halt kept.
+
+        On each completed face of that call, ``type.__call__`` checks what
+        ``__init__`` returned: under ``<result> is None`` the class call
+        completes with the instance as the call left it
+        (``InitializedInstanceValue``); under its complement it raises
+        CPython's ``TypeError: __init__() should return None``.  Prove
+        decides the guard where the ``__init__``'s contract is joined; where
+        it is not, both faces stand."""
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.ir import eq, not_
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.outcome.exit_set import partition
+        from sugar_lift_py_tests.receiver_dispatch import (
+            module_attribute_names,
+            receiver_after_dispatch,
+        )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        owner = "ClassConstructorBodySugar.__init__"
+        refuse_unrun_source_new(
+            value,
+            new_method=self.constructed_new_method,
+            runs_new=False,
+            site=self.site,
+            owner="ClassConstructorBodySugar.__new__",
+        )
+        receiver = value.fresh_receiver(self.receiver_coordinate_cid, **self._made())
+        temporal = getattr(ctx, "temporal", None)
+        positional: list = []
+        keywords: list = []
+        spread = False
+        for cid, kind, name in self.initializer_formals:
+            actual = None if temporal is None else temporal.value_if_bound(cid)
+            if actual is None:
+                raise SugarNotWritten(
+                    owner=owner,
+                    blame=self.site,
+                    observed=f"the __init__ formal `{name}` the class call did not bind",
+                    requested="the actual the class call bound to each constructor formal",
+                    fix="bind the class call's actuals to its constructor frame first",
+                )
+            if kind in ("positional_only", "positional_or_keyword"):
+                positional.append(actual)
+            elif kind == "keyword_only":
+                keywords.append((name, actual))
+            else:
+                spread = True
+        site = self.site
+        if spread:
+            call = receiver.unanswered_method_call(
+                "__init__", tuple(positional), tuple(keywords), site
+            )
+        else:
+            call = receiver._dispatched_or_owed(
+                "__init__", tuple(positional), tuple(keywords), site
+            )
+        symbol = None
+        definition = getattr(value, "class_definition", None)
+        unit = getattr(site, "unit", None)
+        if (
+            definition is not None
+            and unit is not None
+            and not module_attribute_names(unit)[1]
+        ):
+            # ``type(obj)`` is the class the call made it of unless code may
+            # store its ``__class__`` (a dynamic module).
+            symbol = definition.bridge_source_symbol()
+
+        def initialized(result):
+            after = receiver_after_dispatch(receiver, result)
+            returned = peel_walrus_binds(result)[1]
+            returned_none = eq(
+                returned.to_term(owner=owner),
+                NoneValue().to_term(owner=owner),
+            )
+            made, other = partition(("class_initializer_return", occurrence_key(site)))
+            instance = ExitSet.completed(
+                InitializedInstanceValue(receiver, after, symbol)
+            ).guarded(returned_none, made)
+            raised = ground_exceptional_exit(
+                exception_name="TypeError", site=site, owner=owner
+            ).guarded(not_(returned_none), other)
+            return instance.union(raised)
+
+        return call.and_then(initialized)
 
     def _returned_by_new(self, value, ctx) -> ExitSet:
         """``Cls(*args)`` over a class whose own ``def __new__`` runs and
@@ -894,6 +966,74 @@ class ConstructedInstanceValue(FloorValue):
         return and_(facts)
 
 
+@dataclass(frozen=True)
+class InitializedInstanceValue(FloorValue):
+    """What a class's constructor contract returns on a completed arm where
+    the class call dispatched its source ``__init__`` on the fresh instance
+    it made (``ClassConstructorBodySugar._dispatched_initializer``, #7757
+    B3): ``instance``, that fresh instance; ``after``, the instance as the
+    ``__init__`` call left it (``receiver_dispatch.receiver_after_dispatch``,
+    ``python:after(<call>, "0")``), or None where no dispatched edge names it;
+    ``class_symbol``, the join symbol of the class the call made it of, or
+    None where code may store its ``__class__``.
+
+    The post never states which object it is (each call makes a fresh one)
+    and never reads ``__init__``'s body (``post_formula``)."""
+
+    instance: FloorValue
+    after: FloorValue | None
+    class_symbol: str | None
+
+    def to_term(self, *, owner: str):
+        held = self.after if self.after is not None else self.instance
+        return held.to_term(owner=owner)
+
+    def guarded(self, formula):
+        del formula
+        return self
+
+    def post_formula(self, out):
+        """Over ``python:after(out, "out")``, the instance a caller reads the
+        call's result by:
+
+        - ``python:type_is(<it>, "<class>")`` where the class is decided
+          (``class_symbol``) and a dispatched edge names the instance
+          (``after``), ``python:class_undecided(<it>)`` otherwise: a row
+          stating ``type_is`` with no ``__init__`` edge reads as an instance
+          holding nothing (``consistency::constructed_instance``);
+        - ``<it> == python:after(<__init__ call>, "0")`` where the dispatched
+          edge names the instance after it (``after``): every field a
+          caller reads of the result is the field the ``__init__``'s
+          contract states it leaves in ``self``, joined at prove through
+          that edge (the binder pairs ``"0"`` with the receiver formal,
+          ``consistency::argument_key_aliases``).
+
+        What its ``__dict__`` may hold is never stated here: prove composes
+        it from the ``__init__``'s own contract (``consistency::
+        initialized_instance``), which also leaves the instance undecided
+        wherever that contract does not decide it."""
+        from sugar_lift_py_tests.ir import and_, atomic, eq, str_const
+        from sugar_lift_py_tests.receiver_dispatch import CLASS_UNDECIDED, TYPE_IS
+        from sugar_lift_py_tests.source_call_resolution import (
+            CALL_RESULT_LABEL,
+            object_after_call,
+        )
+
+        constructed = object_after_call(out, CALL_RESULT_LABEL)
+        if self.class_symbol is None or self.after is None:
+            # No dispatched ``__init__`` edge names the instance after it (a
+            # spread forwarded to the unanswered call): what its ``__dict__``
+            # holds is decided nowhere, so its class is never stated alone.
+            facts = [atomic(CLASS_UNDECIDED, [constructed])]
+        else:
+            facts = [atomic(TYPE_IS, [constructed, str_const(self.class_symbol)])]
+        if self.after is not None:
+            facts.append(
+                eq(constructed, self.after.to_term(owner="InitializedInstanceValue"))
+            )
+        return facts[0] if len(facts) == 1 else and_(facts)
+
+
 # The bound variable of a contract's field-read fact: the read's site key
 # (``FloorValue.undecided_attribute``'s ``occurrence_key``).  A name no
 # contract formal or Python identifier spells.
@@ -981,6 +1121,12 @@ class ConstructedInstanceSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        # An instance a dispatched ``__init__`` left states itself
+        # (``InitializedInstanceValue``, #7757 B3).
         return self.constructor.desugar(ctx).and_then(
-            lambda value: ExitSet.completed(ConstructedInstanceValue(value))
+            lambda value: ExitSet.completed(
+                value
+                if isinstance(value, InitializedInstanceValue)
+                else ConstructedInstanceValue(value)
+            )
         )
