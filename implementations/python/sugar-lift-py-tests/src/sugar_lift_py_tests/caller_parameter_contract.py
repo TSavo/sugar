@@ -416,7 +416,9 @@ def production_native_operation_operators() -> frozenset[str]:
     * ``COMPARE_METHODS`` values (``operator=method`` formal ordering path)
     * contracted store operators whose producers pin the mint shape for this
       table even when the live store path still carries dual-face halted
-      instrumentation (``setitem`` window 10876, ``setattr_named`` window 17534)
+      instrumentation (``setattr_named`` window 17534).  An item store or
+      delete mints no carrier: it is the one item mutation
+      (``store_effect_sugar.item_mutation``, #7757 step 7).
 
     The projector table's key set must equal this set exactly, both directions.
     """
@@ -427,9 +429,7 @@ def production_native_operation_operators() -> frozenset[str]:
     # Keep them in the production set so a missing projector cannot merge green.
     # Equality tooth: this frozenset union MUST equal
     # frozenset(_NATIVE_OPERATION_PROJECTORS) both directions.
-    contracted_store_operators = frozenset(
-        {"setitem", "setattr_named", "delitem", "delattr_named"}
-    )
+    contracted_store_operators = frozenset({"setattr_named", "delattr_named"})
     # AugAssign production mint set — from BinaryOperator class attributes,
     # NEVER from the projector table (circular equality tooth).
     from sugar_source_tree.operators import production_augassign_inplace_operators
@@ -442,15 +442,6 @@ def production_native_operation_operators() -> frozenset[str]:
         | contracted_store_operators
         | contracted_inplace_operators
     )
-
-
-def _project_delitem(receiver, index, site, ctx):
-    """Python protocol ``__delitem__(self, key)`` — discharge order (receiver, index).
-
-    Ordered operands and formal coordinates match this signature exactly.
-    Name deletion (``del name``) is out of scope for this projector.
-    """
-    return receiver.delitem(index, site, ctx)
 
 
 def _project_delattr_named(receiver, name, site, ctx):
@@ -582,13 +573,13 @@ _INPLACE_NATIVE_OPERATION_PROJECTORS = {
 # *discharge* order these parameters declare.
 #
 # Discharge order for stores is not source evaluation order.  Python evaluates
-# ``receiver[index] = value`` as RHS, then receiver, then index — but the
-# resolved operation is called as ``receiver.setitem(index, value)``.  Those
-# two orders are distinct; producers (windows 10876 / 17534) own the source
-# chain, and these projectors own the call signature.
+# ``receiver.name = value`` as RHS, then receiver — but the resolved operation
+# is called as ``receiver.setattr(name, value)``.  Those two orders are
+# distinct; the producer (window 17534) owns the source chain, and these
+# projectors own the call signature.  An item store or delete mints no
+# carrier (``store_effect_sugar.item_mutation``, #7757 step 7).
 #
 # Delete protocol (store-family twin):
-#   delitem        → ``receiver.delitem(index, site, ctx)``   (__delitem__)
 #   delattr_named  → ``receiver.delattr(name.value, site, ctx)`` (__delattr__)
 # Name deletion (``del name`` / DeleteNameSugar) is out of scope here.
 #
@@ -737,19 +728,14 @@ _NATIVE_OPERATION_PROJECTORS = {
     "equals": lambda left, right, site, ctx: left.equals(right, site, ctx),
     **ORDERING_FLOOR_OPERATIONS,
     "contains": lambda container, item, site, ctx: container.contains(item, site),
-    # Ternary store protocol (receiver, index|name, value + site).
-    # Discharge order: receiver, index, value — never RHS-first.
-    "setitem": lambda receiver, index, value, site, ctx: receiver.setitem(
-        index, value, site, ctx
-    ),
     # Attribute store: name arrives as StringValue; unwrap with .value.
     # Window 17534 mints operator="setattr_named" with operands
-    # (receiver, StringValue(name), value).
+    # (receiver, StringValue(name), value).  Discharge order: receiver,
+    # name, value — never RHS-first.
     "setattr_named": lambda receiver, name, value, site, ctx: receiver.setattr(
         name.value, value, site, ctx
     ),
-    # Binary delete protocol — explicit projectors (Python protocol signatures).
-    "delitem": _project_delitem,
+    # Binary delete protocol — explicit projector (Python protocol signature).
     "delattr_named": _project_delattr_named,
 }
 

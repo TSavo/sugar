@@ -27612,7 +27612,7 @@ def _receiver_uses(definition):
     # (``for n[k] in xs``), each its own single-target store statement
     # (``_store_leaves``, ``Assign._store_target_statement``) through the
     # one container-mutation door, so the same dispatched ``__setitem__``
-    # (``PathContainerCallSugar._dispatched_item_operation``).  A delete is
+    # (``store_effect_sugar.item_mutation``).  A delete is
     # a whole target of its statement.
     item_targets = {
         id(leaf.value)

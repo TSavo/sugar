@@ -108,27 +108,9 @@ class AttributeDeleteEffectSugar(Sugar):
 class SubscriptDeleteEffectSugar(Sugar):
     """`del receiver[index]` — evaluate once, then project the delete face.
 
-    Projection arms (mirrors :class:`SubscriptStoreEffectSugar`):
-
-    0. **A receiver whose type binds no ``__delitem__``**
-       (``receiver_lacks_item_method``) → its ``TypeError``, whatever the
-       key is: a formal key is not waited on.
-    1. **Any formal operand** → ``NativeOperationExitCarrierV1`` demand
-       ``delitem`` with operands and coordinates in *discharge* order
-       ``(receiver, index)``.  Explicit projector
-       ``_project_delitem(receiver, index, site, ctx)`` calls
-       ``receiver.delitem(index, site, ctx)`` (Python ``__delitem__``).  Helper
-       alone stays undischarged; an ordinary source caller supplies actuals.
-    2. **Decided runtime type** → ``receiver.delitem(index, site, ctx)`` projecting
-       its completed or halted faces through the delete path (never the
-       load path).  Earlier bindings survive later delete
-       halts via reducer pre-effect state on the carrier.
-    3. **Undecided non-formal** → two faces (#7585), as for ``r[k] = v``:
-       the delete completes only under
-       ``python:delitem.completes(python:delitem(<site occurrence>))`` --
-       leaving the receiver's contents unknown -- and halts with an
-       ``UndeterminedRaiseEffect`` (owner ``UndecidedDelitem``) under the
-       complement.
+    The delete itself is the one item mutation
+    (``store_effect_sugar.item_mutation``), the same one ``r[k] = v`` and
+    the container-mutation door's ``__delitem__`` take.
 
     Out of scope: Name deletion (``del name`` / DeleteNameSugar).
     """
@@ -152,67 +134,13 @@ class SubscriptDeleteEffectSugar(Sugar):
         )
 
     def _delete(self, receiver, index, ctx) -> ExitSet:
-        return self.project_delitem(receiver, index, self.site, ctx)
+        from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
 
-    @staticmethod
-    def project_delitem(receiver, index, site, ctx) -> ExitSet:
-        """Producer-owned subscript **delete** projection (one door): the
-        ordinary statement and the one mutation door's ``__delitem__`` on a
-        value the container law does not cite (``PathContainerCallSugar``)."""
-        from sugar_lift_py_tests.floor.floor_value import receiver_lacks_item_method
-
-        coordinates = tuple(
-            getattr(operand, "formal_coordinate", None) for operand in (receiver, index)
-        )
-        if receiver_lacks_item_method(receiver, "__delitem__"):
-            # The receiver's type binds no ``__delitem__``: the delete raises
-            # ``TypeError`` whatever the key is, so it waits on none
-            # (``ObjectValue.delitem``).
-            return receiver.delitem(index, site, ctx)
-        if any(coordinate is not None for coordinate in coordinates):
-            # Undischarged demand awaiting caller actuals — not a refusal.
-            return SubscriptDeleteEffectSugar.mint_delitem_carrier(
-                site=site,
-                receiver=receiver,
-                index=index,
-            )
-        if not receiver.runtime_type_is_decided():
-            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                undecided_item_mutation_faces,
-            )
-
-            return undecided_item_mutation_faces(
-                site,
-                noun="delitem",
-                method="__delitem__",
-                owner="UndecidedDelitem",
-            )
-        return receiver.delitem(index, site, ctx)
-
-    @staticmethod
-    def mint_delitem_carrier(*, site, receiver, index):
-        """Producer-side contract for n-ary ``delitem`` discharge.
-
-        Operand order matches the projector table:
-        ``receiver.delitem(index, site, ctx)``.  Discharge order is
-        ``(receiver, index)``.  Coordinates are exactly one slot per ordered
-        operand; lengths and order are load-bearing (#6613 ``__post_init__``).
-        """
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-
-        coordinates = tuple(
-            getattr(operand, "formal_coordinate", None) for operand in (receiver, index)
-        )
-        if not any(coordinate is not None for coordinate in coordinates):
-            raise ValueError(
-                "delitem carrier requires at least one formal_coordinate among "
-                "receiver and index"
-            )
-        return NativeOperationExitCarrierV1.mint(
-            site=site,
-            operator="delitem",
-            operands=(receiver, index),
-            coordinates=coordinates,
+        return item_mutation(
+            "__delitem__",
+            receiver,
+            (index,),
+            self.site,
+            ctx,
+            unit=getattr(self.site, "unit", None),
         )
