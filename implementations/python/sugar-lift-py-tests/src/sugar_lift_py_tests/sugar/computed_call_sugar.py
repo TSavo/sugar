@@ -183,15 +183,10 @@ class ComputedCallSugar(ConstructedTermSugar):
         )
 
     def _call(self, callee, positional: tuple, kw_values: tuple, ctx) -> ExitSet:
-        from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.sugar.call_site_sugar import read_captured_values
 
         owner = str(self.site)
-        keyword_terms = [
-            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
-            for name, value in kw_values
-        ]
         # What the lambda reads from its enclosing scope is an input of this
         # call as its actuals are (``CallSiteSugar._collect_kwargs``).
         captured_values = read_captured_values(self.captured, ctx, site=self.site)
@@ -199,14 +194,7 @@ class ComputedCallSugar(ConstructedTermSugar):
             ctor("py.closure", [str_const(name), value.to_term(owner=owner)])
             for name, _cid, value in captured_values
         ]
-        term = ctor(
-            "py.call",
-            [callee.to_term(owner=owner)]
-            + [value.to_term(owner=owner) for value in positional]
-            + keyword_terms
-            + closure_terms,
-            symbol_kind="coordinate",
-        )
+        term = value_call_term(callee, positional, kw_values, owner, closure_terms)
         # A lambda called where it is written, ``(lambda x: ...)(y)``, or
         # through the name an assignment bound it to, is the call of the
         # lambda's value like any other (``apply_callee``,
@@ -224,22 +212,9 @@ class ComputedCallSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor.call_site_value import bind_after_call
 
         def unanswered():
-            callsite = CallSiteValue(
-                target_name="py.call",
-                arg_values=(callee, *positional, *(value for _, value in kw_values)),
-                parameters=(),
-                term=term,
-                body=None,  # the dig is CUED, not inlined here
-                site=self.site,
+            return unanswered_value_call(
+                callee, positional, kw_values, self.site, term=term
             )
-            from sugar_lift_py_tests.ir import _Var
-            from sugar_lift_py_tests.source_call_resolution import (
-                UnknownCalleeCallV1,
-            )
-
-            callee_term = callee.to_term(owner=owner)
-            name = callee_term.name if type(callee_term) is _Var else "py.call"
-            return UnknownCalleeCallV1(name).faces(callsite, self.site)
 
         return bind_after_call(
             apply_callee(
@@ -256,6 +231,53 @@ class ComputedCallSugar(ConstructedTermSugar):
             ),
             self.site,
         )
+
+
+def value_call_term(callee, positional, kw_values, owner, extra=()):
+    """``py.call(<callee>, <positional>..., py.kwarg(...)..., <extra>...)``:
+    the coordinate of a call of a value nothing here resolved
+    (``unanswered_value_call``), its callee the value's own term."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor(
+        "py.call",
+        [callee.to_term(owner=owner)]
+        + [value.to_term(owner=owner) for value in positional]
+        + [
+            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
+            for name, value in kw_values
+        ]
+        + list(extra),
+        symbol_kind="coordinate",
+    )
+
+
+def unanswered_value_call(callee, positional, kw_values, site, *, term=None):
+    """``callee(*positional, **kw_values)`` for a called value nothing here
+    resolved (``apply_callee``'s ``unanswered``): the one unanswered call of
+    a value, two-faced and owed (``UnknownCalleeCallV1``), over ``term``
+    (``value_call_term`` when None), named by the callee's variable where its
+    term is one, else ``py.call``.  A call written ``f(x)`` over such a value
+    (``ComputedCallSugar``) and a decorator applied to its function
+    (``DecoratorStepV1.applied``) are this one call."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.ir import _Var
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+    owner = str(site)
+    if term is None:
+        term = value_call_term(callee, positional, kw_values, owner)
+    callsite = CallSiteValue(
+        target_name="py.call",
+        arg_values=(callee, *positional, *(value for _, value in kw_values)),
+        parameters=(),
+        term=term,
+        body=None,  # the dig is CUED, not inlined here
+        site=site,
+    )
+    callee_term = callee.to_term(owner=owner)
+    name = callee_term.name if type(callee_term) is _Var else "py.call"
+    return UnknownCalleeCallV1(name).faces(callsite, site)
 
 
 def apply_callee(
