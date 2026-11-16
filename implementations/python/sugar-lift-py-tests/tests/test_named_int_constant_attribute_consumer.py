@@ -43,7 +43,13 @@ class _Site:
         return self._seal
 
 
-def test_named_int_constant_name_uses_object_field_owner() -> None:
+def test_named_int_constant_name_with_no_class_is_never_the_field_outright() -> None:
+    # No class statement: no class term guards the read by prove's
+    # ``python:plain_read``, so the recorded field is never read outright
+    # (a ``__getattribute__`` or a data descriptor may answer it): the read
+    # keeps a halting face (#7757).
+    from sugar_lift_py_tests.outcome import Completed
+
     receiver = ObjectValue(
         "re._constants._NamedIntConstant",
         (ObjectField("name", StringValue("SRE_FLAG_ASCII")),),
@@ -52,7 +58,12 @@ def test_named_int_constant_name_uses_object_field_owner() -> None:
     first = AttributeSugar(_ReceiverSugar(receiver), "name", _Site("first"))
     outcome = first.desugar()
     assert type(outcome) is ExitSet
-    assert outcome.completed_value() == StringValue("SRE_FLAG_ASCII")
+    assert outcome.halts(), outcome
+    assert not [
+        arm
+        for arm in outcome.exits
+        if isinstance(arm, Completed) and arm.value == StringValue("SRE_FLAG_ASCII")
+    ], outcome
     second = AttributeSugar(_ReceiverSugar(receiver), "name", _Site("second"))
     assert first.to_term(owner="test") != second.to_term(owner="test")
 
