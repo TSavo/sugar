@@ -265,7 +265,7 @@ def _assert_two_faced_read(exits, owner: str) -> None:
     assert any(item.site is not None for item in owed_calls(exits))
 
 
-def _read(receiver, index, site):
+def _subscript_read(receiver, index, site):
     from sugar_lift_py_tests.operations.subscript_operation import (
         discharge_subscript,
     )
@@ -324,14 +324,14 @@ def test_a_decided_list_and_key_complete_the_read() -> None:
     caller's actuals used to be projected onto."""
     site, _, _ = _synthetic_formals()
 
-    exits = _read(fresh(ListValue, (TermValue(7),)), TermValue(0), site)
+    exits = _subscript_read(fresh(ListValue, (TermValue(7),)), TermValue(0), site)
 
     assert exits.exits == (Completed(exits.exits[0].guard, TermValue(7)),)
 
 
 def _index_error_read():
     site, _, _ = _synthetic_formals()
-    return site, _read(fresh(ListValue, (TermValue(7),)), TermValue(1), site)
+    return site, _subscript_read(fresh(ListValue, (TermValue(7),)), TermValue(1), site)
 
 
 def test_a_decided_out_of_range_key_names_an_exception_at_the_subscript() -> None:
@@ -383,7 +383,7 @@ def test_lying_boundary_exception_type_leaves_operation_halted_and_unconsumed() 
 def test_undecided_receiver_is_the_two_faced_unanswered_read() -> None:
     site, _, _ = _synthetic_formals()
 
-    exits = _read(SymbolicValue(make_var("actual_obj")), TermValue(0), site)
+    exits = _subscript_read(SymbolicValue(make_var("actual_obj")), TermValue(0), site)
 
     _assert_two_faced_read(exits, "SymbolicValue.subscript")
 
@@ -391,7 +391,7 @@ def test_undecided_receiver_is_the_two_faced_unanswered_read() -> None:
 def test_undecided_key_on_a_decided_list_is_the_lists_two_faced_read() -> None:
     site, _, _ = _synthetic_formals()
 
-    exits = _read(
+    exits = _subscript_read(
         fresh(ListValue, (TermValue(7),)), SymbolicValue(make_var("actual_key")), site
     )
 
@@ -474,7 +474,7 @@ def test_the_one_subscript_door_asks_the_operation_edge() -> None:
 
     site, _, _ = _synthetic_formals()
 
-    exits = _read(_OperationEdgeOnly(), TermValue(0), site)
+    exits = _subscript_read(_OperationEdgeOnly(), TermValue(0), site)
 
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
@@ -493,7 +493,7 @@ def test_a_formal_index_on_a_known_list_is_the_lists_own_read() -> None:
     carrier, never an element chosen for it."""
     site, _, key_coordinate = _synthetic_formals()
 
-    exits = _read(
+    exits = _subscript_read(
         fresh(ListValue, (TermValue(1), TermValue(2))),
         SymbolicValue(make_var("key"), key_coordinate),
         site,
@@ -509,7 +509,9 @@ def test_a_formal_index_through_a_symbolic_receiver_is_the_same_read() -> None:
     index = SymbolicValue(make_var("key"), key_coordinate)
 
     _assert_two_faced_read(receiver.subscript(index, site), "SymbolicValue.subscript")
-    _assert_two_faced_read(_read(receiver, index, site), "SymbolicValue.subscript")
+    _assert_two_faced_read(
+        _subscript_read(receiver, index, site), "SymbolicValue.subscript"
+    )
 
 
 def test_a_source_formal_index_is_the_lists_own_read() -> None:

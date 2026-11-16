@@ -67,11 +67,16 @@ def test_a_nonlocal_rebinding_is_stated_over_the_cell_after_the_call() -> None:
     posts = _posts(_REBOUND, "bump")
     assert posts, posts
     # Every completed arm states what it left in the cell: the in-place
-    # result over the cell's input, the one undecided binary form.
+    # result over the cell's input, the one undecided binary form.  ``n += 1``
+    # over an undecided ``n`` is the ``+`` form, keyed per evaluation
+    # (``python:binary_result("+", cell:n, 1, <key>)``; #9017 decision 5:
+    # no ``+=`` spelling is kept beside it).
     for post in posts:
         assert "python:after" in post, post
         assert "cell:n" in post, post
-        assert "+=" in post, post
+        assert "python:binary_result" in post, post
+        assert "value='+'" in post, post
+        assert "+=" not in post, post
 
 
 _APPENDED = """\
@@ -225,13 +230,16 @@ def test_count():
 
 def test_a_rebinding_in_a_decided_loop_is_stated() -> None:
     # A loop over a display is unrolled: its result is decided, and the
-    # cell is stated as each item's in-place result left it.
+    # cell is stated as each item's in-place result left it: one ``+`` form
+    # per item, each keyed by its own item's evaluation (#9017 decision 5).
     posts = _posts(_UNROLLED_LOOP, "bump")
     assert posts, posts
     for post in posts:
         assert "python:after" in post, post
         assert "cell:n" in post, post
-        assert "+=" in post, post
+        assert post.count("python:binary_result") == 2, post
+        assert "value='+'" in post, post
+        assert "+=" not in post, post
 
 
 _GLOBAL = """\
