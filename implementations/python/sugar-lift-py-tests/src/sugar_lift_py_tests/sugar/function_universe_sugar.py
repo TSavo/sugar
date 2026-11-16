@@ -571,13 +571,25 @@ def header_applied(statement, field: str, ctx):
     ``outcome`` is the header evaluated once, in ``ctx``.  Where no completed
     face of it carries a write (a walrus bind, a callee store), ``headed`` is
     None and the statement runs as it is, from ``outcome``.  Otherwise
-    ``headed`` is the statement: each halted face of the header halted at
-    the statement's head (``halt_record(ctx)``), and on each completed face
-    the rest of the statement runs (``header_ran``).  Each run keeps its
-    face's guard, faces and ``owed`` (``ExitSet.and_then``)."""
+    ``headed`` is the statement: each halted face of the header that offers
+    no record halted at the statement's head (``halt_record(ctx)``), and on
+    each completed face the rest of the statement runs (``header_ran``).
+    Each run keeps its face's guard, faces and ``owed``
+    (``ExitSet.and_then``).
+
+    A header that holds a walrus (``holds_a_walrus``) may have bound it
+    before a later part of it halted -- a comprehension's ``next`` on a
+    later member halts after an earlier member's walrus bound -- so its
+    record-less halt did not halt at the statement's head: it is left as it
+    is, never given the head's record, which would drop the bind, and the
+    block reducer refuses it by name (``_require_recorded_halts``), as
+    ``halts_at_operand_head`` leaves an operand's.  A completed face's
+    writes (a call's record, a walrus's last write) say nothing of where a
+    halt beside it left."""
     from sugar_lift_py_tests.floor.named_expression_value import (
         peel_walrus_binds,
     )
+    from sugar_lift_py_tests.sugar.named_expr_sugar import holds_a_walrus
 
     header = getattr(statement, field)
     outcome = header.desugar(ctx)
@@ -586,10 +598,13 @@ def header_applied(statement, field: str, ctx):
         for exit_ in outcome.exits
     ):
         return None, outcome
+    recorded = (
+        outcome
+        if holds_a_walrus(header)
+        else halts_recorded(outcome, halt_record(ctx))
+    )
     return (
-        halts_recorded(outcome, halt_record(ctx)).and_then(
-            lambda value: header_ran(statement, field, value, ctx)
-        ),
+        recorded.and_then(lambda value: header_ran(statement, field, value, ctx)),
         outcome,
     )
 
