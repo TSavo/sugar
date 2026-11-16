@@ -226,14 +226,23 @@ class UniverseValue(FloorValue):
 # Terms that name a state no input determines: an object after an operation
 # nothing decided, keyed on that operation's occurrence alone
 # (``builtin_container_call_sugar._unknown_after``, ``_opaque_pair``,
-# ``NativeOperationExitCarrierV1._unanswered_exits``).  A contract instantiated
-# at two calls would state one such term for both, so it never states one.
+# ``NativeOperationExitCarrierV1._unanswered_exits``), and what a comprehension
+# over an iterable whose members are not in hand made, its kind over its
+# occurrence (``ComprehensionSugar._own_coordinate``), with the last write a
+# walrus in it carries out (``ComprehensionSugar._symbolic_writes``).  A
+# contract instantiated at two calls would state one such term for both, so it
+# never states one.
 UNDETERMINED_STATES = frozenset(
     {
         "python:receiver_after_call",
         "python:builtin_method",
         "python:native_operation_result",
         "python:unanswered_native_operation",
+        "py.listcomp",
+        "py.setcomp",
+        "py.dictcomp",
+        "py.generatorexp",
+        "python:comprehension.last_write",
     }
 )
 

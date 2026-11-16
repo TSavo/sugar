@@ -2,10 +2,10 @@
 free term (#7757, step 6).
 
 Over an iterable whose members are not in hand a comprehension is evaluated
-once, over its symbolic member (``ComprehensionSugar._symbolic_member_ctx``):
-the variable its fold's lambda binds.  On the arms that complete the fold
-binds it, and the fold's read owes (#8916).  An element's or condition's
-halt arm never reaches the fold: its guard reads the member free.  Where the
+once, over its symbolic member (``ComprehensionSugar._symbolic_member``).  On
+the arms that complete, the comprehension's own read owes (#8916).  An
+element's or condition's halt arm never reaches it: its guard reads the
+member free.  Where the
 iterable's ``iter`` and ``next`` are decided (a ``range`` past the unroll
 budget) and the halt's own operation is decided (a ground ``1 // 0`` under a
 test of the member), nothing else on that arm owed, and a claim about the

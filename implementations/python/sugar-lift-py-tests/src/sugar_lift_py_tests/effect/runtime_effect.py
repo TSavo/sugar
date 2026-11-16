@@ -178,18 +178,9 @@ def is_lift_time_decidable(term: Term) -> bool:
         # value), an undecided builtin method or native operation -- is keyed
         # on its operation's occurrence alone: its ground occurrence string
         # names the operation, not the value, which exists only once Python
-        # runs it (#7757).
+        # runs it (#7757).  So is a comprehension's own coordinate, an
+        # iteration product whose members are not decidable at lift time.
         if current.name in UNDETERMINED_STATES:
-            decisions[identity] = False
-            continue
-        # Comprehension / generator folds are iteration products; members are
-        # not decidable at lift time even when the iterable coordinate is a var.
-        if current.name in (
-            "py.listcomp",
-            "py.setcomp",
-            "py.dictcomp",
-            "py.genexp",
-        ):
             decisions[identity] = False
             continue
         if not finishing:

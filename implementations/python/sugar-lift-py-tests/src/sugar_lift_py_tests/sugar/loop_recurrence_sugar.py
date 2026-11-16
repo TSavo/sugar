@@ -152,20 +152,20 @@ def holds_recurrence_value(value) -> bool:
 
     A comprehension's symbolic fold is the same recurrence over the same
     iterator path (``iterator_operation.iterated``, ``stepped``): a
-    ``ComprehensionValue`` with no finite members holds
-    ``py.listcomp(<iterable>, <member lambda>, ...)`` (or its set, dict or
-    generator kind, ``ComprehensionSugar._fold_term``), a constructor prove
-    does not interpret, so the list, set or dict it accumulates (and what a
-    generator yields) is a value the solver chooses.  One whose owner
+    ``ComprehensionValue`` with no finite members holds the comprehension's
+    own coordinate, ``py.listcomp(<occurrence>)`` (or its set, dict or
+    generator kind, ``ComprehensionSugar._own_coordinate``), a constructor
+    prove does not interpret, so the list, set or dict it accumulates (and
+    what a generator yields) is a value the solver chooses.  One whose owner
     projected every member (``finite_elements``) is decided.
 
     So is the fold's symbolic member (``SymbolicValue.recurrence_member``,
-    bound by ``ComprehensionSugar._symbolic_member_ctx``): the variable the
-    fold's lambda binds, and each leaf's projection of it.  Inside the fold
-    the lambda binds it; on an element's or condition's halt arm, which never
-    reaches the fold, the halt's guard reads it free, so a claim about that
-    halt (an ``except`` around the comprehension) would be decided by the
-    solver choosing the member.  A finite member is the member's own value,
+    bound by ``ComprehensionSugar._symbolic_member``): the member ``next``
+    yielded, and each leaf's projection of it.  Nothing binds it, so the
+    guard of every arm that reads it -- an element's or condition's halt,
+    the target unpack's halt -- reads it free, and a claim about that halt
+    (an ``except`` around the comprehension) would be decided by the solver
+    choosing the member.  A finite member is the member's own value,
     never marked.  The fold's final member, what a lambda made in the
     comprehension reads after it (``python:comprehension.final_member``,
     ``ComprehensionSugar._symbolic_final_ctx``), is marked the same way: no

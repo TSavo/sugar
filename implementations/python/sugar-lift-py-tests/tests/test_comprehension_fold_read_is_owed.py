@@ -3,8 +3,9 @@ free term (#7757, step 6).
 
 A comprehension over an iterable whose members are not in hand stays its
 symbolic fold (``ComprehensionSugar._complete``): a ``ComprehensionValue``
-holding ``py.listcomp(<iterable>, <member lambda>, ...)`` (or its set, dict
-or generator kind).  Prove does not interpret that constructor, so what the
+holding its own coordinate, ``py.listcomp(<occurrence>)`` (or its set, dict
+or generator kind, ``ComprehensionSugar._own_coordinate``).  Prove does not
+interpret that constructor, so what the
 comprehension accumulates is a value the solver chooses.  Where the
 iterable's ``iter`` and ``next`` are decided (a ``range`` object, a decided
 builtin container) nothing else on the path owed, and a claim over the fold

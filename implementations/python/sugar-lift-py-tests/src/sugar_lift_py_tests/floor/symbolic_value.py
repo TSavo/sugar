@@ -45,9 +45,9 @@ class SymbolicValue(FloorValue):
     term: Term
     formal_coordinate: object | None = None
     # A comprehension's symbolic member, as the comprehension binds it before
-    # any read (``ComprehensionSugar._symbolic_member_ctx``): the variable its
-    # fold's lambda binds, and each leaf's projection of it.  Outside the
-    # fold nothing binds it and no input decides it, so a read of it owes the
+    # any read (``ComprehensionSugar._symbolic_member``): the member ``next``
+    # yielded, and each leaf's projection of it.  Nothing binds it and no
+    # input decides it, so a read of it owes the
     # undecided member (``loop_recurrence_sugar.holds_recurrence_value``,
     # #7757).  So does its final member, what a lambda made in the
     # comprehension reads after it (``ComprehensionSugar._symbolic_final_ctx``,
