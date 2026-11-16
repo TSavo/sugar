@@ -97,22 +97,124 @@ def in_hand_iterable(iterable):
     return TupleValue(tuple(TermValue(item) for item in items))
 
 
-def within_unroll_budget(iterable) -> bool:
-    """Whether a loop or comprehension over ``iterable`` may run item by
-    item: no more members than the unroll budget, where the members are in
-    hand (``builtin_container_method.finite_members``, or an iterator's or a
-    projected comprehension's, ``comprehension_sugar._finite_members``).
-    One whose count is not in hand runs item by item until a member past
-    the budget, which ``LoopRecurrenceSugar`` refuses by name."""
+def in_hand_members(iterable):
+    """The members a loop (``LoopRecurrenceSugar``) or a comprehension
+    (``ComprehensionSugar``) over ``iterable`` runs item by item, in the
+    order iterating it yields them, or ``None``: the one gate of the one
+    item runner (``advance_in_hand``, #7757 new 6).
+
+    In hand is where the reduction holds every member in iteration order,
+    within the one unroll budget: a list or tuple whose contents are current,
+    a projected list comprehension (``comprehension_sugar._finite_members``), the
+    ints a ground ``range(...)`` yields (``in_hand_iterable``), or a dict
+    whose contents are current and whose keys are decided distinct (its
+    insertion order, as ``DictValue.iter_with`` answers).  Iterating any of
+    them is decided never to raise (``iteration_total``), so no ``iter`` is
+    submitted, as ``iterated`` submits none.
+
+    Anything else is not in hand and runs as the recurrence or the symbolic
+    fold, over the one iterator path (``iterated``, ``stepped``): a
+    symbolic value, a call's result, a generator, a container whose contents
+    are not current, an instance, a ``str``/``bytes``/``set`` (whose order
+    the floor does not hold), a dict whose keys are not decided distinct,
+    and an iterator object (iterating it consumes it, and the reduction does
+    not advance the object every other reader holds)."""
     from sugar_source_tree.nodes import LOOP_UNROLL_BUDGET
 
-    from sugar_lift_py_tests.floor.builtin_container_method import finite_members
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+    from sugar_lift_py_tests.floor.iterator_value import (
+        ListIteratorValue,
+        TupleIteratorValue,
+    )
+    from sugar_lift_py_tests.floor.membership import decided_distinct
+    from sugar_lift_py_tests.floor.object_identity import contents_current
     from sugar_lift_py_tests.sugar.comprehension_sugar import _finite_members
 
-    members = finite_members(iterable)
-    if members is None:
-        members = _finite_members(iterable)
-    return members is None or len(members) <= LOOP_UNROLL_BUDGET
+    from sugar_lift_py_tests.floor.comprehension_value import (
+        ComprehensionValue,
+        _is_set_coordinate,
+    )
+
+    iterable = in_hand_iterable(iterable)
+    if isinstance(iterable, (ListIteratorValue, TupleIteratorValue)):
+        return None
+    if isinstance(iterable, ComprehensionValue) and _is_set_coordinate(
+        iterable.term
+    ):
+        # A set comprehension's members are held in the order they were
+        # inserted, not the order iterating the set yields (its hash
+        # table's, which the floor does not decide), as for a set display.
+        return None
+    members = _finite_members(iterable)
+    if members is None and type(iterable) is DictValue and contents_current(iterable):
+        keys = tuple(key for key, _value in iterable.entries)
+        if decided_distinct(keys):
+            members = keys
+    if members is None or len(members) > LOOP_UNROLL_BUDGET:
+        return None
+    return tuple(members)
+
+
+def in_hand_iterator(members):
+    """The iterator the one item runner steps over ``members``
+    (``in_hand_members``), from its first member."""
+    from sugar_lift_py_tests.floor.iterator_value import TupleIteratorValue
+
+    return TupleIteratorValue(tuple(members), index=0)
+
+
+def advance_in_hand(
+    iterator, ctx, *, index, owner: str, site, item, exhausted, left=None, record=None
+):
+    """Item ``index`` of an iteration run in hand: the one item runner a
+    loop and a comprehension share (#7757 new 6).
+
+    The item's ``next`` (``NextOperation``) is submitted to ``iterator``
+    (``in_hand_iterator``, or what the previous item's ``next`` advanced it
+    to) and read arm by arm.  Its authenticated ``StopIteration`` is the
+    iteration's own end: it is consumed and the iteration leaves as
+    ``exhausted()``, beneath its guard and faces.  Any other halt leaves as
+    ``left(halt)`` (as itself when none is handed).  Its value runs the item:
+    ``item(value, advanced)``, where ``advanced`` is the iterator the next
+    item steps.  ``record`` is the record a statement's halt carries
+    (``halts_recorded``); an expression's offers none.  A ``next`` that is
+    neither one value nor a named exception is refused: an in-hand iterator
+    always answers one or the other."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.floor.iterator_value import NextResult
+    from sugar_lift_py_tests.operations.next_operation import NextOperation
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+    from sugar_lift_py_tests.sugar.function_universe_sugar import halts_recorded
+    from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
+        _is_authenticated_stop_iteration,
+    )
+
+    outcome = _require_exit_set(
+        NextOperation(owner=owner, blame=site).submit(iterator, ctx),
+        owner=f"{owner}.next",
+    )
+    if record is not None:
+        outcome = halts_recorded(outcome, record)
+    if outcome.exits and outcome.halts() == outcome.exits:
+        effect = outcome.exits[0].effect
+        if (
+            len(outcome.exits) == 1
+            and isinstance(effect, RaiseEffect)
+            and _is_authenticated_stop_iteration(effect)
+        ):
+            return outcome.and_then(
+                ExitSet.completed, consume=lambda _stop: exhausted()
+            )
+        if left is None:
+            return outcome
+        return outcome.and_then(ExitSet.completed, consume=left)
+    next_result = outcome.completed_value()
+    # A NextResult owing something has no linear place for the debt: it is
+    # refused with every other shape, never carried on without it.
+    if not isinstance(next_result, NextResult) or outcome.owed_items():
+        raise TypeError("NextOperation must produce NextResult or a named exception")
+    return item(next_result.value, next_result.advanced)
 
 
 # -- the one iterator path of an iteration the reduction does not step -------

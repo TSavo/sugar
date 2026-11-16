@@ -66,7 +66,7 @@ class ComprehensionGeneratorSugar:
     very ambiguity this field exists to remove.
 
     It is the CONSUMER-level answer, and this sugar reads it as a per-slot one.
-    That is sound in exactly this domain and nowhere else: `_finite_map`
+    That is sound in exactly this domain and nowhere else: `_run_in_hand`
     consults it only when `target.coordinates` is set, which
     `_comprehension_target` produces only for a Tuple/List of plain Names, and
     such a site always owns a binding leaf -- so an enrolled comprehension
@@ -313,21 +313,24 @@ class ComprehensionSugar(ConstructedTermSugar):
         face to carry.
 
         This is the comprehension's one loop mechanism (#7757 new 6): no
-        rewrite dissolves a comprehension into a display.  Its members are
-        projected here where the reduction holds them -- a container in hand,
-        or the ints a ground ``range(...)`` yields
-        (``iterator_operation.in_hand_iterable``) -- within the one unroll
-        budget a loop's items run by (``LOOP_UNROLL_BUDGET``); anything else
-        is the symbolic fold over the same iterator path a loop's recurrence
-        takes.
+        rewrite dissolves a comprehension into a display, and its members run
+        through the loop's one item runner (``_run_in_hand``,
+        ``iterator_operation.advance_in_hand``) where the reduction holds
+        them, by the loop's one gate (``iterator_operation.in_hand_members``:
+        the same budget, the same ``range`` reading); anything else is the
+        symbolic fold over the same iterator path a loop's recurrence takes.
         """
         from sugar_lift_py_tests.operations.iterator_operation import (
-            in_hand_iterable,
+            in_hand_members,
         )
 
-        if index == 0 and (
-            len(self.generators) == 1 or self._running_coordinates(finite=True)
-        ):
+        members = (
+            in_hand_members(iterable)
+            if index == 0
+            and (len(self.generators) == 1 or self._running_coordinates(finite=True))
+            else None
+        )
+        if members is not None:
             from sugar_lift_py_tests.sugar.finite_projection import (
                 FiniteProjectionNonSuccessV1,
                 FiniteProjectionRefusalV1,
@@ -337,8 +340,8 @@ class ComprehensionSugar(ConstructedTermSugar):
             )
 
             decision = require_finite_projection_decision(
-                self._finite_map(generator, in_hand_iterable(iterable), ctx),
-                owner="ComprehensionSugar._finite_map",
+                self._run_in_hand(generator, members, ctx),
+                owner="ComprehensionSugar._run_in_hand",
             )
             # EXHAUSTIVE. Only the two LAWFUL non-application reasons may fall
             # through to symbolic construction; the other two are construction
@@ -441,7 +444,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         nothing decides owes by (``undecided_slot_debt``,
         ``read_of_bound_value``).  A claim over the object -- ``g() is g()``
         -- is never decided by the solver choosing it.  That holds for a
-        generator whose members are all in hand (``_finite_map``) as for one
+        generator whose members are all in hand (``_run_in_hand``) as for one
         whose are not: neither is a list.
         """
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
@@ -558,8 +561,21 @@ class ComprehensionSugar(ConstructedTermSugar):
             each
         )
 
-    def _finite_map(self, generator, iterable, ctx):
+    def _run_in_hand(self, generator, members, ctx):
+        """The comprehension over ``members`` (``in_hand_members``: held in
+        iteration order, within the one unroll budget), its members run one
+        by one through the loop's one item runner
+        (``iterator_operation.advance_in_hand``): each member's ``next``,
+        its unpack into the target, its conditions and its element (or the
+        next generator's members), then the next member; the iteration's
+        ``StopIteration`` ends it (``finish``).  A ``Projected`` outcome, or
+        why the members do not run here (``NotProjected``)."""
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+        from sugar_lift_py_tests.operations.iterator_operation import (
+            advance_in_hand,
+            in_hand_iterator,
+            in_hand_members,
+        )
         from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.finite_projection import (
             FiniteProjectionNonSuccessV1,
@@ -568,13 +584,6 @@ class ComprehensionSugar(ConstructedTermSugar):
         )
         from sugar_source_tree.nodes import TargetPatternEnrolledV1
 
-        from sugar_source_tree.nodes import LOOP_UNROLL_BUDGET
-
-        members = _finite_members(iterable)
-        if members is None or len(members) > LOOP_UNROLL_BUDGET:
-            # Past the one unroll budget the comprehension is its symbolic
-            # fold, as a loop past it is its recurrence (#7757 new 6).
-            return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
         # ``generator`` first, then each nested generator, outermost first.
         levels = (generator, *self.generators[1:])
         if any(level.filters for level in levels) and not hasattr(ctx, "temporal"):
@@ -699,32 +708,44 @@ class ComprehensionSugar(ConstructedTermSugar):
                 )
             )
 
-        def project(depth, members, index, projected, binds, carried, done):
-            """Member ``index`` of ``members`` (generator ``depth``'s) and
-            every member after it, then ``done``."""
+        def project(depth, iterator, index, projected, binds, carried, done):
+            """Generator ``depth``'s member ``index`` (what ``iterator``
+            yields next) and every member after it, then ``done`` where the
+            iteration ends: stepped by the loop's one item runner
+            (``advance_in_hand``).  An expression's halt offers no record of
+            its own (the statement that runs the comprehension records it)."""
             level = levels[depth]
-            if index == len(members):
-                return done(projected, binds, carried)
 
-            def after(projected, binds, carried):
-                return project(
-                    depth, members, index + 1, projected, binds, carried, done
-                )
+            def item(member_value, advanced):
+                def after(projected, binds, carried):
+                    return project(
+                        depth, advanced, index + 1, projected, binds, carried, done
+                    )
 
-            unpacked, enter = self._member_unpack(level, members[index], carried)
-            if unpacked.completed_value() is None and level.filters:
-                # The member does not destructure on every arm: its
-                # conditions are not decided here.
-                raise _UndecidedMember
+                unpacked, enter = self._member_unpack(level, member_value, carried)
+                if unpacked.completed_value() is None and level.filters:
+                    # The member does not destructure on every arm: its
+                    # conditions are not decided here.
+                    raise _UndecidedMember
 
-            # The member runs beneath each completed arm of its unpack; the
-            # unpack's halt is an arm of the comprehension as it is.
-            def member(roster):
-                return run_member(
-                    depth, enter(roster), projected, binds, carried, after
-                )
+                # The member runs beneath each completed arm of its unpack;
+                # the unpack's halt is an arm of the comprehension as it is.
+                def member(roster):
+                    return run_member(
+                        depth, enter(roster), projected, binds, carried, after
+                    )
 
-            return unpacked.and_then(member)
+                return unpacked.and_then(member)
+
+            return advance_in_hand(
+                iterator,
+                carried,
+                index=index,
+                owner="ComprehensionSugar",
+                site=self.site,
+                item=item,
+                exhausted=lambda: done(projected, binds, carried),
+            )
 
         def run_member(depth, inner_ctx, projected, binds, carried, after):
             """One member of generator ``depth`` whose target is bound in
@@ -742,15 +763,22 @@ class ComprehensionSugar(ConstructedTermSugar):
                 # The next generator's members, under this member: its
                 # iterable reads this member and every write before it.
                 inner = levels[depth + 1]
-                inner_members = _finite_members(
+                inner_members = in_hand_members(
                     plain_completed_value(inner.iterable.desugar(inner_ctx))
                 )
                 if inner_members is None:
-                    # Not a finite container: the nested members are not
-                    # fixed here, and the comprehension stays symbolic.
+                    # Not held in hand (``in_hand_members``): the nested
+                    # members are not fixed here, and the comprehension stays
+                    # symbolic.
                     raise _UndecidedMember
                 return project(
-                    depth + 1, inner_members, 0, projected, binds, inner_ctx, after
+                    depth + 1,
+                    in_hand_iterator(inner_members),
+                    0,
+                    projected,
+                    binds,
+                    inner_ctx,
+                    after,
                 )
 
             def written(wrote):
@@ -812,7 +840,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         try:
             projected = project(
                 0,
-                members,
+                in_hand_iterator(members),
                 0,
                 (),
                 (),
@@ -879,7 +907,7 @@ class ComprehensionSugar(ConstructedTermSugar):
             return replace(ctx, temporal=leaf_temporal)
 
         unpacked = self._target_unpack(
-            target, member, ctx, owner="ComprehensionSugar._finite_map.target"
+            target, member, ctx, owner="ComprehensionSugar._run_in_hand.target"
         )
         return unpacked, enter
 
@@ -1391,7 +1419,7 @@ class ComprehensionSugar(ConstructedTermSugar):
 class _UndecidedMember(Exception):
     """A finite member whose conditions are not decided here
     (``ComprehensionSugar._sifted``): the finite projection does not apply and
-    the comprehension stays symbolic (``_finite_map``)."""
+    the comprehension stays symbolic (``_run_in_hand``)."""
 
 
 def _finite_members(iterable):

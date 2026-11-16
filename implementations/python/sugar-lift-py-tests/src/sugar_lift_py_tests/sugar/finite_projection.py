@@ -1,6 +1,6 @@
 """The closed finite-projection decision for comprehensions (#7347).
 
-`ComprehensionSugar._finite_map` used to answer `ExitSet | None`, and the bare
+`ComprehensionSugar._finite_map` (now `_run_in_hand`) used to answer `ExitSet | None`, and the bare
 `None` stood for AT LEAST FOUR DISTINCT FACTS:
 
 1. the iterable genuinely has no finite-member roster;

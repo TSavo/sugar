@@ -30,7 +30,7 @@ class ComprehensionValue(GuardStableValue):
     ``<kind>(<occurrence>, <evaluation key>)``
     (``ComprehensionSugar._own_coordinate``), finite or not: what every
     reader of its kind reads.  ``display`` is the list or set a comprehension
-    whose every member is in hand built (``ComprehensionSugar._finite_map``):
+    whose every member is in hand built (``ComprehensionSugar._run_in_hand``):
     decided whole, it is what the proof states for it (``to_term``), never
     the coordinate.  A generator has none: it is never consumed where it is
     made, and states its coordinate.
@@ -316,7 +316,7 @@ class ComprehensionValue(GuardStableValue):
 
     def subscript(self, index, site):
         # A list or set decided whole (``display``, every member in hand,
-        # ``ComprehensionSugar._finite_map``) is read as that display, as its
+        # ``ComprehensionSugar._run_in_hand``) is read as that display, as its
         # truth and its operators are: a list's ``__getitem__`` over its
         # members (an out-of-range index its ``IndexError``), a set's
         # ``TypeError``.  Before #8957 the rewrite dissolved such a
