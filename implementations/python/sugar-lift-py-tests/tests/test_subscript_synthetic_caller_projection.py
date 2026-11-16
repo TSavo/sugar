@@ -8,9 +8,13 @@ both actuals.  ``test_pandas_subscript_caller_gap.py`` authenticates that
 absence by manifest CID and keeps its inserted-caller lying twin unchanged.
 
 SYNTHETIC EXTENSION: this module supplies ``helper(actual_obj, actual_key)``
-calls solely to prove the now-live producer -> projector -> Python binder ->
-Floor path.  These calls are evidence for the general Python mechanism, never
-claims about pandas source.
+calls solely to show the one way a caller's actuals reach the read: the
+helper's ``obj[key]`` is the one undecided read in its own proof (#7757,
+audit 2 row NEW-1, #9016), never a carrier waiting on a caller's actual, and
+each caller's call is its coordinate and edge, joined at prove.  The
+IndexError the read raises on ``[7]`` and ``1`` is the read door's own
+decided face (``discharge_subscript``).  These calls are evidence for the
+general Python mechanism, never claims about pandas source.
 """
 
 from __future__ import annotations
@@ -24,17 +28,13 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_lift_py_tests.outcome import (
-    Completed,
-    ExitSet,
-    Halted,
-    NativeOperationExitCarrierV1,
-)
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.unanswered_calls import owed_calls
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Call, FunctionDef
+from sugar_source_tree.nodes import Call, FunctionDef, Subscript
 from sugar_source_tree.tree import SourceFile
 
 # Each caller stands in its own function, called after import.  In the module
@@ -65,15 +65,23 @@ def _tree(source: str = CALLER_SOURCE) -> SourceFile:
     )
 
 
-def _carrier(source: str = CALLER_SOURCE) -> NativeOperationExitCarrierV1:
+def _helper(source: str = CALLER_SOURCE) -> ExitSet:
+    """The helper's own reduction: an ``ExitSet``, never a carrier."""
     function = next(
         node
         for node in _tree(source).nodes()
         if isinstance(node, FunctionDef) and node.name == "helper"
     )
     outcome = function.sugar().desugar(None)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert isinstance(outcome, ExitSet), type(outcome)
     return outcome
+
+
+def _read_site(source: str = CALLER_SOURCE):
+    """The site of the helper's one ``obj[key]``."""
+    return next(
+        node for node in _tree(source).nodes() if isinstance(node, Subscript)
+    ).fragment
 
 
 def _caller_outcomes(source: str = CALLER_SOURCE) -> tuple[ExitSet, ...]:
@@ -90,13 +98,29 @@ def _caller_outcomes(source: str = CALLER_SOURCE) -> tuple[ExitSet, ...]:
     return outcomes
 
 
-def test_helper_alone_is_named_undischarged_without_caller_actuals() -> None:
-    carrier = _carrier("def helper(obj, key=1):\n    return obj[key]\n")
+def test_helper_alone_is_the_undecided_read_owed_at_its_site() -> None:
+    """With no caller the helper's ``obj[key]`` is the one undecided read
+    (#7757, audit 2 row NEW-1, #9016): its value keyed per evaluation,
+    ``python:subscript_result(obj, key, <key>)``, completing only under its
+    ``python:subscript_op.completes`` atom, its ``UndeterminedRaiseEffect``
+    kept at the same key under the complement, and the read owed at its
+    site.  No IndexError is guessed and no member is chosen."""
+    exits = _helper("def helper(obj, key=1):\n    return obj[key]\n")
 
-    # No caller actual: the subscript is the cited unanswered face (#7825).
-    exits = carrier.discharge(None, {})
-    assert carrier.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
+    halts = [
+        face
+        for face in exits.exits
+        if isinstance(face, Halted)
+        and isinstance(face.effect, UndeterminedRaiseEffect)
+        and face.effect.producer_node_owner == "SymbolicValue.subscript"
+    ]
+    assert len(halts) == 1, exits
+    (done,) = [face for face in exits.exits if isinstance(face, Completed)]
+    guard = repr(done.guard)
+    assert "python:subscript_op.completes" in guard
+    assert halts[0].effect.occurrence in guard
+    assert "python:subscript_result" in repr(exits)
+    assert any(item.site is not None for item in owed_calls(exits))
 
 
 def _the_call(outcome: ExitSet):
@@ -146,12 +170,20 @@ def _class(key: str, name: str):
     return ctor(CLASS_ARGUMENT, [str_const(key), builtin_class_term(name)])
 
 
-def _discharged(carrier, key: int) -> ExitSet:
-    """The helper's row discharged with ``[7]`` and ``key``: what prove's one
-    binder binds its carrier with at a call that supplies them."""
-    obj_cid, key_cid = carrier.demand.operand_coordinate_cids
-    return carrier.discharge(
-        None, {obj_cid: fresh(ListValue, (TermValue(7),)), key_cid: TermValue(key)}
+def _decided_read(site, key: int) -> ExitSet:
+    """``[7][key]`` through the one read door at the helper's site: the
+    decided operands a caller supplies, read by the floor's own law (the
+    halt checks that rode a carrier discharge run on the door, #9016)."""
+    from sugar_lift_py_tests.operations.subscript_operation import (
+        discharge_subscript,
+    )
+
+    return discharge_subscript(
+        fresh(ListValue, (TermValue(7),)),
+        TermValue(key),
+        site,
+        None,
+        owner="SubscriptSugar",
     )
 
 
@@ -162,19 +194,20 @@ def _index_error():
     )
 
 
-def test_positional_keyword_and_default_callers_reach_the_same_demand() -> None:
+def test_positional_keyword_and_default_callers_bind_the_same_read() -> None:
     # Expected verdict changed (#7757 steps 5 and 6, #8705): each caller's
     # call no longer holds the IndexError the followed body raised, stamped
     # with that call's occurrence; it is the edge, which owes its halt, and
     # prove joins the helper's halt at each call (#8690, #8749).  The three
-    # forms carry the same binding of ``key``; the helper's row discharged
-    # with it reaches the one ``obj[key]``.
+    # forms carry the same binding of ``key``; the read door on the decided
+    # operands is the one ``obj[key]`` (no carrier, #9016).
     #
     # After the actuals ride the classes the caller decides, keyed by the
     # argument each is (#8857, ``receiver_dispatch.class_arguments``): the
     # ``[7]`` it built is a ``list`` at ``"0"``, a supplied ``int`` key an
     # ``int`` at its position or keyword; a default supplies none.
-    carrier = _carrier()
+    _helper()
+    site = _read_site()
     completed, positional, keyword, default = (
         _the_call(outcome) for outcome in _caller_outcomes()
     )
@@ -198,11 +231,10 @@ def test_positional_keyword_and_default_callers_reach_the_same_demand() -> None:
         _class("0", "list"),
     ]
 
-    assert isinstance(_discharged(carrier, 0).exits[0], Completed)
-    halted = _discharged(carrier, 1).exits[0]
+    assert isinstance(_decided_read(site, 0).exits[0], Completed)
+    halted = _decided_read(site, 1).exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _index_error()
-    site = carrier.site
     assert halted.effect.occurrence_id.startswith(
         f"{site.filename}:{site.line}:{site.col}"
     )
@@ -220,8 +252,8 @@ class _Expected:
 
 
 def test_lying_boundary_type_cannot_create_or_consume_the_subscript_result() -> None:
-    carrier = _carrier()
-    discharged = _discharged(carrier, 1)
+    site = _read_site()
+    discharged = _decided_read(site, 1)
     original = discharged.exits[0]
     assert isinstance(original, Halted)
 
@@ -236,7 +268,6 @@ def test_lying_boundary_type_cannot_create_or_consume_the_subscript_result() -> 
     assert len(routed.exits) == 1
     escaped = routed.exits[0]
     assert isinstance(escaped, Halted)
-    site = carrier.site
     # The routed halt is the original occurrence of the subscript.
     assert escaped.effect.occurrence_id == original.effect.occurrence_id
     assert escaped.effect.occurrence_id.startswith(

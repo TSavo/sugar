@@ -157,15 +157,22 @@ def test_attribute_aug_assign_formal_get_is_the_undecided_read():
     ]
 
 
-def test_subscript_aug_assign_formal_get_is_subscript_carrier():
-    """Subscript OP= on formals: undischarged subscript get (not RuntimeEffect)."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
+def test_subscript_aug_assign_formal_get_is_the_undecided_read():
+    """Subscript OP= on formals: the get leg ``d[k]`` is the one undecided
+    read (``SymbolicValue.subscript``), never a ``subscript`` carrier waiting
+    on a caller's actual (#7757, audit 2 row NEW-1, #9016).  Its value is
+    keyed per evaluation, ``python:subscript_result(d, k, <key>)``, it
+    completes only under its ``python:subscript_op.completes`` atom, and its
+    halt is kept beside the store's undecided mutation."""
     outcome = _fn("def A(d, k, y):\n    d[k] += y\n    return y\n").sugar().desugar()
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "subscript"
+    assert isinstance(outcome, ExitSet), type(outcome)
+    owners = [face.effect.producer_node_owner for face in outcome.halts()]
+    assert "SymbolicValue.subscript" in owners, owners
+    assert "UndecidedSetitem" in owners, owners
+    text = repr(outcome)
+    assert "python:subscript_result" in text
+    assert "python:subscript_op.completes" in text
+    assert "python:subscript.completes" not in text
 
 
 def test_annotated_attribute_with_value_builds_store_effect():

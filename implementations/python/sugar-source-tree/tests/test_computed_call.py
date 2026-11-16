@@ -24,28 +24,13 @@ def _fn(src):
 
 
 def _universe(fn):
-    """The function's universe.  A formal's subscript (``fs[0]``) is decided
-    by the caller's actual: the body defers as the ``subscript`` carrier, read
-    here at each formal's own symbolic stand-in."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.floor import SymbolicValue
-    from sugar_lift_py_tests.ir import make_var
+    """The function's universe on its one completed face.  A formal's
+    subscript (``fs[0]``) is the one undecided read (#7757, audit 2 row
+    NEW-1, #9016), never a carrier waiting on a caller's actual: its value
+    is ``python:subscript_result(fs, 0, <key>)``, the callee operand."""
     from sugar_lift_py_tests.outcome import Completed
 
-    sugar = fn.sugar()
-    outcome = sugar.desugar()
-    if isinstance(outcome, NativeOperationExitCarrierV1):
-        outcome = outcome.discharge(
-            None,
-            {
-                coordinate.coordinate_cid: SymbolicValue(
-                    make_var(coordinate.declared_name)
-                )
-                for coordinate in sugar.formal_coordinates
-            },
-        )
+    outcome = fn.sugar().desugar()
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     return done.value
 
@@ -66,7 +51,7 @@ def test_computed_call_is_the_py_call_coordinate():
     t = _call_term("def A(fs, x):\n    return fs[0](x)\n")
     assert t.name == "py.call"
     callee = t.args[0]
-    assert callee.name == "py.subscript"  # fs[0], the callee operand
+    assert callee.name == "python:subscript_result"  # fs[0], the callee operand
     assert t.args[1].name == "x"  # the argument
 
 
@@ -97,7 +82,7 @@ def test_computed_call_spread_uses_reference_call_shape():
     t = _call_term("def A(fs, x, d):\n    return fs[0](x, key=1, **d)\n")
 
     assert t.name in {"python:call", "py.call"}
-    assert t.args[0].name == "py.subscript"
+    assert t.args[0].name == "python:subscript_result"
     named, spread = t.args[-2:]
     assert named.name in {"python:kwarg", "py.kwarg"}
     assert named.args[0].value == "key"
