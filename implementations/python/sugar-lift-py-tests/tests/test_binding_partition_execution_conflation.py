@@ -64,12 +64,8 @@ def _source(tmp_path: Path, name: str, text: str):
 def _reduce_every_function(source_file) -> None:
     """Each function's outcome, through its one entrance.
 
-    ``function.sugar().desugar(None)`` is not a function's outcome: an
-    operation on a formal (``if c > 0``) waits for a caller's actual as a
-    deferred carrier, and nothing after it reduces until the carrier is
-    discharged. ``function_universe_outcome`` states the body as its own
-    proof does (``as_its_own_proof_states``), so every read after the test
-    reduces -- measuring desugar(None) alone counted no read at all."""
+    ``function_universe_outcome`` states the body as its own proof does, so
+    every read after the test reduces."""
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     for function in source_file.functions():

@@ -429,21 +429,6 @@ def test_cross_wired_iter_and_next_methods_are_distinct() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_iter_and_next_mint_no_carrier_and_have_no_projector() -> None:
-    """A formal's ``iter`` / ``next`` mints no carrier, so neither operator
-    is produced or projected; the equality holds both ways without them."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        _NATIVE_OPERATION_PROJECTORS,
-        production_native_operation_operators,
-    )
-
-    production = production_native_operation_operators()
-    projectors = frozenset(_NATIVE_OPERATION_PROJECTORS)
-    assert production == projectors
-    assert not {"iter", "next"} & production
-    assert not {"iter", "next"} & projectors
-
-
 def _formal(name: str = "xs", ordinal: int = 0):
     """A parameter's symbolic stand-in, its coordinate minted at ``_site()``."""
     from sugar_lift_py_tests.context_manager_resolution import (

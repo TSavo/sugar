@@ -164,13 +164,9 @@ def test_rhs_expression_is_reduced_not_quoted(tmp_path: Path) -> None:
     names: a different attribute is a different obligation -- never a quoted
     spelling of the source.
     """
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
 
     def unpack_guard(source: str, stem: str) -> str:
         outcome = _outcome(tmp_path, source, stem)
-        assert not isinstance(outcome, NativeOperationExitCarrierV1)
         owners = [face.effect.producer_node_owner for face in outcome.halts()]
         assert "SymbolicValue.attribute" in owners, owners
         (unpack,) = [

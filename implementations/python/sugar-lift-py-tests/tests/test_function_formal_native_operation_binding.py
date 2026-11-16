@@ -24,7 +24,6 @@ from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.outcome import (
     ExitSet,
     Halted,
-    NativeOperationExitCarrierV1,
 )
 from sugar_lift_py_tests.unanswered_calls import owed_calls
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -134,7 +133,6 @@ def test_helper_alone_is_the_undecided_binary_two_faces() -> None:
     )
     outcome = function.sugar().desugar(None)
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert isinstance(outcome, ExitSet)
     (halted,) = outcome.halts()
     assert type(halted.effect) is UndeterminedRaiseEffect

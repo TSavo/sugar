@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.floor import (
 
@@ -104,15 +103,8 @@ def _receiver():
 
 def test_formal_attribute_read_mints_no_carrier() -> None:
     outcome = _formal_read()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        _NATIVE_OPERATION_PROJECTORS,
-        production_native_operation_operators,
-    )
     from sugar_lift_py_tests.floor.floor_value import FloorValue
 
-    assert "attribute_named" not in _NATIVE_OPERATION_PROJECTORS
-    assert "attribute_named" not in production_native_operation_operators()
     assert not hasattr(FloorValue, "attribute_named")
 
 

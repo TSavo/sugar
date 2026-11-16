@@ -585,15 +585,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         follows it on every face it completes on (``ExitSet.and_then``): under
         that face's guard and faces, owing what it owes -- a read after an
         earlier loop is that loop's exit route under its guard
-        (``guarded_binding_read_sugar._read_loop_projection``).  One waiting
-        on its caller's actual runs the loop once it discharges
-        (``and_then``).  A face that halts halted before the first item: it
+        (``guarded_binding_read_sugar._read_loop_projection``).  A face that halts halted before the first item: it
         leaves carrying the record of where it halted (``halts_recorded``).
         The pre-loop value is never the loop's outcome in its place: the
         loop runs and publishes on every exit it leaves by."""
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -640,8 +635,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 return start_from(index + 1, started, (*initial_values, initial_value))
 
             initial = halts_recorded(sugar.desugar(runtime_ctx), halt_record(ctx))
-            if isinstance(initial, NativeOperationExitCarrierV1):
-                return initial.and_then(bound)
             initial = _require_exit_set(initial, owner="LoopRecurrenceSugar.pre-loop")
             initial_value = initial.completed_value()
             if initial_value is not None and not initial.owed_items():
@@ -658,9 +651,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # A ``while`` iterates nothing: no ``iter`` runs.
             return self._recurrence(None, ctx)
 
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.operations.iterator_operation import (
             in_hand_iterator,
             in_hand_members,
@@ -736,8 +726,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         def after_iter(iterator):
             return self._recurrence(iterable, ctx, iterator=iterator)
 
-        if isinstance(iteration, NativeOperationExitCarrierV1):
-            return iteration.and_then(after_iter)
         return _require_exit_set(iteration, owner="LoopRecurrenceSugar.iter").and_then(
             after_iter
         )
@@ -895,17 +883,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     ),
                 )
 
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
             from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
-            if isinstance(otherwise, NativeOperationExitCarrierV1):
-                return otherwise.after_discharge(
-                    lambda projected: leave_after_else(
-                        _require_exit_set(projected, owner="LoopRecurrenceSugar.else")
-                    )
-                )
             return leave_after_else(
                 _require_exit_set(otherwise, owner="LoopRecurrenceSugar.else")
             )
@@ -1018,8 +997,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         def items():
             if len(projected.exits) == 1 and isinstance(projected.exits[0], Completed):
                 # One way in (a name target, a ``while``): the item is exactly
-                # what follows it, a body waiting on its caller's actuals
-                # handed on.
+                # what follows it.
                 return projected.and_then(run_item)
             return projected.and_then(
                 run_item, consume=lambda halt: recurrence(halt=halt)
@@ -1198,9 +1176,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         recurrence under the fall-through guard without the ``return``
         entries that guard excludes.  Each exit is an arm of the
         one run, so each is reported once."""
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
         from sugar_lift_py_tests.outcome import Completed
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
@@ -1220,9 +1195,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # The loop goes on under the guard that no earlier ``return`` of
             # the item was taken, and that ``return`` took its exit beside
             # it: the one composition a block gives a statement after a
-            # guarded ``return`` (``past_prior_returns``), which hands on an
-            # exhausted arm still waiting on its caller's actuals (an
-            # ``else`` suite).
+            # guarded ``return`` (``past_prior_returns``).
             return past_prior_returns(
                 state,
                 state.context,
@@ -1256,17 +1229,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
             return ran.and_then(after)
 
-        if isinstance(body, NativeOperationExitCarrierV1):
-            # The body still waits on its caller's actuals: once it
-            # discharges, the loop leaves from it exactly as from a body that
-            # reduced to its arms here.
-            return body.after_discharge(
-                lambda projected: compose(
-                    _require_exit_set(
-                        projected, owner="LoopRecurrenceSugar.symbolic-item"
-                    )
-                )
-            )
         return compose(
             _require_exit_set(body, owner="LoopRecurrenceSugar.symbolic-item")
         )
@@ -1287,8 +1249,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         (``halts_recorded``).  Exhaustion is this loop's own control: the
         loop consumes the ``StopIteration`` and leaves beneath it, under its
         guard and faces, owing what the exhausting ``next`` owed, through its
-        ``else`` suite (``_finish_iterator``; one still waiting on its
-        caller's actuals is composed beneath it too).  Any other halt of the
+        ``else`` suite (``_finish_iterator``).  Any other halt of the
         ``next`` leaves the loop with what the items before it did
         (``_left_with``).  The value runs the item (``_run_item``).
         """
@@ -1379,8 +1340,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
         projections = projected.completed_value()
         if projections is not None:
-            # One plain roster: the item is exactly what follows it, a later
-            # item waiting on its caller's actuals handed on.
+            # One plain roster: the item is exactly what follows it.
             return run_item(projections)
         # The unpack's halt leaves the loop with what the items before it
         # did (``_left_with``).
@@ -1393,9 +1353,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         live ``for`` and a live ``while`` alike.  ``resume(ctx, entries=,
         carried=, index=)`` runs the next item: the iterator's next element,
         or the test evaluated again."""
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
         def after_body(body):
@@ -1406,9 +1363,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # the loop with what the items before it did and its own record
             # (``_after_loop_control``). The first iteration's faces are never
             # the loop's outcome.
-            # A later item still waiting on its caller's actuals answers its
-            # deferred carrier: ``and_then`` composes it beneath its face, and
-            # the loop hands the composed carrier on to its caller.
             if len(body.exits) != 1:
                 return body.and_then(
                     lambda state: self._after_iteration_state(
@@ -1437,15 +1391,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 lambda _state: following, consume=lambda _halt: following
             )
 
-        if isinstance(body, NativeOperationExitCarrierV1):
-            # This item's body still waits on its caller's actuals: once it
-            # discharges, the loop continues from this item exactly as it does
-            # from a body that reduced to its faces here.
-            return body.after_discharge(
-                lambda projected: after_body(
-                    _require_exit_set(projected, owner="LoopRecurrenceSugar.body")
-                )
-            )
         return after_body(_require_exit_set(body, owner="LoopRecurrenceSugar.body"))
 
     def _after_iteration_face(
@@ -2067,9 +2012,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
     def _finish_iterator(self, runtime, ctx, *, entries, carried, items=0):
         """The loop's outcome after its ``items`` items were exhausted."""
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             past_prior_returns,
@@ -2147,15 +2089,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 ),
             )
 
-        if isinstance(otherwise, NativeOperationExitCarrierV1):
-            # The else suite still waits on its caller's actuals: once it
-            # discharges, the loop publishes beneath each of its faces exactly
-            # as it does beneath a suite that reduced to its faces here.
-            return otherwise.after_discharge(
-                lambda projected: publish(
-                    _require_exit_set(projected, owner="LoopRecurrenceSugar.else")
-                )
-            )
         return publish(_require_exit_set(otherwise, owner="LoopRecurrenceSugar.else"))
 
     def _publish_runtime_bindings(

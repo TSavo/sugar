@@ -174,14 +174,10 @@ def test_a_shadowed_import_alias_is_not_import_bound() -> None:
     # of ``turn``'s contract: the call is the one unanswered call, two-faced
     # and owed (#7757 NEW-1), never a carrier waiting for an actual and never
     # the closed ``numpy.rot90`` coordinate.
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
 
     outcome = _function_outcome(
         "import numpy as np\n\n\ndef turn(m):\n    np = m\n    return np.rot90(m)\n"
     )
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     owners = {halt.effect.producer_node_owner for halt in outcome.halts()}
     assert "UnknownCallee:rot90" in owners
     assert "UnknownCallee:numpy.rot90" not in owners

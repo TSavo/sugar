@@ -4816,16 +4816,10 @@ fn bind_own_inputs_with_unstated(body: &Json) -> (Json, Vec<String>) {
 /// `floor/universe_value.py`): an object after an operation nothing decided
 /// (`python:receiver_after_call`, keyed on that operation's occurrence
 /// alone -- what a call, a manager's `__exit__` or an unrolled item's call
-/// may have left), an undecided builtin method, a native operation's result
-/// or its unanswered exit. No contract states their value and no input
-/// binds them: like a module global the run leaves undecided, each is a
-/// value nobody gave.
-const UNDETERMINED_STATES: [&str; 4] = [
-    "python:receiver_after_call",
-    "python:builtin_method",
-    "python:native_operation_result",
-    "python:unanswered_native_operation",
-];
+/// may have left) or an undecided builtin method. No contract states their
+/// value and no input binds them: like a module global the run leaves
+/// undecided, each is a value nobody gave.
+const UNDETERMINED_STATES: [&str; 2] = ["python:receiver_after_call", "python:builtin_method"];
 
 /// Each state no input determines (`UNDETERMINED_STATES`) the row's claims
 /// read, spelled with its constant operands. The solver interprets such a
@@ -16992,21 +16986,21 @@ mod tests {
 
     #[test]
     fn a_completes_atom_keyed_by_its_occurrence_names_its_site() {
-        // A carrier's unanswered exit keys its completes atom by its
-        // `python:occurrence(<site>, <path>...)` term (whatever operator
-        // it names).
+        // A completes atom whose operation is keyed by a
+        // `python:occurrence(<site>, <path>...)` term names that site
+        // (whatever operation it names).
         let occurrence = json!({"kind": "ctor", "name": PYTHON_OCCURRENCE, "args": [
             string_const("site-a"),
             string_const("iteration-1"),
         ]});
         let operation = json!({
             "kind": "ctor",
-            "name": "python:unanswered_native_operation",
+            "name": "python:op",
             "args": [string_const("op"), occurrence],
         });
         let atom = json!({
             "kind": "atomic",
-            "name": "python:unanswered_native_operation.completes",
+            "name": "python:op.completes",
             "args": [operation],
         });
         assert_eq!(completes_atom_any_site(&atom).as_deref(), Some("site-a"));

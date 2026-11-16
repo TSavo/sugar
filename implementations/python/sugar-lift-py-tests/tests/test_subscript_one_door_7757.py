@@ -24,9 +24,6 @@ import ast
 from pathlib import Path
 
 from frame_fresh import FRAME_FRESH, fresh
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-)
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -324,7 +321,6 @@ def _assert_undecided_read(exits, site, *, completed: int = 1) -> None:
     from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
     from sugar_lift_py_tests.unanswered_calls import unanswered_call
 
-    assert not isinstance(exits, NativeOperationExitCarrierV1), type(exits)
     done = [arm for arm in exits.exits if isinstance(arm, Completed)]
     (halt,) = [arm for arm in exits.exits if isinstance(arm, Halted)]
     assert len(done) == completed, exits
@@ -457,18 +453,12 @@ def test_a_parameter_receiver_read_is_the_undecided_read() -> None:
 
 def test_the_subscript_mint_and_its_projector_are_gone() -> None:
     """The deferred read is deleted (#7757, audit 2 row NEW-1): no
-    ``defer_formal_subscript`` mint, no ``subscript`` or ``slice`` projector,
-    and neither operator among the production carrier operators."""
+    ``defer_formal_subscript`` mint, and no carrier to mint it onto."""
     from sugar_lift_py_tests import caller_parameter_contract
     from sugar_lift_py_tests.operations import subscript_operation
 
     assert not hasattr(subscript_operation, "defer_formal_subscript")
-    for operator in ("subscript", "slice"):
-        assert operator not in caller_parameter_contract._NATIVE_OPERATION_PROJECTORS
-        assert (
-            operator
-            not in caller_parameter_contract.production_native_operation_operators()
-        )
+    assert not hasattr(caller_parameter_contract, "NativeOperationExitCarrierV1")
 
 
 # ---------------------------------------------------------------------------
@@ -490,7 +480,6 @@ def test_a_parameter_slice_bound_completes_the_slice() -> None:
 
     outcome = construct_slice(start, None, None)
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
     assert outcome.completed_value() == SliceValue(start, None, None)
 
 
@@ -537,7 +526,6 @@ def test_a_source_parameter_slice_bound_is_read_with_its_halt_kept() -> None:
 
     outcome = function.sugar().desugar(None)
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
     assert any(
         isinstance(arm, Halted) and isinstance(arm.effect, UndeterminedRaiseEffect)
         for arm in outcome.exits

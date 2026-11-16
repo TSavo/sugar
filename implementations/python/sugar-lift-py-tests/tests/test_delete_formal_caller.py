@@ -68,11 +68,6 @@ import pytest
 from frame_fresh import FRAME_FRESH, fresh
 
 from sugar_lift_py_tests import caller_parameter_contract
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-    production_native_operation_operators,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     BytesValue,
@@ -178,7 +173,6 @@ def _dispatched_call(outcome, method: str = "__delitem__"):
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -228,7 +222,6 @@ def _undecided_delete(
     from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -324,7 +317,6 @@ def _frame_halt(source: str, expected: str) -> Halted:
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     outcome = function.sugar().desugar(None)
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     return _assert_named_halt(outcome, expected)
 
 
@@ -411,8 +403,6 @@ def test_attribute_mutation_mints_no_carrier_producer() -> None:
 def test_item_mutation_has_no_projector() -> None:
     """``setitem`` / ``delitem`` left the projector table with their
     carrier: nothing discharges an item mutation on a caller's actuals."""
-    assert "setitem" not in _NATIVE_OPERATION_PROJECTORS
-    assert "delitem" not in _NATIVE_OPERATION_PROJECTORS
     assert not hasattr(caller_parameter_contract, "_project_delitem")
 
 
@@ -420,23 +410,7 @@ def test_attribute_mutation_has_no_projector() -> None:
     """``setattr_named`` / ``delattr_named`` left the projector table with
     their carrier: nothing discharges an attribute mutation on a caller's
     actuals."""
-    assert "setattr_named" not in _NATIVE_OPERATION_PROJECTORS
-    assert "delattr_named" not in _NATIVE_OPERATION_PROJECTORS
     assert not hasattr(caller_parameter_contract, "_project_delattr_named")
-
-
-def test_production_minted_operators_equal_projector_keys_including_delete() -> None:
-    """Equality tooth: production set == projector keys; neither the item
-    mutation nor the attribute mutation in either."""
-    production = production_native_operation_operators()
-    projectors = frozenset(_NATIVE_OPERATION_PROJECTORS)
-    assert production == projectors, (
-        f"missing_projectors={sorted(production - projectors)} "
-        f"orphan_projectors={sorted(projectors - production)}"
-    )
-    assert {"setitem", "delitem", "setattr_named", "delattr_named"}.isdisjoint(
-        production | projectors
-    )
 
 
 def test_ordered_operands_and_formals_match_protocol_signatures() -> None:
@@ -489,12 +463,7 @@ def test_name_deletion_is_out_of_scope_for_delitem_and_delattr() -> None:
     source = "def helper(x):\n    del x\n"
     tree = _tree(source, "name_delete_out_of_scope.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    pending = function.sugar().desugar(None)
-    if isinstance(pending, NativeOperationExitCarrierV1):
-        assert pending.demand.operator not in {
-            "delitem",
-            "delattr_named",
-        }, "Name deletion must not mint an item or attribute delete"
+    function.sugar().desugar(None)
     # Positive: a subscript delete is the one item mutation (the dispatched
     # ``__delitem__`` on a class-input formal, the undecided delete on a
     # formal whose class is no input), an attribute delete the one attribute

@@ -159,9 +159,8 @@ def _read_loop_projection(
 def _read_arm(state, *, read_name: str, read_site, ctx) -> ExitSet:
     """One arm of a projection, joined with its peers under its own face.
 
-    A join reads the arm's exits, so a deferred native-operation carrier
-    there (a reaching value whose operation waits on a caller's actual) is
-    refused by name; only a whole read hands a carrier on.
+    A join reads the arm's exits, so anything but exits there is refused
+    by name.
     """
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
@@ -198,9 +197,7 @@ def _decided_arm(state: GuardedProjection, ctx):
 
 def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
     if isinstance(state, Sugar):
-        # The whole read: a deferred carrier is handed on as the reaching
-        # value's own desugar answered it, for the reader to compose through
-        # the carrier's ``and_then``.
+        # The whole read: the reaching value's own desugar.
         return state.desugar(ctx)
     if isinstance(state, UnboundProjection):
         return ExitSet.halted(NameErrorEffect.at(name=read_name, site=read_site))

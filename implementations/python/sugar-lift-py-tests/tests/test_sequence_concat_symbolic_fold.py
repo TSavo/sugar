@@ -69,12 +69,10 @@ def test_source_list_plus_comprehension_returns_universe(tmp_path: Path) -> None
         ).functions()
     )
     from sugar_lift_py_tests.outcome.exit_set import Completed
-    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
 
-    # ``iter(xs)`` over the formal waits on the caller's actual; the function
-    # as its own proof states it with none: it completes on the face ``iter``
-    # completes on, beside the face it raises on.
-    out = as_its_own_proof_states(fn.sugar().desugar(None), None)
+    # ``iter(xs)`` over the formal is undecided: the function completes on
+    # the face ``iter`` completes on, beside the face it raises on.
+    out = fn.sugar().desugar(None)
     assert out.halts(), out
     (done,) = [arm for arm in out.exits if isinstance(arm, Completed)]
     assert isinstance(done.value, UniverseValue)

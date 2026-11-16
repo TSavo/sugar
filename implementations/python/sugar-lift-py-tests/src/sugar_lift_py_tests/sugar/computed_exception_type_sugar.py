@@ -72,7 +72,7 @@ class ComputedExceptionTypeSugar(ConstructedTermSugar):
         """Every face of the handler expression: a halted face is the
         expression's own raise (the ``try`` halts there, ``TrySugar``'s
         router); each completed face must hold an exception class, or a tuple
-        of them, else it is refused by name.  A deferred carrier is refused by
+        of them, else it is refused by name.  Anything but exits is refused by
         name (``_require_exit_set``)."""
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.outcome import ExitSet

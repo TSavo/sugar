@@ -997,36 +997,6 @@ def _class_object_term(cls):
     return None if cid is None else class_definition_term(cid)
 
 
-def as_its_own_proof_states(outcome, ctx):
-    """A function's outcome as its own proof states it: a set of arms (#7766).
-
-    A body whose operation on a formal waits for the caller's actual reduces
-    to a deferred native operation (``NativeOperationExitCarrierV1``): the
-    one mechanism a caller applying the body in place discharges with its
-    actuals (``CallSiteValue``).
-    The function's own proof has no caller, so no formal has an actual: the
-    carrier discharges with none. Each such operation then stands at its
-    site as the two-faced arm the absence of an actual is
-    (``NativeOperationExitCarrierV1._unanswered_exits``): it completes only
-    under its own undecided guard, halts under the complement, and both
-    faces owe one ``undecided`` member (``reason: unanswered``) at its site.
-    Every continuation and composition enrolled on the carrier still runs,
-    so no arm beside it is dropped (#7825). Nothing is invented: no
-    completion is stated without its guard, and its halt is kept.
-
-    The result is a set of completed and halted arms (step 6), read by the
-    one row path every other function's outcome is read by (step 7).
-    ``ctx`` is the context the body entered under: no caller's.
-    """
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    if isinstance(outcome, NativeOperationExitCarrierV1):
-        return outcome.discharge(ctx, {})
-    return outcome
-
-
 def function_universe_outcome(fn):
     """Construct one function universe through its authenticated entrance.
 
@@ -1062,9 +1032,7 @@ def function_universe_outcome(fn):
     ``module_end_contexts``), as it binds the function's own default
     keys.
 
-    The outcome is always a set of arms: an operation on a formal that waits
-    for a caller's actual is stated as its own proof states it, with none
-    (``as_its_own_proof_states``).
+    The outcome is always a set of arms.
     """
     from sugar_lift_py_tests.sugar.call_site_sugar import (
         bind_global_inputs,
@@ -1081,7 +1049,7 @@ def function_universe_outcome(fn):
             (fn,),
             site=site,
         )
-        return as_its_own_proof_states(sugar.desugar(entry), entry)
+        return sugar.desugar(entry)
 
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor.class_definition_value import (
@@ -1129,7 +1097,7 @@ def function_universe_outcome(fn):
                 name, formal, blame=f"{value.class_name}.{fn.name}"
             )
         held = entry.with_temporal(temporal)
-        return as_its_own_proof_states(sugar.desugar(held), held)
+        return sugar.desugar(held)
 
     return _class_statement_read(cell, entry).and_then(in_its_cell)
 
@@ -1325,7 +1293,7 @@ def class_universe_outcome(cls):
             formal_coordinates=declared,
             inputs=cls.contract_inputs(),
         )
-        return as_its_own_proof_states(universe.desugar(entered), entered)
+        return universe.desugar(entered)
 
     return _class_statement_read(cls, entry).and_then(on_its_class)
 
@@ -1574,10 +1542,7 @@ def function_contract_rows(fn, file_rel: str):
     per halted arm (``halt_locus``), and one row per assertion site (see
     there). One completed arm under guard true is the one-arm case.
 
-    A body whose operation on a formal waits for a caller's actual is read
-    the same way: its reduction is the set of arms its own proof states
-    (``as_its_own_proof_states``), each such operation the arm that owes
-    one ``undecided`` member at its site. A halt is an arm: a body that only
+    A halt is an arm: a body that only
     halts states its halted arms like any other set. Every row is read off
     this one reduction; no other lifter adds to it (#7767). A SugarNotWritten
     from an unported body statement propagates (the whole function is a

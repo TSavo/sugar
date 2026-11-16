@@ -86,12 +86,8 @@ def _source_file(source: str):
 
 
 def _own_proof(outcome):
-    """A function's outcome as its own proof states it: ``iter`` over a
-    formal waits on the caller's actual, and the function's own proof has
-    none (``as_its_own_proof_states``)."""
-    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
-
-    return as_its_own_proof_states(outcome, None)
+    """A function's outcome as its own proof states it: its arms."""
+    return outcome
 
 
 def _source_outcome(source: str):

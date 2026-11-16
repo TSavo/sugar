@@ -1,10 +1,10 @@
 """Step 6 (reduce), #7757: a deferred statement takes the block's one tail.
 
-A statement whose operation waits on its caller's actual
-(``NativeOperationExitCarrierV1``) had a branch of its own in the block
-reducer: it retained the statement's projection and returned, so what every
-other statement gets once its exits are known was skipped. The statement now
-waits for its exits and takes the same tail
+A statement whose operation waited on its caller's actual (a deferred
+native-operation carrier) had a branch of its own in the block reducer: it
+retained the statement's projection and returned, so what every other
+statement gets once its exits are known was skipped. The carrier is deleted
+(#7757 NEW-1): every statement takes the one tail
 (``reduce_block_to_exitset``, ``leaves``).
 
 The twin is at the reduction level, over the function's own proof: with no
@@ -66,8 +66,7 @@ UNSTATED = "the if unstated"
 
 def _own_proof(tmp_path: Path, name: str):
     """``name``'s outcome as its own proof states it: every operation on a
-    formal is its unanswered two faces
-    (``tree_enumerate.as_its_own_proof_states``)."""
+    formal is its undecided two faces."""
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     root = tmp_path / "workspace"

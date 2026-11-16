@@ -19,10 +19,6 @@ from pathlib import Path
 import pytest
 
 from frame_fresh import fresh
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import CoverageGapEffect
 from sugar_lift_py_tests.floor import ScopeRebind, TermValue
@@ -483,7 +479,6 @@ def test_helper_alone_is_the_undecided_inplace_faces() -> None:
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     _, outcome = _helper_definition()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert isinstance(outcome, ExitSet), type(outcome)
     halted = [face for face in outcome.exits if isinstance(face, Halted)]
     assert any(
@@ -664,7 +659,6 @@ def test_project_augmented_formal_mints_no_carrier() -> None:
     out = project_augmented(
         left, right, projector=Add.instance().project_inplace, site=site, ctx=None
     )
-    assert not isinstance(out, NativeOperationExitCarrierV1)
     assert isinstance(out, ExitSet), type(out)
     (completed,) = [face for face in out.exits if isinstance(face, Completed)]
     assert completed.value.term.name == "python:binary_result"
@@ -675,4 +669,3 @@ def test_project_augmented_formal_mints_no_carrier() -> None:
     assert isinstance(halted.effect, UndeterminedRaiseEffect)
     assert halted.effect.producer_node_owner == "UndecidedBinary:+"
     assert unanswered_call(None, site) in owed_calls(out)
-    assert "iadd" not in _NATIVE_OPERATION_PROJECTORS

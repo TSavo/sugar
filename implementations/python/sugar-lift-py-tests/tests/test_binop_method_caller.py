@@ -33,7 +33,6 @@ routing, parameter-name maps, real-pandas BinOp lane.
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -251,7 +250,6 @@ def _undecided_addition(outcome):
     completed arm under its own atom, its undetermined halt, its result."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), outcome
     assert isinstance(outcome, ExitSet), outcome
     (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
     (halt,) = outcome.halts()
@@ -327,7 +325,6 @@ def test_discrimination_method_alone_is_not_sole_completion() -> None:
     """The deleted carrier is not minted, and the two faces never collapse
     to a sole completion: the addition may raise."""
     _, _method, outcome = _method_definition()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert isinstance(outcome, ExitSet)
     assert outcome.completed_value() is None
     assert outcome.halts()
@@ -397,9 +394,6 @@ def test_binop_does_not_borrow_compare_laws() -> None:
     _, _m2, lt_outcome = _method_definition(COMPARE_BODY)
     _, _m3, eq_outcome = _method_definition(EQUALS_BODY)
     _, _m4, id_outcome = _method_definition(IDENTITY_BODY)
-
-    for outcome in (add_outcome, lt_outcome, eq_outcome, id_outcome):
-        assert not isinstance(outcome, NativeOperationExitCarrierV1)
 
     assert _undetermined_owners(add_outcome) == ("UndecidedBinary:+",)
     assert _undetermined_owners(lt_outcome) == ("UndecidedCompare:Lt",)

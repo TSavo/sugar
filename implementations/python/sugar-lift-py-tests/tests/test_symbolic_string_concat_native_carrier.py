@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.floor.term_value import TermValue
@@ -52,7 +51,6 @@ def test_symbolic_plus_string_is_the_undecided_binary_law() -> None:
     right = StringValue(".")
     assert left.formal_coordinate is None
     outcome = left.add(right, site, None)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [face for face in outcome.exits if isinstance(face, Halted)]
     assert [face.effect.producer_node_owner for face in halts] == [
         "UndecidedBinary:+"
@@ -69,7 +67,6 @@ def test_string_plus_symbolic_is_the_undecided_binary_law() -> None:
     right = SymbolicValue(make_var("cls_name"))
     assert right.formal_coordinate is None
     outcome = left.add(right, site, None)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert any(isinstance(face, Completed) for face in outcome.exits)
     halts = [face for face in outcome.exits if isinstance(face, Halted)]
     assert [face.effect.producer_node_owner for face in halts] == [
@@ -116,7 +113,6 @@ def test_string_plus_a_parameter_is_the_undecided_binary_law() -> None:
     left = StringValue(".")
     right = SymbolicValue(make_var("cls_name"), formal)
     outcome = left.add(right, site, None)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
     assert "python:binary_op.completes" in repr(done.guard)
     assert done.value.term.name == "python:binary_result"
@@ -135,7 +131,6 @@ def test_a_parameter_plus_string_is_the_undecided_binary_law() -> None:
     formal = _formal(site, "cls_name")
     left = SymbolicValue(make_var("cls_name"), formal)
     outcome = left.add(StringValue("."), site, None)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [face for face in outcome.exits if isinstance(face, Halted)]
     assert [face.effect.producer_node_owner for face in halts] == [
         "UndecidedBinary:+"
@@ -145,14 +140,10 @@ def test_a_parameter_plus_string_is_the_undecided_binary_law() -> None:
 def test_symbolic_plus_int_is_the_undecided_binary_law() -> None:
     """Discrimination: a numeric undecided pair takes the undecided binary law
     (two faces, #7585), not the string-concat carrier door."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
     site = _tiny_binop_site()
     outcome = SymbolicValue(make_var("n")).add(TermValue(2), site, None)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [face for face in outcome.exits if isinstance(face, Halted)]
     assert [face.effect.producer_node_owner for face in halts] == [
         "UndecidedBinary:+"

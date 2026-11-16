@@ -254,11 +254,7 @@ def test_the_whole_function_publishes_the_undecided_binary_halt(
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
-    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
-
-    # The function as its own proof states it: ``iter(xs)`` over a formal
-    # waits on the caller's actual, and there is none.
-    exits = as_its_own_proof_states(fn.sugar().desugar(None), None).exits
+    exits = fn.sugar().desugar(None).exits
     owners = [
         face.effect.producer_node_owner
         for face in exits

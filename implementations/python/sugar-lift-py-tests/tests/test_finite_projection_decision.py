@@ -341,11 +341,10 @@ def test_a_genuinely_unbounded_comprehension_still_completes_symbolically():
 
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Completed
-    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
 
     # ``iter(items)`` is not decided here: the fold completes on the face it
     # completes on, and the face it raises on is kept (as for a ``for``).
-    outcome = as_its_own_proof_states(node.sugar().desugar(None), None)
+    outcome = node.sugar().desugar(None)
 
     (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
     assert outcome.halts(), outcome

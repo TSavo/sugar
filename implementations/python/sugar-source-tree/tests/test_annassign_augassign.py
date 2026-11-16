@@ -135,19 +135,9 @@ def test_attribute_aug_assign_formal_get_is_the_undecided_read():
     """Attribute OP= on formals: the get leg is the one two-faced undecided
     read (``SymbolicValue.attribute``, its halt kept), never an
     ``attribute_named`` carrier waiting on a caller's actual (#7757 audit 2
-    row NEW-1).  The in-place operator over the formal ``y`` is another
-    family's operation; where it still defers, its carrier discharged with
-    no actual keeps every arm composed beside it (#7825)."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
+    row NEW-1)."""
 
     outcome = _fn("def A(obj, y):\n    obj.a += y\n    return y\n").sugar().desugar()
-    assert getattr(getattr(outcome, "demand", None), "operator", None) != (
-        "attribute_named"
-    )
-    if isinstance(outcome, NativeOperationExitCarrierV1):
-        outcome = outcome.discharge(None, {})
     assert isinstance(outcome, ExitSet)
     assert "SymbolicValue.attribute" in [
         face.effect.producer_node_owner for face in outcome.halts()
@@ -197,14 +187,10 @@ def test_annotated_subscript_store_is_the_one_item_mutation():
     (``store_effect_sugar.item_mutation``, #7757 step 7), never a carrier
     and never a free SugarNotWritten: the dispatched ``__setitem__`` or the
     undecided mutation, its halt kept either way."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
 
     outcome = (
         _fn("def A(d, k, y):\n    d[k]: int = y\n    return y\n").sugar().desugar()
     )
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     text = repr(outcome)
     assert "UnknownCallee:dispatch:__setitem__" in text or "UndecidedSetitem" in text
 

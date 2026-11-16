@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, not_, str_const
@@ -221,5 +218,4 @@ def test_identity_first_leg_is_not_a_native_operation_carrier() -> None:
     compare = next(node for node in tree.nodes() if isinstance(node, Compare))
     outcome = compare.sugar().values[0].desugar(None)
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert isinstance(outcome, ExitSet)

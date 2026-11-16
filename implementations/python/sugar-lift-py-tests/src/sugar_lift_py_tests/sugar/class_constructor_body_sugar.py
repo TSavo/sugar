@@ -139,14 +139,10 @@ class ClassConstructorBodySugar(Sugar):
             )
 
         def initialize(value, initializer_ctx):
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
             from sugar_lift_py_tests.floor import BlockValue
             from sugar_lift_py_tests.floor import EllipsisValue
             from sugar_lift_py_tests.sugar.function_universe_sugar import (
                 _ReducedBlock,
-                block_record,
                 reduce_block_to_exitset,
             )
             from sugar_source_tree.panic import SugarNotWritten
@@ -165,17 +161,6 @@ class ClassConstructorBodySugar(Sugar):
                 self.initializer_body.statements, initializer_ctx
             )
             del value
-            if isinstance(records, NativeOperationExitCarrierV1):
-                # Each face it completes on is the suite's record
-                # (``block_values``).  What runs here is a dataclass's
-                # generated stores, never a source ``def``'s body (a source
-                # ``__init__`` and a source ``__new__`` are dispatched,
-                # ``_dispatched_initializer``, ``_returned_by_new``), so no
-                # ``assert`` of a body is split here: their asserts are halts
-                # of their own contracts (#8961), reached through their edges.
-                return records.and_then(
-                    lambda state: ExitSet.completed(block_record(state))
-                )
             # One unconditional completed face is the whole initializer; only
             # then does an ellipsis-only body mean a stub constructor.
             sole = records.completed_value() is not None

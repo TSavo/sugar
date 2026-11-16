@@ -97,10 +97,8 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
             state, ctx, owner="WithReducedManagerSugar.suppressed", blame=resource.site
         )
 
-    # The manager, its enter and its exit are each routed face by face here:
-    # a deferred native-operation carrier at any of them is refused by name.
-    # The body is the one exception: a body waiting on its caller's actuals
-    # is routed once it discharges (below).
+    # The manager, its enter, its body and its exit are each routed face by
+    # face here: anything but exits at any of them is refused by name.
     # A manager call coordinate is not its returned receiver. Perform its
     # source outcome once, preserving exceptional faces before enter. A
     # manager or enter halt is at the head of the ``with``: it carries the
@@ -150,11 +148,7 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                 enter_facts = binding.to_facts(site=resource.site)
                 # The body reads ``as x`` as the value ``__enter__`` returned.
                 body_ctx = binding.bound_in(ctx)
-            # The exit is routed per body face.  A body still waiting on its
-            # caller's actuals (a deferred native-operation carrier, which
-            # ``and_then`` composed beneath the enter face) is routed once it
-            # discharges (``after_discharge``), as a ``try`` routes its body
-            # and a loop continues past its own: its faces exist only then.
+            # The exit is routed per body face.
             body_es = ExitSet((enter_face,)).and_then(
                 lambda _entered, body_ctx=body_ctx: reduce_block_to_exitset(
                     resource.body, body_ctx
@@ -176,17 +170,9 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                     resume,
                 )
 
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            # A carrier only once ``and_then`` composed one beneath the enter
-            # face; anything else that is not an ``ExitSet`` is refused by
-            # name in ``routed`` (owner ``WithReducedManagerSugar.body``).
-            if isinstance(body_es, NativeOperationExitCarrierV1):
-                parts.append(body_es.after_discharge(routed))
-            else:
-                parts.append(routed(body_es))
+            # Anything that is not an ``ExitSet`` is refused by name in
+            # ``routed`` (owner ``WithReducedManagerSugar.body``).
+            parts.append(routed(body_es))
     if not parts:
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -201,26 +187,11 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
 
 
 def _union_parts(parts):
-    """The union of the ``with``'s parts, in order.  A part still waiting on
-    its caller's actuals (a body routed once it discharges) joins the union
-    once it discharges, as an ``if`` joins a suite that waits on its own; no
-    part is read before then and none is dropped."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
+    """The union of the ``with``'s parts, in order; none is dropped."""
     head, *rest = parts
-    if isinstance(head, NativeOperationExitCarrierV1):
-        return head.after_discharge(
-            lambda discharged: _union_parts((discharged, *rest))
-        )
     if not rest:
         return head.normalize()
     following, *tail = rest
-    if isinstance(following, NativeOperationExitCarrierV1):
-        return following.after_discharge(
-            lambda discharged: _union_parts((head, discharged, *tail))
-        )
     return _union_parts((head.union(following), *tail))
 
 

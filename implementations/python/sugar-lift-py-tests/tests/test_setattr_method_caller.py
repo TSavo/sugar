@@ -31,7 +31,6 @@ Acceptance (each with a discrimination twin where noted):
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -117,7 +116,6 @@ def _undecided_store(outcome) -> Halted:
     from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -252,7 +250,6 @@ def test_method_alone_is_the_undecided_store_not_a_carrier() -> None:
 def test_discrimination_method_alone_is_not_completed() -> None:
     """Bite: the undecided store is no unconditional completion."""
     _, _method, outcome = _method_definition()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.completed_value() is None
     assert outcome.halts()
 

@@ -118,9 +118,7 @@ def _functions(root: Path):
 
 def _own_proof(function):
     """The function's outcome as its own proof states it: ``if flag:`` on a
-    formal waits on the caller's actual (the deferred ``truth`` operation),
-    and with no caller it is the unanswered truth's arms
-    (``tree_enumerate.as_its_own_proof_states``)."""
+    formal is the undecided truth's two faces."""
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     return function_universe_outcome(function)

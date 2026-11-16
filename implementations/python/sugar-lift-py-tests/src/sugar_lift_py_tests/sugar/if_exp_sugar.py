@@ -138,7 +138,6 @@ class IfExpSugar(ConstructedTermSugar):
         """The arms joined on the test whose truth states
         ``observed_formula``: a ground formula selects one arm, any other
         joins both."""
-        from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
         formula = observed_formula
@@ -175,55 +174,9 @@ class IfExpSugar(ConstructedTermSugar):
             return self._holding(self.body.desugar(ctx), ctx)
         if formula == false_guard():
             return self._holding(self.orelse.desugar(ctx), ctx)
-        not_formula = not_(formula)
 
         then_out = self._holding(self.body.desugar(ctx), ctx)
         else_out = self._holding(self.orelse.desugar(ctx), ctx)
-
-        # A deferred native-operation arm is not an ExitSet. BoolOp keeps that
-        # carrier beside the already-decided face via short_circuit. The same
-        # law applies here: evaluate the deferred arm only on its face, and
-        # keep the completed peer as the stopping face. Do not evaluate
-        # exc.message on the path that wrote str(exc). Both-deferred arms stay
-        # loud.
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-
-        then_deferred = isinstance(then_out, NativeOperationExitCarrierV1)
-        else_deferred = isinstance(else_out, NativeOperationExitCarrierV1)
-        if then_deferred and else_deferred:
-            from sugar_lift_py_tests.gap.info import GapKind
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-            construction_panic_gap(
-                owner="IfExpSugar",
-                blame=self.site,
-                observed="both conditional-expression arms are deferred "
-                "native-operation carriers",
-                requested="at most one deferred arm beside a decided ExitSet arm",
-                fix="retain each carrier through caller discharge",
-                gap_kind=GapKind.FLOOR,
-            )
-        if then_deferred or else_deferred:
-            from sugar_lift_py_tests.outcome.exit_set import partition as _partition
-
-            then_face, else_face = _partition(("IfExpSugar", self.site, formula))
-            # The decided peer stands under its own polarity, as BoolOp's
-            # stopping operand does: it is not a fact on the deferred path.
-            if then_deferred:
-                return then_out.short_circuit(
-                    continuing_guard=formula,
-                    stopped=else_out.guarded(not_formula),
-                    continuing_face=then_face,
-                    stopped_face=else_face,
-                )
-            return else_out.short_circuit(
-                continuing_guard=not_formula,
-                stopped=then_out.guarded(formula),
-                continuing_face=else_face,
-                stopped_face=then_face,
-            )
         return self._join_arms(formula, then_out, else_out)
 
     def _join_arms(self, formula, then_out, else_out) -> ExitSet:
@@ -337,14 +290,6 @@ class IfExpSugar(ConstructedTermSugar):
         this is ``outcome`` itself."""
         if not self.walrus_priors:
             return outcome
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-
-        if isinstance(outcome, NativeOperationExitCarrierV1):
-            # A deferred arm is answered on its own face (``short_circuit``);
-            # nothing is held there, so a read after it is refused by name.
-            return outcome
         from sugar_lift_py_tests.floor.named_expression_value import (
             NamedExpressionValue,
             carry_walrus_binds,
@@ -355,7 +300,7 @@ class IfExpSugar(ConstructedTermSugar):
 
         def prior_value(evaluation, prior):
             # The read of the name before the expression, once per arm. Its
-            # value is held inside this arm's value, so a deferred carrier
+            # value is held inside this arm's value, so anything but exits
             # there is refused by name, never read as no prior value.
             if evaluation not in priors:
                 from sugar_lift_py_tests.outcome.exit_set import _require_exit_set

@@ -845,16 +845,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/caller_parameter_contract.py:26ef7cc2d7b354dc:1",
-      "line": 141,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/caller_parameter_contract.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"\"\"Project the closed resolution into an ExitSet or a typed refusal.\"\"\"",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/census.py:42f8e0fc20bd6e44:1",
       "line": 8,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/census.py",

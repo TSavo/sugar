@@ -120,13 +120,9 @@ def _value(outcome):
     complement, so the comprehension's value is the completed face beside
     that halt.
 
-    ``iter`` of a formal iterable waits on the caller's actual
-    (``ComprehensionSugar._recurrence``): with none, it stands as its two
-    faces (``as_its_own_proof_states``), and the comprehension's value is
+    ``iter`` of a formal iterable stands as its two faces
+    (``ComprehensionSugar._recurrence``), and the comprehension's value is
     the completed face beside that halt too."""
-    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
-
-    outcome = as_its_own_proof_states(outcome, None)
     completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
     assert len(completed) == 1, outcome
     return completed[0].value
@@ -505,14 +501,8 @@ def test_a_running_read_over_a_symbolic_iterable_is_refused_by_name() -> None:
     comprehension = _comprehension(rewritten, "ListComp")
     # Each member would read the previous member's write: the fold over a
     # symbolic member does not hold it, and it never reads `s = 0` instead.
-    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
-
     with pytest.raises(SugarNotWritten):
-        # The fold follows ``iter`` of the formal ``xs``: it runs once that
-        # waiting operation is discharged (``as_its_own_proof_states``).
-        as_its_own_proof_states(
-            comprehension.sugar().desugar(_root("walrus-running-symbolic")), None
-        )
+        comprehension.sugar().desugar(_root("walrus-running-symbolic"))
 
 
 def test_a_read_after_the_members_own_write_over_a_symbolic_iterable() -> None:

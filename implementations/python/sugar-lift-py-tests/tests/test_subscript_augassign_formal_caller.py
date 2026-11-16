@@ -14,11 +14,6 @@ from pathlib import Path
 import pytest
 
 from frame_fresh import FRAME_FRESH, fresh
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-    production_native_operation_operators,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import ListValue, TermValue, TupleValue
 from sugar_lift_py_tests.effect import RaiseEffect
@@ -258,16 +253,11 @@ _INPLACE_OPERATORS = frozenset(
 def test_no_inplace_operator_is_minted_or_enrolled() -> None:
     """Inverted from the in-place carrier set (#7757, audit row NEW-1): an
     ``OP=`` with a parameter operand is the undecided binary law's two
-    faces, so no in-place operator is a carrier, none has a projector, and
-    the production mint set it was drawn from is gone.  The equality tooth
-    still holds both ways."""
+    faces, so no in-place operator is a carrier and the production mint set
+    it was drawn from is gone."""
     import sugar_source_tree.operators as operators
 
     assert not hasattr(operators, "production_augassign_inplace_operators")
-    production = production_native_operation_operators()
-    assert not production & _INPLACE_OPERATORS
-    assert not frozenset(_NATIVE_OPERATION_PROJECTORS) & _INPLACE_OPERATORS
-    assert production == frozenset(_NATIVE_OPERATION_PROJECTORS)
     # ``inplace_operator`` still names the in-place method ``OP=`` calls.
     assert (
         frozenset(cls.inplace_operator for cls in operators.AUGASSIGN_BINARY_OPERATOR_CLASSES)
@@ -614,7 +604,6 @@ def test_formal_operands_mint_no_carrier() -> None:
     left = SymbolicValue(make_var("cell"), _coord("cell", 0))
     right = SymbolicValue(make_var("rhs"), _coord("rhs", 1))
     out = project_augmented(left, right, projector=project_iadd, site=site, ctx=None)
-    assert not isinstance(out, NativeOperationExitCarrierV1)
     assert isinstance(out, ExitSet), type(out)
     (completed,) = [face for face in out.exits if isinstance(face, Completed)]
     assert completed.value.term.name == "python:binary_result"
@@ -632,7 +621,6 @@ def test_no_iadd_projector_is_enrolled() -> None:
     NEW-1): nothing mints an in-place carrier, so nothing discharges one."""
     import sugar_lift_py_tests.caller_parameter_contract as contract
 
-    assert "iadd" not in _NATIVE_OPERATION_PROJECTORS
     assert not hasattr(contract, "project_iadd")
     assert not hasattr(contract, "_INPLACE_NATIVE_OPERATION_PROJECTORS")
 
@@ -662,7 +650,6 @@ def test_formal_subscript_get_is_the_undecided_read_not_a_carrier() -> None:
 
     _, outcome = _helper_definition(_DECIDED_KEY_HELPER)
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
     assert isinstance(outcome, ExitSet), type(outcome)
     owners = {
         face.effect.producer_node_owner

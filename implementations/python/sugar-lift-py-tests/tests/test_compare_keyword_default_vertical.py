@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.outcome import ExitSet, Halted
@@ -185,7 +184,6 @@ def _assert_undecided_ordering(outcome: object) -> tuple[str, str]:
     """``helper`` alone over its formals: no carrier (#7757, audit row
     NEW-1), the undecided ordering's two faces, owing the undecided member.
     Returns the names of the operands its completes atom states, in order."""
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert isinstance(outcome, ExitSet)
     halts = [
         face
@@ -282,4 +280,3 @@ def test_identity_law_never_acquires_a_native_operation_carrier() -> None:
         .desugar(None)
     )
     assert outcome.completed_value() is not None
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)

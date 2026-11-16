@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
@@ -73,7 +72,6 @@ def test_formal_ordering_condition_creates_no_carrier() -> None:
     ``UndecidedCompare:Lt`` halt."""
     outcome = _function_outcome()
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert isinstance(outcome, ExitSet)
     halts = [
         face
@@ -130,13 +128,3 @@ def test_symbolic_if_branches_keep_complementary_guards() -> None:
     assert else_return.guards[0].kind == "not"
     assert else_return.guards[0].operands[0] == then_return.guards[0]
 
-
-def test_identity_condition_never_acquires_a_carrier() -> None:
-    source = HELPER.replace("left < right", "left is right")
-    tree = SourceFile(
-        (source, "identity-through-if.py", blake3_512_of(source.encode())),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-    )
-    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-
-    assert not isinstance(function.sugar().desugar(None), NativeOperationExitCarrierV1)

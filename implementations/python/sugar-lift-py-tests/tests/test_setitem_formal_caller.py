@@ -38,10 +38,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from frame_fresh import fresh
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import ListValue, TermValue, TupleValue
@@ -101,7 +97,6 @@ def _dispatched_call(outcome, method: str = "__setitem__"):
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -128,7 +123,6 @@ def _undecided_store(outcome) -> Halted:
     from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -348,12 +342,7 @@ def test_item_store_mints_no_setitem_carrier() -> None:
     are.  The dispatched edge takes ``type(obj).__setitem__(obj, key,
     value)``'s order, the receiver first as a plain function bound to an
     instance takes it."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        production_native_operation_operators,
-    )
 
-    assert "setitem" not in _NATIVE_OPERATION_PROJECTORS
-    assert "setitem" not in production_native_operation_operators()
     assert not hasattr(SubscriptStoreEffectSugar, "mint_setitem_carrier")
     assert not hasattr(SubscriptStoreEffectSugar, "project_setitem")
     _, outcome = _helper_definition()

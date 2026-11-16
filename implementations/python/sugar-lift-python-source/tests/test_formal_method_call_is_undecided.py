@@ -26,11 +26,6 @@ floor answers (#7616).
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-    production_native_operation_operators,
-)
 from sugar_lift_py_tests.floor import ListValue, StringValue, TermValue
 from sugar_lift_py_tests.floor.none_value import NoneValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
@@ -60,7 +55,6 @@ def _outcome(tmp_path, source):
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
     outcome = func.sugar().desugar()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert isinstance(outcome, ExitSet), type(outcome)
     return outcome
 
@@ -84,13 +78,6 @@ def _faces(exits):
     completed = [face.value for face in exits.exits if isinstance(face, Completed)]
     halted = [face.effect for face in exits.exits if isinstance(face, Halted)]
     return completed, halted
-
-
-def test_method_call_is_no_native_operation():
-    # The deletion: no producer mints ``method_call``, and no projector
-    # answers it; the equality of the two sets holds without it.
-    assert "method_call" not in production_native_operation_operators()
-    assert "method_call" not in _NATIVE_OPERATION_PROJECTORS
 
 
 def test_a_formal_whose_class_is_an_input_is_the_dispatched_edge(tmp_path):

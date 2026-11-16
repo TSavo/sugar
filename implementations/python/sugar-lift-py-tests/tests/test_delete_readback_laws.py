@@ -54,7 +54,6 @@ from __future__ import annotations
 import pytest
 from frame_fresh import FRAME_FRESH, fresh
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     DictValue,
@@ -138,7 +137,6 @@ def test_delitem_on_a_class_input_formal_is_the_dispatched_edge() -> None:
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     outcome = function.sugar().desugar(None)
     assert isinstance(outcome, ExitSet)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -165,7 +163,6 @@ def test_delitem_on_a_formal_with_no_class_input_is_the_undecided_delete() -> No
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     outcome = function.sugar().desugar(None)
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -241,7 +238,6 @@ def test_delattr_on_a_formal_with_no_class_input_is_the_undecided_delete() -> No
 
     outcome = _delattr_function().sugar().desugar(None)
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()

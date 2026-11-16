@@ -43,7 +43,7 @@ def test_a_decided_assertion_reaches_the_solver(tmp_path: Path) -> None:
     """``test_double``'s claim is decided: the floor applies ``double`` to 3.
 
     ``double``'s own proof has no caller, so ``x`` has no actual and ``x + x``
-    is the operation it owes (``tree_enumerate.as_its_own_proof_states``).
+    is the operation it owes (the undecided two faces).
     A source that owes anything is never ``sat`` as a whole (step 8), so the
     truthful half is read on the test function's own claims
     (``witness_harness.claim_verdict``): the member ``double`` owes sits above

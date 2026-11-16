@@ -85,9 +85,7 @@ def is_contract_input(formal: str) -> bool:
 class ContractInputCoordinateV1:
     """The coordinate of one contract input, as a ``FormalParameterCoordinateV1``
     is of one parameter: the function it belongs to, its kind and name, and
-    the Python ``Value`` sort every formal carries. An operation on the input
-    waits for the caller's value as one on a parameter does
-    (``NativeOperationExitCarrierV1``, keyed by ``coordinate_cid``)."""
+    the Python ``Value`` sort every formal carries."""
 
     owner_definition_cid: str
     input_kind: str

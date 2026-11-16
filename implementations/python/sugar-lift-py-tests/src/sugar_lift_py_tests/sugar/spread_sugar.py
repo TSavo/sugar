@@ -58,9 +58,6 @@ def _collect(sugars: tuple, ctx, done: tuple, finish, *, earlier: tuple = ()):
     """
     from sugar_lift_py_tests.outcome.exit_set import Completed
 
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.floor.named_expression_value import (
         evaluated_after,
         written_by,
@@ -78,31 +75,12 @@ def _collect(sugars: tuple, ctx, done: tuple, finish, *, earlier: tuple = ()):
         the prefix, joined through the one join."""
         return ExitSet(()).union(*halted, prefix.and_then(lambda _last: following))
 
-    for index, sugar in enumerate(sugars):
-        # A deferred native-operation operand is not an ExitSet. IfExp and
-        # BoolOp keep that carrier until discharge. The remaining operands and finish
-        # wait via and_then so the list does not invent a completed message.
-        # The operands before it already ran: once the carrier discharges, its
-        # exits leave beneath their prefix beside every halt they collected. A
-        # halt is never dropped.
+    for sugar in sugars:
         before = (*earlier, *values)
         operand_ctx = ctx
         for value in before:
             operand_ctx = written_by(value, operand_ctx)
         desugared = evaluated_after(before, sugar, operand_ctx)
-        if isinstance(desugared, NativeOperationExitCarrierV1):
-            already = tuple(values)
-            remaining = sugars[index + 1 :]
-            collected = tuple(halted)
-            return desugared.and_then(
-                lambda value: _collect(
-                    remaining, ctx, already + (value,), finish, earlier=earlier
-                )
-            ).after_discharge(
-                lambda projected, *, prefix=prefix: leave(
-                    projected, prefix=prefix, halted=collected
-                )
-            )
         factors = desugared.factor_completed()
         stepped = prefix.and_then(lambda _last, *, factors=factors: factors)
         halted.append(ExitSet(stepped.halts()))
@@ -119,17 +97,6 @@ def _collect(sugars: tuple, ctx, done: tuple, finish, *, earlier: tuple = ()):
         values.append(completed[0].value)
 
     finished = finish(tuple(values))
-    if isinstance(finished, NativeOperationExitCarrierV1):
-        # ``finish`` itself waits on a caller's actual (a call whose callee
-        # or receiver is a formal): exactly as a deferred operand, its exits
-        # leave beneath the prefix beside every collected halt once the
-        # carrier discharges.
-        collected = tuple(halted)
-        return finished.after_discharge(
-            lambda projected, *, prefix=prefix: leave(
-                projected, prefix=prefix, halted=collected
-            )
-        )
     return leave(finished, prefix=prefix, halted=halted)
 
 

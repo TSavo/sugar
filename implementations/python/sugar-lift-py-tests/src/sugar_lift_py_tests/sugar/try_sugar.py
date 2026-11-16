@@ -61,22 +61,14 @@ class TrySugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
 
-        body_es = reduce_block_to_exitset(self.body, ctx)
-        if isinstance(body_es, NativeOperationExitCarrierV1):
-            return body_es.after_discharge(
-                lambda discharged: self._route_discharged_body(discharged, ctx)
-            )
-        return self._route_discharged_body(body_es, ctx)
+        return self._route_body(reduce_block_to_exitset(self.body, ctx), ctx)
 
-    def _route_discharged_body(self, body_es, ctx):
-        """Route one concrete body ExitSet; carriers enter only after discharge."""
+    def _route_body(self, body_es, ctx):
+        """Route one concrete body ExitSet."""
         arm_effects: list = []
         pre_finally = _route_handlers_over_exits(
             body_es,
@@ -113,19 +105,7 @@ def _try_outcome(exits):
     reducer sequences the tail under each completed face.  Flattening merged
     every completed route into one record whose entries were merely guarded,
     and put a halt inside a completed record (#7826).
-
-    Faces still waiting on the caller's actuals (a deferred native-operation
-    carrier: a body, an arm or a ``finally`` that reads a parameter) are
-    normalized once they discharge (``after_discharge``), as the block
-    reducer hands any such outcome on; no arm is read off an undischarged
-    carrier.
     """
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    if isinstance(exits, NativeOperationExitCarrierV1):
-        return exits.after_discharge(_try_outcome)
     return exits.normalize()
 
 
@@ -262,9 +242,8 @@ def _and_finally_with_raise_context(
     (``_pending_returns``): a completed face's are pending, a halt's record's
     are dead on the halt's arm and ``resumed`` drops them. A
     ``finally`` that exits itself supersedes, and a pending ``return`` is
-    discarded with the exit it belonged to. A ``finally`` whose arms still
-    wait on the caller's actuals is composed once they discharge
-    (``_finally_beneath``); the caller reads the outcome through
+    discarded with the exit it belonged to. The cleanup is composed beneath
+    each arm (``_finally_beneath``); the caller reads the outcome through
     ``_try_outcome``, a ``try`` and a ``try*`` alike.
     """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
@@ -436,18 +415,7 @@ def _finally_beneath(cleanup_es, in_flight, restore):
     leaving from that record), a terminal completion (return in finally)
     supersedes with its own value, and a cleanup halt supersedes
     (``consume=``, with the in-flight body raise as its implicit context).
-
-    A ``finally`` whose arms still wait on the caller's actuals (a deferred
-    native-operation carrier: a ``finally`` that reads a parameter) has no
-    arms to compose yet: the composition is enrolled on the carrier
-    (``after_discharge``) and runs on the arms it discharges to, as the
-    block reducer composes any statement whose result waits on actuals.
-    The outer ``ExitSet.and_then`` composes the carrier beneath the
-    incoming arm.
     """
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, _require_exit_set
 
@@ -470,13 +438,8 @@ def _finally_beneath(cleanup_es, in_flight, restore):
             )
         return None
 
-    def beneath(cleaned_exits):
-        exits = _require_exit_set(cleaned_exits, owner="TrySugar.finally")
-        return exits.and_then(after_cleanup, consume=supersede)
-
-    if isinstance(cleanup_es, NativeOperationExitCarrierV1):
-        return cleanup_es.after_discharge(beneath)
-    return beneath(cleanup_es)
+    exits = _require_exit_set(cleanup_es, owner="TrySugar.finally")
+    return exits.and_then(after_cleanup, consume=supersede)
 
 
 def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
@@ -543,8 +506,8 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
         return ExitSet.completed(MatchDecided(True))
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
-    # The handler's matcher is read here, not retained: a deferred carrier is
-    # refused by name.
+    # The handler's matcher is read here, not retained: anything but exits
+    # is refused by name.
     read = _require_exit_set(matcher.desugar(ctx), owner="TrySugar.handler-matcher")
     return read.and_then(
         lambda expected: ExitSet.completed(matches_raise_effect(effect, expected))

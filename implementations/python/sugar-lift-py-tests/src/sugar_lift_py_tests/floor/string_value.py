@@ -728,8 +728,7 @@ def _joined(iterable, ctx, *, site, result):
     then raises ``TypeError`` for a member that is not a ``str`` instance.
     So no halt is dropped:
 
-    - ``iter``'s halt leaves before any member; a formal's ``iter`` waits on
-      its caller's actual (the carrier ``iterated`` hands back).
+    - ``iter``'s halt leaves before any member.
     - Each ``next``'s halt leaves as itself, and its ``StopIteration`` ends
       the iteration (``exhausted``: no member to check).  A generator is
       pulled there (``GeneratorValue.next_with``), as any consumer pulls it.
@@ -739,9 +738,6 @@ def _joined(iterable, ctx, *, site, result):
     Where the iteration is decided never to raise
     (``iterator_operation.iteration_total``) neither ``iter`` nor ``next``
     adds a face."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.operations.iterator_operation import (
         iterated,
         stepped,
@@ -764,8 +760,6 @@ def _joined(iterable, ctx, *, site, result):
             exhausted=result,
         )
 
-    if isinstance(iteration, NativeOperationExitCarrierV1):
-        return iteration.and_then(each)
     return _require_exit_set(iteration, owner=f"{owner}.iter").and_then(each)
 
 

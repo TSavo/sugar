@@ -4,7 +4,6 @@ import tempfile
 
 import pytest
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.backend import Leaf, MaybeChild, materialize
 from sugar_source_tree.panic import BackendDefect
@@ -84,7 +83,6 @@ def test_fstring_concat_keeps_its_faces_and_its_operands():
     no caller ever answered it (#7757).
     """
     outcome = _fn('def A(z):\n    return f"n={z}"\n').sugar().desugar()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), outcome
 
     term = _post_term('def A(z):\n    return f"n={z}"\n')
     assert term.name == "python:fstring"
@@ -122,7 +120,6 @@ def test_string_plus_a_parameter_is_the_undecided_binary_law():
 
     outcome = _fn('def A(z):\n    return "n=" + z\n').sugar().desugar()
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), outcome
     assert isinstance(outcome, ExitSet), type(outcome).__name__
     assert [face.effect.producer_node_owner for face in outcome.halts()] == [
         "UndecidedBinary:+"

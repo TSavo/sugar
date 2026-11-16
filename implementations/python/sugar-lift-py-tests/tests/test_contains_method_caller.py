@@ -35,7 +35,6 @@ routing, parameter-name maps, chained-comparison lane.
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -167,7 +166,7 @@ def _only_halted(outcome: object, *, require_pre_effect_state: bool = True) -> H
     if require_pre_effect_state:
         assert halted.state is not None, (
             "formal contains halt omitted real pre-effect state "
-            "(NativeOperationResolutionV1.project / reduce_body collapse)"
+            "(reduce_body collapse)"
         )
     return halted
 
@@ -182,7 +181,6 @@ def _assert_completed_call(outcome) -> CallSiteValue:
 
 def _undecided_halts(outcome: object, op_kind: str) -> tuple[Halted, ...]:
     """The undecided comparison's halts (owner ``UndecidedCompare:<op>``)."""
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert isinstance(outcome, ExitSet)
     return tuple(
         face
@@ -339,7 +337,6 @@ def test_non_container_receiver_yields_named_typeerror_with_pre_effect() -> None
     """``1 in None``, decided by the frame: the floor's TypeError, leaving
     with the block's record as its state."""
     _, _method, exits = _method_definition(NON_CONTAINER_BODY)
-    assert not isinstance(exits, NativeOperationExitCarrierV1)
     halted = _only_halted(exits, require_pre_effect_state=True)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
 
@@ -353,11 +350,6 @@ def test_non_container_receiver_yields_named_typeerror_with_pre_effect() -> None
     assert remaining.state is halted.state
 
 
-def test_identity_remains_carrier_free() -> None:
-    _, _method, pending = _method_definition(IDENTITY_BODY)
-    assert not isinstance(pending, NativeOperationExitCarrierV1)
-
-
 def test_equality_is_equals_not_contains() -> None:
     _, _method, outcome = _method_definition(EQUALITY_BODY)
     assert _undecided_halts(outcome, "Eq")
@@ -369,7 +361,6 @@ def test_discrimination_membership_is_not_identity_or_equality() -> None:
     assert _undecided_halts(membership, "In")
     assert not _undecided_halts(membership, "Eq")
     _, _m2, identity = _method_definition(IDENTITY_BODY)
-    assert not isinstance(identity, NativeOperationExitCarrierV1)
     assert not _undecided_halts(identity, "In")
     _, _m3, equality = _method_definition(EQUALITY_BODY)
     assert _undecided_halts(equality, "Eq")

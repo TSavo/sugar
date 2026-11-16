@@ -79,9 +79,8 @@ def plain_completed_value(outcome):
     Plain: one completed arm under truth, carrying no partition faces and owing
     nothing -- the arm a total step answers. Its value may be handed on alone.
     An arm with faces or debts is sequenced instead, so the sequencing carries
-    them onto every continuation (``owed`` is never dropped). A deferred
-    native-operation carrier is not an ``ExitSet`` and answers ``None``. A
-    set of several arms answers ``None`` before anything normalizes it.
+    them onto every continuation (``owed`` is never dropped). A set of
+    several arms answers ``None`` before anything normalizes it.
     """
     if not isinstance(outcome, ExitSet) or len(outcome.exits) != 1:
         return None
@@ -151,27 +150,21 @@ def _halt_state(state: _ReducedBlock, exit_) -> object:
     """The temporal record a halted arm of a statement leaves the block with,
     ``state`` being everything the block established before the statement.
 
-    THE ONE RECORD of a statement's halt, whether the statement handed its
-    exits back at once or waited on its caller's actuals:
+    THE ONE RECORD of a statement's halt:
 
     - A halt that offers no record (``None``) reaches here only from a
       statement that binds nothing before its own halt (checked first,
       ``_require_recorded_halts``): it halted at the statement's head, and
       ``state`` is its whole record.
-    - A halt that already left from ``state`` itself is whole: a deferred
-      operation's halt, and a halt a continuation minted while it
-      discharged, leave from the state this block enrolled on the carrier
-      (``NativeOperationExitCarrierV1._halts_leave_enrolled_state``), which
-      is ``state``, the same object. Splicing the prefix in front of it
-      would state every earlier entry twice.
+    - A halt that already left from ``state`` itself (the same object) is
+      whole: splicing the prefix in front of it would state every earlier
+      entry twice.
     - Any other record is the nested reduction's own (``_prefixed``): this
       block's prefix is spliced in front. Every halt a compound statement
       hands back carries one (``halt_record``, ``halts_recorded``): one at
       its head, before anything of the statement ran, carries the empty
       record in the context it halted in, and the prefix spliced here is
-      then its whole record. A record a nested block enrolled on a carrier
-      (a suite's statement, a callee's) is that nested block's, and gets
-      the prefix like any other.
+      then its whole record.
     """
     if exit_.state is None or exit_.state is state:
         return state
@@ -210,18 +203,13 @@ def _require_recorded_halts(outcome, statement, prefix=None) -> None:
     statement holding a walrus is refused here like any other: the prefix
     would drop the bind.
 
-    A statement that waited on its caller's actuals meets the same check
-    once its exits are known (``reduce_block_to_exitset``: the one tail).
     ``prefix`` is the block's state before the statement. A halt that left
-    from ``prefix`` itself took the prefix as its record already: the
-    deferred operation's carrier recorded it from the state this block
-    enrolled, on the block's behalf (``halts_recorded`` hands a carrier
-    back unrecorded). For a statement that declares it binds nothing before
-    a halt, that is the same claim, and it is checked the same way: one
-    that holds a walrus is refused, never left with a record that may lack
-    the bind. A compound statement declares nothing: the halt of its
-    deferred header halted at its head, where the prefix is its record, and
-    stands; its record-less halt is refused as any statement's is.
+    from ``prefix`` itself (the same object) took the prefix as its record
+    already. For a statement that declares it binds nothing before a halt,
+    that is the same claim, and it is checked the same way: one that holds
+    a walrus is refused, never left with a record that may lack the bind. A
+    compound statement declares nothing: such a halt stands; its
+    record-less halt is refused as any statement's is.
     """
     recordless = any(
         isinstance(exit_, Halted) and exit_.state is None for exit_ in outcome.exits
@@ -251,9 +239,9 @@ def _require_recorded_halts(outcome, statement, prefix=None) -> None:
                 f"a {name} statement holding a walrus handing the block a halt "
                 "with no record: the walrus may have bound before it halted"
                 if recordless
-                else f"a {name} statement holding a walrus whose deferred "
-                "operation halted from the block's prefix: the walrus may "
-                "have bound before it halted"
+                else f"a {name} statement holding a walrus whose halt left "
+                "from the block's prefix: the walrus may have bound before "
+                "it halted"
             )
             if declared
             else f"a {name} statement handing the block a halt with no record"
@@ -368,18 +356,10 @@ def halts_recorded(outcome, record: _ReducedBlock):
     record that face left (``face_record``).
 
     An arm that carries its own record (a call's halt: the callee's) keeps
-    it, and every arm keeps its guard, faces and ``owed``. A deferred
-    native-operation carrier is handed back as it is: its halt is recorded
-    by the block composition that enrolled its pre-effect state.
+    it, and every arm keeps its guard, faces and ``owed``.
     """
     from dataclasses import replace as _replace
 
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    if isinstance(outcome, NativeOperationExitCarrierV1):
-        return outcome
     if not any(
         isinstance(exit_, Halted) and exit_.state is None for exit_ in outcome.exits
     ):
@@ -632,10 +612,8 @@ def header_ran(statement, field: str, value, ctx):
     (``statement_record``): what follows the statement reads the header's
     writes, never the context from before the header.
 
-    The step ``header_applied`` takes on each completed face of the header;
-    a statement whose header's completion waits on its caller's actuals (an
-    ``if`` test deferred on a native operation) takes it on the discharged
-    value."""
+    The step ``header_applied`` takes on each completed face of the
+    header."""
     from sugar_lift_py_tests.floor.floor_value import FloorValue
     from sugar_lift_py_tests.floor.named_expression_value import (
         caller_stores_of,
@@ -801,8 +779,7 @@ def past_prior_returns(state, ctx, goes_on, returned):
     entries, fall-through guard and transforms -- the arm's guard already
     says no earlier ``return`` was taken, so none of them is live on it (as
     ``resumed`` drops them after a halt), and what follows never stands
-    beside them. One composition beneath both (``ExitSet.and_then``), which
-    hands on a continuation still waiting on its caller's actuals.
+    beside them. One composition beneath both (``ExitSet.and_then``).
     """
     earlier = _prior_return_face(state, ctx)
     if earlier is None:
@@ -866,9 +843,8 @@ def reduce_block_to_exitset(
         def reduce_next(
             state: _ReducedBlock, *, statement=head
         ) -> ExitSet[_ReducedBlock]:
-            # A native-operation carrier may retain this callback until after
-            # the outer reducer loop advances. Bind the current statement now;
-            # a late-bound ``head`` skips the deferred tail to the final node.
+            # Bind the current statement now (``statement=head``): a
+            # late-bound ``head`` would read the loop's final node.
             if not state.can_fall_through:
                 # A terminal Completed face (return, including return from
                 # finally) owns the exit.  It is completed rather than halted,
@@ -941,14 +917,10 @@ def reduce_block_to_exitset(
 
             def leaves(outcome):
                 # THE ONE TAIL of a statement: what the block does once the
-                # statement's exits are known. A statement that hands its
-                # exits back at once takes it at once; one that waits on its
-                # caller's actuals takes it when it discharges, on the exits
-                # it discharges to (``after_discharge``, below). There is no
-                # second composition for a deferred statement: its halts are
-                # guarded by the fall-through, the earlier ``return``s stand
-                # beside them, a nested record gets the prefix, and the
-                # walrus requirement holds, exactly as for any other.
+                # statement's exits are known. Its halts are guarded by the
+                # fall-through, the earlier ``return``s stand beside them, a
+                # nested record gets the prefix, and the walrus requirement
+                # holds.
                 plain = plain_completed_value(outcome)
                 if plain is not None and not isinstance(plain, _ReducedBlock):
                     # One plain completion: the statement's value carries the
@@ -1009,43 +981,13 @@ def reduce_block_to_exitset(
                 if returned is not None:
                     # The faces of every earlier ``return`` stand beside the
                     # statement's own: ``project`` and ``spliced`` answer exits,
-                    # so ``composed`` is exits, never a waiting continuation.
+                    # so ``composed`` is exits.
                     return composed.union(returned)
                 return composed
 
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-                ReducerPreEffectStateV1,
-            )
-
-            if isinstance(outcome, NativeOperationExitCarrierV1):
-                # A formal native operation is neither a completion nor a halt
-                # until an authenticated caller supplies its actual operands:
-                # the statement's exits are not known yet. The tail waits for
-                # them (``after_discharge``): it is handed every exit the
-                # statement discharges to, completed and halted, after the
-                # statement's own continuations ran and before anything the
-                # block enrolls after it (the next statement).
-                # Enroll this block's reducer state only once. A callee that
-                # already enrolled at the lookup (stringify_exception at
-                # exc.message) keeps that inner state; this caller omits a
-                # second conflicting enrollment, and the inner record gets
-                # this block's prefix in the tail like any nested record.
-                if outcome.pre_effect_state is None:
-                    outcome = outcome._enroll_pre_effect_state(
-                        ReducerPreEffectStateV1._from_reducer(state)
-                    )
-                return outcome.after_discharge(leaves)
-
             return leaves(outcome)
 
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-
-        if isinstance(exits, NativeOperationExitCarrierV1):
-            exits = exits.and_then(reduce_next)
-        elif (
+        if (
             len(exits.exits) == 1
             and isinstance(exits.exits[0], Completed)
             and exits.exits[0].guard == true_guard()
@@ -1054,28 +996,11 @@ def reduce_block_to_exitset(
             # the arm owes; an owing arm sequences like any other.
             and not exits.exits[0].owed
         ):
-            # The straight-line singleton is the only ExitSet face that can
-            # become a deferred native-operation carrier without needing a
-            # guarded carrier algebra. Preserve it directly. Branching paths
-            # continue through ExitSet.and_then and remain loud if they try to
-            # smuggle an undischarged carrier through a guard.
+            # The straight-line singleton hands its record straight on.
             exits = reduce_next(exits.exits[0].value)
         else:
-            # A completed prefix may expose a deferred native operation.
-            # ``and_then`` keeps that carrier outside ExitSet until caller
-            # actuals discharge it; no ExitSet ever holds a carrier as an arm.
             exits = exits.and_then(reduce_next)
 
-    # The block boundary is where an obligation stops being in flight, so it is
-    # the one door that consumes the carriers. Doing it here rather than per
-    # statement keeps a single owner and lets `sequence` compose obligations
-    # across statements first.
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    if isinstance(exits, NativeOperationExitCarrierV1):
-        return exits
     # No completed record holds a halt (#7826): every halt is already a halted
     # arm, so there is nothing to promote out of a record here.
     return exits
@@ -1095,16 +1020,7 @@ def reduce_body(statements: tuple, ctx: object = None):
 def block_values(exits):
     """``exits`` (a suite's ``reduce_block_to_exitset``) as ``reduce_body``
     answers it: every completed record a ``BlockValue``, every halt kept."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    def block_value(state):
-        return ExitSet.completed(block_record(state))
-
-    if isinstance(exits, NativeOperationExitCarrierV1):
-        return exits.and_then(block_value)
-    return exits.and_then(block_value)
+    return exits.and_then(lambda state: ExitSet.completed(block_record(state)))
 
 
 def block_record(state) -> BlockValue:

@@ -32,7 +32,6 @@ routing, parameter-name maps, chained-comparison lane.
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -146,7 +145,7 @@ def _only_halted(outcome: object, *, require_pre_effect_state: bool = True) -> H
     if require_pre_effect_state:
         assert halted.state is not None, (
             "formal less_than halt omitted real pre-effect state "
-            "(NativeOperationResolutionV1.project / reduce_body collapse)"
+            "(reduce_body collapse)"
         )
     return halted
 
@@ -271,7 +270,6 @@ def test_method_alone_is_the_undecided_ordering_not_a_carrier() -> None:
     audit row NEW-1): it completes under its own ``python:compare.completes``
     atom or raises something undetermined, one halt."""
     _, method, outcome = _method_definition()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert isinstance(outcome, ExitSet)
     (halted,) = _ordering_halts(outcome)
     assert halted.effect.exception_name is None
@@ -310,7 +308,6 @@ def test_incompatible_ordering_typeerror_with_the_block_record_state() -> None:
     """``None < 2``, decided by the frame: the floor's TypeError, leaving
     with the block's record as its state."""
     _, _method, exits = _method_definition(DECIDED_BODY)
-    assert not isinstance(exits, NativeOperationExitCarrierV1)
     halted = _only_halted(exits, require_pre_effect_state=True)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
 
@@ -322,11 +319,6 @@ def test_incompatible_ordering_typeerror_with_the_block_record_state() -> None:
     remaining = _only_halted(retained, require_pre_effect_state=True)
     assert remaining.effect is halted.effect
     assert remaining.state is halted.state
-
-
-def test_identity_comparison_never_acquires_a_carrier() -> None:
-    _, _method, pending = _method_definition(IDENTITY_BODY)
-    assert not isinstance(pending, NativeOperationExitCarrierV1)
 
 
 def test_discrimination_ordering_is_not_identity_dual_edge_free() -> None:

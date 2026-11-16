@@ -326,28 +326,20 @@ class IfSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halt_record,
             halts_recorded,
             header_applied,
-            header_ran,
             plain_completed_value,
         )
 
         # The test is this statement's header: every walrus bind and callee
         # store its value carried reaches both suites, and what follows the
         # ``if``, by the one header rule (``header_applied``), the stores laid
-        # first in every record the ``if`` makes.  A test whose completion
-        # waits on the caller's actuals takes the same step on the value it
-        # discharges to (``header_ran``).
+        # first in every record the ``if`` makes.
         headed, cond = header_applied(self, "test", ctx)
         if headed is not None:
             return headed
-        if isinstance(cond, NativeOperationExitCarrierV1):
-            return cond.and_then(lambda value: header_ran(self, "test", value, ctx))
 
         condition = plain_completed_value(cond)
         if condition is not None:
@@ -548,38 +540,6 @@ class IfSugar(Sugar):
             # arm, and is carried out of the if like an arm's own.
             incoming=ctx,
         )
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-
-        then_deferred = isinstance(then_exits, NativeOperationExitCarrierV1)
-        else_deferred = isinstance(else_exits, NativeOperationExitCarrierV1)
-        if then_deferred and else_deferred:
-            # Both suites hold a formal native operation (``b = 1 // x`` /
-            # ``b = 2 // x``). Each suite's exits exist only once caller
-            # actuals discharge its own demand. The join waits for both: the
-            # then carrier's discharge hands its faces to a step that returns
-            # the else carrier, which the same discharge (the same caller
-            # actuals) resolves before the ordinary union runs. Neither demand
-            # is merged into the other and neither suite is decided early.
-            return then_exits.after_discharge(
-                lambda then_discharged: else_exits.after_discharge(
-                    lambda else_discharged: join(then_discharged, else_discharged)
-                )
-            )
-        if then_deferred != else_deferred:
-            # One suite holds a formal native operation (``message =
-            # exc.message`` evaluated at its assignment): its exits exist only
-            # once caller actuals discharge it. The join waits for that
-            # discharge and then is the ordinary union -- the deferred suite's
-            # faces under its polarity, the decided peer under the other.
-            if then_deferred:
-                return then_exits.after_discharge(
-                    lambda discharged: join(discharged, else_exits)
-                )
-            return else_exits.after_discharge(
-                lambda discharged: join(then_exits, discharged)
-            )
         return join(then_exits, else_exits)
 
     def _join_branches(

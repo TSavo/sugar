@@ -129,9 +129,6 @@ def test_a_formal_subscript_owes_the_undecided_read_instead() -> None:
     proof states it: the operation completes only under its own undecided
     guard, halts under the complement, and owes the one ``undecided``
     member.  Its halt is kept."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Completed, ExitSet
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
@@ -143,7 +140,6 @@ def test_a_formal_subscript_owes_the_undecided_read_instead() -> None:
         if isinstance(node, nodes.FunctionDef) and node.name == "f"
     ]
     # No subscript carrier: the body is read at once.
-    assert not isinstance(fn.sugar().desugar(None), NativeOperationExitCarrierV1)
     outcome = function_universe_outcome(fn)
     assert isinstance(outcome, ExitSet), type(outcome)
     assert len(outcome.exits) == 2

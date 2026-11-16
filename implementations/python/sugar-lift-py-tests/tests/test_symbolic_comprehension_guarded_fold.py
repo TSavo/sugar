@@ -55,11 +55,7 @@ def _outcome_of(source, path=None):
             construction_context=TreeConstructionContextV1.for_test_without_workspace(),
         ).functions()
     )[0]
-    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
-
-    # ``iter(xs)`` over a formal is the undecided two faces (#9018); the
-    # function's own proof states them as they are (``as_its_own_proof_states``).
-    return as_its_own_proof_states(function.sugar().desugar(None), None)
+    return function.sugar().desugar(None)
 
 
 def _post_of(source, path=None):

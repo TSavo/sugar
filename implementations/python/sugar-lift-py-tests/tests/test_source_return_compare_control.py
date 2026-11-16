@@ -15,7 +15,6 @@ This suite used to read the branch a call took, and the ``TypeError`` of
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
@@ -129,7 +128,6 @@ def test_identity_over_a_call_result_owes_only_the_calls_own_halts() -> None:
     _, _, functions = _tree()
     outcome = functions["identity_control"].sugar().desugar(None)
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert isinstance(outcome, ExitSet)
     assert any(isinstance(face, Completed) for face in outcome.exits)
     for halt in outcome.halts():
