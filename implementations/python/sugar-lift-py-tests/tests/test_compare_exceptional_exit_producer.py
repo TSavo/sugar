@@ -451,44 +451,41 @@ def test_membership_law_routes_through_authenticated_contains(
     _assert_dual_dispatch(sugar.desugar(None), atom="py.in", blame=str(node.fragment))
 
 
-def test_formal_ordering_survives_until_authenticated_caller_discharge() -> None:
-    """One ordered operation may honestly complete or halt at its callers."""
+def test_formal_ordering_is_the_undecided_two_faces_not_a_carrier() -> None:
+    """A parameter operand is no deferred operation (#7757, audit row
+    NEW-1): an ordering is the rich method, then its reflection, which no
+    one dispatched method states, so ``left < container`` over two
+    parameters is the undecided ordering's two faces where it runs."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
-    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 
     node = _synthetic_compare("left < container")
     left_coordinate = _formal_coordinate(node, "left", 0)
     right_coordinate = _formal_coordinate(node, "container", 1)
-    carrier = ComparisonOpSugar(
+    outcome = ComparisonOpSugar(
         "Lt",
         _ValueSugar(SymbolicValue(make_var("left"), left_coordinate)),
         _ValueSugar(SymbolicValue(make_var("container"), right_coordinate)),
         node.fragment,
     ).desugar(None)
 
-    assert isinstance(carrier, NativeOperationExitCarrierV1)
-    assert carrier.demand.operator == "less_than"
-    assert carrier.demand.operand_coordinate_cids == (
-        left_coordinate.coordinate_cid,
-        right_coordinate.coordinate_cid,
-    )
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    _assert_dual_dispatch(outcome, atom="py.lt", blame=str(node.fragment))
 
-    completed = carrier.discharge(
-        None,
-        {
-            left_coordinate.coordinate_cid: TermValue(1),
-            right_coordinate.coordinate_cid: TermValue(2),
-        },
-    )
-    halted = carrier.discharge(
-        None,
-        {
-            left_coordinate.coordinate_cid: NoneValue(),
-            right_coordinate.coordinate_cid: TermValue(2),
-        },
-    )
+
+def test_decided_ordering_completes_or_halts_on_its_floor() -> None:
+    """Where the lift decides both operands the floor's own law answers:
+    ``1 < 2`` completes, ``None < 2`` is Python's ``TypeError``."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    node = _synthetic_compare("left < container")
+    completed = ComparisonOpSugar(
+        "Lt", _ValueSugar(TermValue(1)), _ValueSugar(TermValue(2)), node.fragment
+    ).desugar(None)
+    halted = ComparisonOpSugar(
+        "Lt", _ValueSugar(NoneValue()), _ValueSugar(TermValue(2)), node.fragment
+    ).desugar(None)
     assert len(completed.exits) == 1
     assert isinstance(completed.exits[0], Completed)
     assert len(halted.exits) == 1
@@ -518,14 +515,14 @@ def test_formal_ordering_rejects_a_lying_exception_identity() -> None:
             return self.identity
 
     node = _synthetic_compare("left < container")
-    left_coordinate = _formal_coordinate(node, "left", 0)
-    carrier = ComparisonOpSugar(
+    # The decided operand the frame holds (``None < 2``): its floor's
+    # ``TypeError``, never one a boundary may read as ``ValueError``.
+    exits = ComparisonOpSugar(
         "Lt",
-        _ValueSugar(SymbolicValue(make_var("left"), left_coordinate)),
+        _ValueSugar(NoneValue()),
         _ValueSugar(TermValue(2)),
         node.fragment,
     ).desugar(None)
-    exits = carrier.discharge(None, {left_coordinate.coordinate_cid: NoneValue()})
     projected = exits.and_exit(
         ExitSet.completed(object()),
         disposition=EffectBoundaryDisposition(
@@ -543,54 +540,62 @@ def test_formal_ordering_rejects_a_lying_exception_identity() -> None:
 
 
 def test_formal_membership_records_authenticated_contains_receiver_order() -> None:
-    """``item in container`` defers ``container.contains(item)`` in that order."""
+    """``item in container`` over two parameters is the container's
+    undecided ``__contains__``, two-faced, with ``py.in(item, container)``
+    in that order; no carrier waits on a caller (#7757, audit row NEW-1)."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
+    from sugar_lift_py_tests.outcome.exit_set import Completed
 
     node = _synthetic_compare("left in container")
     item_coordinate = _formal_coordinate(node, "left", 0)
     container_coordinate = _formal_coordinate(node, "container", 1)
-    carrier = ComparisonOpSugar(
+    outcome = ComparisonOpSugar(
         "In",
         _ValueSugar(SymbolicValue(make_var("left"), item_coordinate)),
         _ValueSugar(SymbolicValue(make_var("container"), container_coordinate)),
         node.fragment,
     ).desugar(None)
 
-    assert isinstance(carrier, NativeOperationExitCarrierV1)
-    assert carrier.demand.operator == "contains"
-    assert carrier.demand.operand_coordinate_cids == (
-        container_coordinate.coordinate_cid,
-        item_coordinate.coordinate_cid,
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    _assert_dual_dispatch(outcome, atom="py.in", blame=str(node.fragment))
+    completed = next(exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
+    assert tuple(completed.value.formula.args) == (
+        make_var("left"),
+        make_var("container"),
     )
 
 
-def test_formal_equality_keeps_py_eq_solver_work_until_discharge() -> None:
-    """A formal equality is deferred; its authenticated ground result completes."""
+def test_formal_equality_keeps_py_eq_solver_work_beside_its_halt() -> None:
+    """A parameter's equality is the undecided ``==``: ``py.eq`` completes
+    under its own atom beside the undetermined halt, never deferred to a
+    caller (#7757, audit row NEW-1).  The decided pair the frame holds
+    (``1 == 2``) folds on its floor."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
-    from sugar_lift_py_tests.outcome.exit_set import Completed
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 
     node = _synthetic_compare("left == 2")
     left_coordinate = _formal_coordinate(node, "left", 0)
-    carrier = EqualityOpSugar(
+    outcome = EqualityOpSugar(
         _ValueSugar(SymbolicValue(make_var("left"), left_coordinate)),
         _ValueSugar(TermValue(2)),
         node.fragment,
     ).desugar(None)
 
-    assert isinstance(carrier, NativeOperationExitCarrierV1)
-    assert carrier.demand.operator == "equals"
-    exits = carrier.discharge(None, {left_coordinate.coordinate_cid: TermValue(1)})
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
-    assert isinstance(exits.exits[0].value, FalseBoolLiteralSugar)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    _assert_dual_dispatch(outcome, atom="py.eq", blame=str(node.fragment))
+    decided = EqualityOpSugar(
+        _ValueSugar(TermValue(1)), _ValueSugar(TermValue(2)), node.fragment
+    ).desugar(None)
+    assert isinstance(decided.completed_value(), FalseBoolLiteralSugar)
 
 
-def test_formal_ordering_keeps_swapped_operand_coordinates_distinct() -> None:
+def test_formal_ordering_keeps_swapped_operands_distinct() -> None:
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
     node = _synthetic_compare("left < container")
     left_coordinate = _formal_coordinate(node, "left", 0)
     right_coordinate = _formal_coordinate(node, "container", 1)
@@ -604,15 +609,17 @@ def test_formal_ordering_keeps_swapped_operand_coordinates_distinct() -> None:
         "Lt", _ValueSugar(right), _ValueSugar(left), node.fragment
     ).desugar(None)
 
-    assert forward.demand.operand_coordinate_cids == (
-        left_coordinate.coordinate_cid,
-        right_coordinate.coordinate_cid,
-    )
-    assert swapped.demand.operand_coordinate_cids == (
-        right_coordinate.coordinate_cid,
-        left_coordinate.coordinate_cid,
-    )
-    assert forward.demand.demand_cid != swapped.demand.demand_cid
+    def stated(outcome):
+        completed = next(
+            exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)
+        )
+        return completed.value.formula, completed.guard
+
+    forward_formula, forward_guard = stated(forward)
+    swapped_formula, swapped_guard = stated(swapped)
+    assert tuple(forward_formula.args) == (make_var("left"), make_var("container"))
+    assert tuple(swapped_formula.args) == (make_var("container"), make_var("left"))
+    assert forward_guard != swapped_guard
 
 
 def test_formal_identity_remains_total_without_a_native_operation_carrier() -> None:

@@ -16057,7 +16057,6 @@ class AugAssign(Statement):
                 name=self.target.id,
                 left=prior.sugar(),
                 right=self.value.sugar(),
-                operator=type(self.op).inplace_operator,
                 operation=self.op.project_inplace,
                 op_site=op_site,
                 site=self.fragment,
@@ -20048,7 +20047,6 @@ class ReceiverFieldStoreStatement(Statement):
             value=AttributeAugAssignSugar(
                 current=current,
                 rhs=value_sugar,
-                operator=type(op).inplace_operator,
                 operation=op.project_inplace,
                 op_site=self.operator_site,
                 site=self.fragment,

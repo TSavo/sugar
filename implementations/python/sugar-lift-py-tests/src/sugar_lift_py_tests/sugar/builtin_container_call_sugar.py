@@ -595,7 +595,6 @@ class PathContainerCallSugar(ConstructedTermSugar):
                         lambda operand: project_augmented(
                             current,
                             operand,
-                            operator=type(self.operator).inplace_operator,
                             projector=self.operator.project_inplace,
                             site=op_site,
                             ctx=ctx,
@@ -672,7 +671,6 @@ class PathContainerCallSugar(ConstructedTermSugar):
             return project_augmented(
                 receiver,
                 operand,
-                operator=type(self.operator).inplace_operator,
                 projector=self.operator.project_inplace,
                 site=self.operator_site if self.operator_site is not None else self.site,
                 ctx=ctx,

@@ -52,10 +52,8 @@ class Operator:
 class BinaryOperator(Operator):
     """Operators of BinOp / AugAssign.
 
-    ``inplace_operator`` is the native-operation carrier name AugAssign mints
-    for formal ``OP=`` (e.g. ``iadd`` for ``+=``).  Declared on the operator
-    class so production's enrolled set is derived from constructors — never
-    from the projector table (circular equality tooth).
+    ``inplace_operator`` is the stem of the in-place method ``OP=`` names
+    (``iadd`` for ``+=``: ``__iadd__``).
 
     ``project_inplace`` is operator-owned double dispatch into the established
     Floor edge ``inplace_binary_operator_with`` (not a second iadd protocol).
@@ -137,7 +135,7 @@ class FloorDiv(BinaryOperator):
     kind, symbol, inplace_operator = "FloorDiv", "//", "ifloordiv"
 
 
-# BinaryOperator classes AugAssign may host — production mint set source.
+# BinaryOperator classes AugAssign may host.
 AUGASSIGN_BINARY_OPERATOR_CLASSES: tuple[type[BinaryOperator], ...] = (
     Add,
     Sub,
@@ -153,20 +151,6 @@ AUGASSIGN_BINARY_OPERATOR_CLASSES: tuple[type[BinaryOperator], ...] = (
     BitAnd,
     FloorDiv,
 )
-
-
-def production_augassign_inplace_operators() -> frozenset[str]:
-    """Inplace carrier names AugAssign production may mint.
-
-    Derived **only** from BinaryOperator class attributes — independent of
-    any projector table.  Equality tooth: this set must equal the i* keys
-    enrolled on the projector side.
-    """
-    return frozenset(
-        cls.inplace_operator
-        for cls in AUGASSIGN_BINARY_OPERATOR_CLASSES
-        if cls.inplace_operator
-    )
 
 
 class UAdd(UnaryOperator):

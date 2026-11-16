@@ -11,7 +11,7 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
-from native_carrier_testimony import completed_function_value, native_carrier_for
+from native_carrier_testimony import completed_function_value, undecided_function_value
 
 
 def _fn(src):
@@ -42,14 +42,17 @@ def test_float_literal_is_real_sorted():
 
 
 def test_membership_lifts_for_a_symbolic_container():
-    """Deleted expectation: formal membership immediately projected py.in."""
-    carrier = native_carrier_for(
+    """Formal membership waits on no caller: ``x in xs`` is the undecided
+    membership's two faces, ``py.in(x, xs)`` completing only under its own
+    completes atom (#7757, audit row NEW-1)."""
+    inv = undecided_function_value(
         _fn("def A(x, xs):\n    assert x in xs\n    return x\n"),
-        operator="contains",
-    )
-    container, item = carrier.operands
-    assert container.to_term(owner="membership carrier tooth").name == "xs"
-    assert item.to_term(owner="membership carrier tooth").name == "x"
+        owner="UndecidedCompare:In",
+    ).invs()[0]
+    assert inv.name == "py.in"
+    item, container = inv.args
+    assert item.name == "x"
+    assert container.name == "xs"
 
 
 if __name__ == "__main__":

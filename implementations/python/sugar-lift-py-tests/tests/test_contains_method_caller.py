@@ -9,21 +9,21 @@ Concrete program:
     Checker().has([1, 2], 1)
 
 Python law: a bound method call supplies ``self`` first. That binding must not
-shift ``container`` / ``item`` in the contains demand. Source ``item in
-container`` evaluates item then container, but discharge is
-``container.contains(item)`` — operator ``contains``, operands
-``(container, item)``.
+shift ``container`` / ``item`` in the membership. Source ``item in
+container`` evaluates item then container, and is
+``container.contains(item)``.  A parameter operand is no deferred operation
+(#7757, audit row NEW-1): over two parameters it is the container's undecided
+``__contains__``, two-faced, stating ``py.in(item, container)``.
 
 Acceptance (each with a discrimination twin where noted):
 
-  1. Method alone retains exactly one contains demand.
+  1. Method alone is exactly one undecided membership, no carrier.
   2. Bound self does not shift container/item.
-  3. Positional, keyword, and default calls discharge.
-  4. Membership uses contains — never ordering's exception law.
-  5. Non-container receiver yields named TypeError (pre-effect may stay red
-     on producer_outcome behind #6659 / codex-1).
-  6. Identity and equality remain separate laws (carrier-free / equals).
-  7. Off-by-one self-binding and swapped container/item twins fail.
+  3. Membership uses contains — never ordering's law.
+  5. A decided non-container receiver yields named TypeError with the
+     block's record as its state.
+  6. Identity and equality remain separate laws.
+  7. Swapped container/item twins fail.
 
 The caller's list is made at the call, and ``container`` is that actual with
 the caller's currency (#8249): membership is decided in ``has``'s frame and
@@ -35,7 +35,6 @@ routing, parameter-name maps, chained-comparison lane.
 
 from __future__ import annotations
 
-from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
@@ -45,10 +44,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect import ExpectationNotMetEffect
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
-    ListValue,
-    NoneValue,
     ObjectValue,
-    TermValue,
 )
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -83,6 +79,31 @@ ORDERING_BODY = (
     "class Checker:\n"
     "    def has(self, container, item):\n"
     "        return item < container\n"
+)
+
+# The frame decides both operands: the floor's own membership law answers.
+NON_CONTAINER_BODY = (
+    "class Checker:\n"
+    "    def has(self):\n"
+    "        container = None\n"
+    "        item = 1\n"
+    "        return item in container\n"
+)
+
+LIST_BODY = (
+    "class Checker:\n"
+    "    def has(self):\n"
+    "        container = [1, 2]\n"
+    "        item = 1\n"
+    "        return item in container\n"
+)
+
+SWAPPED_LIST_BODY = (
+    "class Checker:\n"
+    "    def has(self):\n"
+    "        container = [1, 2]\n"
+    "        item = 1\n"
+    "        return container in item\n"
 )
 
 
@@ -159,13 +180,39 @@ def _assert_completed_call(outcome) -> CallSiteValue:
     return outcome.completed_value()
 
 
-def _container_item_cids(pending: NativeOperationExitCarrierV1):
-    """contains demand order: container, item — not source item-then-container."""
-    assert pending.demand.operator == "contains"
-    assert len(pending.demand.operand_coordinate_cids) == 2
-    names = tuple(value.term.name for value in pending.operands)
-    assert names == ("container", "item"), names
-    return pending.demand.operand_coordinate_cids
+def _undecided_halts(outcome: object, op_kind: str) -> tuple[Halted, ...]:
+    """The undecided comparison's halts (owner ``UndecidedCompare:<op>``)."""
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert isinstance(outcome, ExitSet)
+    return tuple(
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == f"UndecidedCompare:{op_kind}"
+    )
+
+
+def _compare_operand_names(outcome: ExitSet) -> tuple[str, str]:
+    """The operands the one ``python:compare.completes`` atom names, in its
+    order: ``py.in(item, container)`` states the item first."""
+    found: list = []
+
+    def walk(formula) -> None:
+        if getattr(formula, "name", None) == "python:compare.completes":
+            (dispatch,) = formula.args
+            if dispatch not in found:
+                found.append(dispatch)
+            return
+        for operand in getattr(formula, "operands", None) or ():
+            walk(operand)
+        inner = getattr(formula, "operand", None)
+        if inner is not None:
+            walk(inner)
+
+    for exit_ in outcome.exits:
+        walk(exit_.guard)
+    (dispatch,) = found
+    assert dispatch.name == "python:compare"
+    return tuple(term.name for term in dispatch.args[1:3])
 
 
 def _through_assertion_boundary(outcome: ExitSet, expected: str) -> ExitSet:
@@ -228,27 +275,27 @@ def _membership_bool(outcome) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 1. Method alone retains one contains demand
+# 1. Method alone is the undecided membership, never a carrier
 # ---------------------------------------------------------------------------
 
 
-def test_method_alone_retains_exactly_one_contains_demand() -> None:
-    _, method, pending = _method_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "contains"
-    assert len(pending.demand.operand_coordinate_cids) == 2
-    # Discharge order: container, item (not source item, container).
-    assert tuple(v.term.name for v in pending.operands) == ("container", "item")
+def test_method_alone_retains_exactly_one_undecided_membership() -> None:
+    """``item in container`` over two parameters is no deferred operation
+    (#7757, audit row NEW-1): the container's undecided ``__contains__``,
+    two-faced, one ``UndecidedCompare:In`` halt, ``py.in(item, container)``."""
+    _, method, outcome = _method_definition()
+    (halted,) = _undecided_halts(outcome, "In")
+    assert halted.effect.exception_name is None
+    assert _compare_operand_names(outcome) == ("item", "container")
     method_formals = tuple(p.name for p in method.params)
     assert method_formals[0] == "self"
     assert method_formals[1:] == ("container", "item")
 
 
 def test_discrimination_method_alone_is_not_completed_membership() -> None:
-    _, _method, pending = _method_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert not isinstance(pending, Completed)
-    assert not isinstance(pending, ExitSet)
+    _, _method, outcome = _method_definition()
+    assert _undecided_halts(outcome, "In")
+    assert outcome.completed_value() is None
 
 
 # ---------------------------------------------------------------------------
@@ -257,32 +304,30 @@ def test_discrimination_method_alone_is_not_completed_membership() -> None:
 
 
 def test_discrimination_self_is_not_a_contains_operand() -> None:
-    _class_def, method, pending = _method_definition()
-    self_coord = method.formal_coordinates()[0]
-    container_cid, item_cid = _container_item_cids(pending)
-    assert self_coord.coordinate_cid not in {container_cid, item_cid}
+    _class_def, _method, outcome = _method_definition()
+    names = _compare_operand_names(outcome)
+    assert "self" not in names
+    assert names == ("item", "container")
 
 
 # ---------------------------------------------------------------------------
-# 3. Positional, keyword, and default calls discharge
+# 3. Membership and ordering are separate laws
 # ---------------------------------------------------------------------------
 
 
 def test_membership_dispatches_through_contains_not_ordering() -> None:
     _, _method, membership = _method_definition(METHOD_BODY)
     _, _m2, ordering = _method_definition(ORDERING_BODY)
-    assert isinstance(membership, NativeOperationExitCarrierV1)
-    assert membership.demand.operator == "contains"
-    assert isinstance(ordering, NativeOperationExitCarrierV1)
-    assert ordering.demand.operator == "less_than"
-    assert membership.demand.operator != ordering.demand.operator
+    assert _undecided_halts(membership, "In")
+    assert not _undecided_halts(membership, "Lt")
+    assert _undecided_halts(ordering, "Lt")
+    assert not _undecided_halts(ordering, "In")
 
 
 def test_discrimination_ordering_exception_law_is_not_contains() -> None:
-    """Ordering TypeError is not what membership alone mints."""
+    """Ordering's undecided halt is not what membership alone mints."""
     _, _method, membership = _method_definition(METHOD_BODY)
-    assert membership.demand.operator == "contains"
-    assert membership.demand.operator != "less_than"
+    assert not _undecided_halts(membership, "Lt")
 
 
 # ---------------------------------------------------------------------------
@@ -291,25 +336,16 @@ def test_discrimination_ordering_exception_law_is_not_contains() -> None:
 
 
 def test_non_container_receiver_yields_named_typeerror_with_pre_effect() -> None:
-    """Formal discharge: contains TypeError stamps reducer pre-state."""
-    _, _method, pending = _method_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    testimony = pending.pre_effect_state
-    assert testimony is not None, (
-        "method body reducer did not enroll ReducerPreEffectStateV1 on the "
-        "formal contains carrier"
-    )
-    container_cid, item_cid = _container_item_cids(pending)
-    exits = pending.discharge(
-        None, {container_cid: NoneValue(), item_cid: TermValue(1)}
-    )
+    """``1 in None``, decided by the frame: the floor's TypeError, leaving
+    with the block's record as its state."""
+    _, _method, exits = _method_definition(NON_CONTAINER_BODY)
+    assert not isinstance(exits, NativeOperationExitCarrierV1)
     halted = _only_halted(exits, require_pre_effect_state=True)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
-    assert halted.state is testimony.state
 
     routed = _through_assertion_boundary(exits, "TypeError")
     completed = _only_completed(routed)
-    assert completed.value is testimony.state
+    assert completed.value is halted.state
 
     retained = _through_assertion_boundary(exits, "ValueError")
     remaining = _only_halted(retained, require_pre_effect_state=True)
@@ -323,45 +359,39 @@ def test_identity_remains_carrier_free() -> None:
 
 
 def test_equality_is_equals_not_contains() -> None:
-    _, _method, pending = _method_definition(EQUALITY_BODY)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "equals"
-    assert pending.demand.operator != "contains"
+    _, _method, outcome = _method_definition(EQUALITY_BODY)
+    assert _undecided_halts(outcome, "Eq")
+    assert not _undecided_halts(outcome, "In")
 
 
 def test_discrimination_membership_is_not_identity_or_equality() -> None:
     _, _method, membership = _method_definition(METHOD_BODY)
-    assert isinstance(membership, NativeOperationExitCarrierV1)
-    assert membership.demand.operator == "contains"
+    assert _undecided_halts(membership, "In")
+    assert not _undecided_halts(membership, "Eq")
     _, _m2, identity = _method_definition(IDENTITY_BODY)
     assert not isinstance(identity, NativeOperationExitCarrierV1)
+    assert not _undecided_halts(identity, "In")
     _, _m3, equality = _method_definition(EQUALITY_BODY)
-    assert equality.demand.operator == "equals"
+    assert _undecided_halts(equality, "Eq")
 
 
 # ---------------------------------------------------------------------------
-# 7. Off-by-one self-binding and swapped container/item twins fail
+# 7. Swapped container/item twins fail
 # ---------------------------------------------------------------------------
 
 
 def test_swapped_container_item_twins_fail_against_truthful_membership() -> None:
-    """``1 in [1,2]`` is True; swapping discharge slots is not that membership.
+    """``1 in [1,2]`` is True; ``[1, 2] in 1`` is not that membership.
 
-    contains demand order is (container, item). A lying map that feeds the
-    item where container belongs and the list where item belongs must not
-    equal the truthful present-member completion.
+    ``in`` is the container's ``__contains__``: swapping item and container
+    must not equal the truthful present-member completion.
     """
-    _, _method, pending = _method_definition()
-    container_cid, item_cid = _container_item_cids(pending)
-    container = fresh(ListValue, (TermValue(1), TermValue(2)))
-    item = TermValue(1)
-
-    truthful = pending.discharge(None, {container_cid: container, item_cid: item})
+    _, _method, truthful = _method_definition(LIST_BODY)
     assert isinstance(truthful.exits[0], Completed)
 
-    # Swapped: container slot gets item (TermValue), item slot gets list.
+    # Swapped: the int is the container, the list the item.
     # Non-container receiver → TypeError halt, not present-member True.
-    lying = pending.discharge(None, {container_cid: item, item_cid: container})
+    _, _m2, lying = _method_definition(SWAPPED_LIST_BODY)
     lying_face = lying.exits[0]
     if isinstance(lying_face, Completed):
         # Must not claim the same completed membership as truthful.
@@ -374,13 +404,6 @@ def test_swapped_container_item_twins_fail_against_truthful_membership() -> None
 
 
 def test_discrimination_truthful_container_item_order_completes_present() -> None:
-    _, _method, pending = _method_definition()
-    container_cid, item_cid = _container_item_cids(pending)
-    exits = pending.discharge(
-        None,
-        {
-            container_cid: fresh(ListValue, (TermValue(1), TermValue(2))),
-            item_cid: TermValue(1),
-        },
-    )
+    _, _method, exits = _method_definition(LIST_BODY)
+    assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)

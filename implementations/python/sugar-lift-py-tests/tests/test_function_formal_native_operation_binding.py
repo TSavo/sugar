@@ -2,8 +2,8 @@
 
 #7757 step 5 (#8705, the owner's ruling "Edge, join at prove"): a call of a
 same-file def is its coordinate and edge, never the callee's body applied to
-its actuals.  ``helper``'s contract states its one ``left + right`` carrier
-over its formals; each call carries its binding in its call term exactly as
+its actuals.  ``helper``'s contract states its one undecided ``left +
+right`` over its formals (two faces, #7757 audit row NEW-1); each call carries its binding in its call term exactly as
 prove's one binder (``consistency::bind_call_arguments``) binds that
 contract: a positional actual as written, a keyword as ``py.kwarg``, an
 omitted defaulted formal as ``py.default`` with the value its ``def``
@@ -20,7 +20,6 @@ completion decided at the call).
 from __future__ import annotations
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.outcome import (
     ExitSet,
@@ -122,16 +121,27 @@ def test_default_actual_is_keyed_to_its_formal_coordinate() -> None:
     assert default.args[0] == str_const("right")
 
 
-def test_helper_alone_retains_the_undischarged_binary_carrier() -> None:
+def test_helper_alone_is_the_undecided_binary_two_faces() -> None:
+    """``left + right`` over two parameters waits on no caller (#7757, audit
+    row NEW-1): ``__add__`` then the reflected ``__radd__`` is no one
+    dispatched method, so it is the one undecided binary law's two faces,
+    over the formals' own terms."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
     source = "def helper(left, right=2):\n    return left + right\n"
     function = next(
         node for node in _tree(source).nodes() if isinstance(node, FunctionDef)
     )
-    pending = function.sugar().desugar(None)
+    outcome = function.sugar().desugar(None)
 
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "add"
-    assert all(pending.demand.operand_coordinate_cids)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert isinstance(outcome, ExitSet)
+    (halted,) = outcome.halts()
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.producer_node_owner == "UndecidedBinary:+"
+    (completed,) = (face for face in outcome.exits if face is not halted)
+    assert "python:binary_op.completes" in repr(completed.guard)
+    assert "python:binary_result" in repr(completed.guard)
 
 
 def test_positional_keyword_and_default_calls_reach_the_same_binary_demand() -> None:
@@ -157,23 +167,15 @@ def test_positional_keyword_and_default_calls_reach_the_same_binary_demand() -> 
     assert default.args[1].name == "py.default"
 
 
-def test_wrong_coordinate_actual_cannot_discharge_pending_operation() -> None:
+def test_helper_alone_owes_the_undecided_member_and_never_completes_alone() -> None:
+    """No actual answers the operation in the helper's own proof: it owes
+    the undecided member on both faces and is never a sole completion."""
     source = "def helper(left, right):\n    return left + right\n"
     function = next(
         node for node in _tree(source).nodes() if isinstance(node, FunctionDef)
     )
-    pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    left, right = function.formal_coordinates()
-
-    # The wrong key answers no formal: the operation is the cited unanswered
-    # face (#7825), never a completion over the misfiled actual.
-    exits = pending.discharge(
-        None,
-        {
-            f"wrong:{left.coordinate_cid}": TermValue(1),
-            right.coordinate_cid: TermValue(2),
-        },
-    )
-    assert pending.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
+    outcome = function.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+    assert owed_calls(outcome)
+    assert all(face.owed for face in outcome.exits)
+    assert outcome.completed_value() is None

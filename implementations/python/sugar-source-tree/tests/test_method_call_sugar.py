@@ -11,6 +11,7 @@ from sugar_source_tree.tree import SourceFile
 
 from native_carrier_testimony import (
     completed_function_value,
+    undecided_function_value,
 )
 
 
@@ -41,15 +42,14 @@ def test_method_chains_compose():
 
 
 def test_assert_consumes_the_coordinate():
-    # Deleted expectation: the formal equality completed with an actual the
-    # test supplied for s. It waits as ``equals`` over the method coordinate.
-    carrier = native_carrier_for(
+    # The equality over the formal is the undecided equality's two faces: the
+    # universe completes under its own completes atom (#7757, audit row NEW-1).
+    inv = undecided_function_value(
         _fn("def A(s):\n    assert s.upper() == s\n    return s\n"),
-        operator="equals",
-    )
-    left, right = carrier.operands
-    assert left.to_term(owner="method equality carrier tooth").name == "call:upper"
-    assert right.to_term(owner="method equality carrier tooth").name == "s"
+        owner="UndecidedCompare:Eq",
+    ).invs()[0]
+    assert inv.name == "py.eq"
+    assert inv.args[0].name == "call:upper"
 
 
 def test_keyword_args_lift():

@@ -48,6 +48,30 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
+from sugar_lift_py_tests.floor.floor_value import (
+    BINARY_FLOOR_OPERATIONS,
+    ORDERING_FLOOR_OPERATIONS,
+    _BINARY_OPERATOR_COORDINATE,
+)
+
+# The projector table production enrolls, read before any test patches it.
+_PRODUCTION_PROJECTOR_KEYS = frozenset(_NATIVE_OPERATION_PROJECTORS)
+
+# Operators these carrier-mechanics tests mint by hand.  No production path
+# mints them (a binary or comparison operator with a parameter operand is the
+# undecided two faces, #7757 audit row NEW-1), so each is enrolled here, for
+# the test alone, with the floor's own explicit call.
+_STAND_IN_PROJECTORS = {
+    "add": BINARY_FLOOR_OPERATIONS["add"],
+    "less_than": ORDERING_FLOOR_OPERATIONS["less_than"],
+    "equals": lambda left, right, site, ctx: left.equals(right, site, ctx),
+}
+
+
+@pytest.fixture(autouse=True)
+def _stand_in_projectors(monkeypatch):
+    for operator, projector in _STAND_IN_PROJECTORS.items():
+        monkeypatch.setitem(_NATIVE_OPERATION_PROJECTORS, operator, projector)
 
 
 def _site():
@@ -372,66 +396,64 @@ def test_direct_conflicting_pre_effect_state_reenrollment_stays_loud():
         )
 
 
-@pytest.mark.parametrize(
-    ("method", "operator"),
-    (
-        ("add", "add"),
-        ("subtract", "subtract"),
-        ("multiply", "multiply"),
-        ("divide", "divide"),
-        ("floor_divide", "floor_divide"),
-        ("modulo", "modulo"),
-        ("power", "power"),
-        ("matrix_multiply", "matrix_multiply"),
-        ("bitwise_and", "bitwise_and"),
-        ("bitwise_or", "bitwise_or"),
-        ("bitwise_xor", "bitwise_xor"),
-        ("left_shift", "left_shift"),
-        ("right_shift", "right_shift"),
-    ),
-)
-def test_formal_binary_dispatch_mints_caller_discharge_carrier(method, operator):
+def _undecided_binary_arms(outcome, operator: str):
+    """The undecided binary law's two faces (``undecided_binary_faces``):
+    the result completes only under its own ``python:binary_op.completes``
+    atom, an ``UndeterminedRaiseEffect`` halts under the complement, and
+    both owe the undecided member.  Never a carrier."""
+    assert isinstance(outcome, ExitSet), outcome
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    (completed,) = (exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
+    (halted,) = (exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
+    assert completed.guard.name == "python:binary_op.completes"
+    assert halted.guard == complement_guard(completed.guard)
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == f"UndecidedBinary:{operator}"
+    assert halted.effect.exception_name is None
+    assert completed.owed and completed.owed == halted.owed
+    return completed, halted
+
+
+@pytest.mark.parametrize("method", tuple(_BINARY_OPERATOR_COORDINATE))
+def test_formal_binary_dispatch_is_the_undecided_two_faces(method):
+    """A binary operator with a parameter operand mints no carrier: the
+    operator is a protocol with a fallback (``__op__``, then the reflected
+    ``__rop__``) that no one dispatched method states, so it is the one
+    undecided binary law, whether or not the parameter's class is an input
+    (#7757, audit row NEW-1)."""
+    left_coordinate = _coordinate("left", 0)
+    right_coordinate = _coordinate("right", 1)
+    left = SymbolicValue(make_var("left"), left_coordinate)
+    right = SymbolicValue(make_var("right"), right_coordinate)
+    operator = _BINARY_OPERATOR_COORDINATE[method]
+
+    outcome = BINARY_FLOOR_OPERATIONS[method](left, right, _site(), None)
+
+    completed, _halted = _undecided_binary_arms(outcome, operator)
+    result = completed.value.term
+    assert result.name == "python:binary_result"
+    assert result.args[0] == str_const(operator)
+    assert result.args[1:3] == (make_var("left"), make_var("right"))
+    assert method not in _PRODUCTION_PROJECTOR_KEYS
+
+
+def test_swapped_formal_binary_operands_retain_distinct_ordered_results():
     left_coordinate = _coordinate("left", 0)
     right_coordinate = _coordinate("right", 1)
     left = SymbolicValue(make_var("left"), left_coordinate)
     right = SymbolicValue(make_var("right"), right_coordinate)
 
-    outcome = getattr(left, method)(right, _site(), None)
+    forward, _ = _undecided_binary_arms(left.subtract(right, _site(), None), "-")
+    reverse, _ = _undecided_binary_arms(right.subtract(left, _site(), None), "-")
 
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == operator
-    assert outcome.operands == (left, right)
-    assert outcome.demand.operand_coordinate_cids == (
-        left_coordinate.coordinate_cid,
-        right_coordinate.coordinate_cid,
-    )
-
-
-def test_swapped_formal_binary_operands_retain_distinct_ordered_demands():
-    left_coordinate = _coordinate("left", 0)
-    right_coordinate = _coordinate("right", 1)
-    left = SymbolicValue(make_var("left"), left_coordinate)
-    right = SymbolicValue(make_var("right"), right_coordinate)
-
-    forward = left.subtract(right, _site(), None)
-    reverse = right.subtract(left, _site(), None)
-
-    assert isinstance(forward, NativeOperationExitCarrierV1)
-    assert isinstance(reverse, NativeOperationExitCarrierV1)
-    assert forward.demand.operator == reverse.demand.operator == "subtract"
-    assert forward.demand.operand_coordinate_cids == (
-        left_coordinate.coordinate_cid,
-        right_coordinate.coordinate_cid,
-    )
-    assert reverse.demand.operand_coordinate_cids == (
-        right_coordinate.coordinate_cid,
-        left_coordinate.coordinate_cid,
-    )
-    assert forward.demand.demand_cid != reverse.demand.demand_cid
+    assert forward.value.term.args[1:3] == (make_var("left"), make_var("right"))
+    assert reverse.value.term.args[1:3] == (make_var("right"), make_var("left"))
+    assert forward.value != reverse.value
+    assert forward.guard != reverse.guard
 
 
 @pytest.mark.parametrize("formal_side", ("left", "right"))
-def test_either_formal_operand_is_enough_to_defer_binary_dispatch(formal_side):
+def test_either_formal_operand_takes_the_undecided_two_faces(formal_side):
     coordinate = _coordinate(formal_side, 0)
     left = SymbolicValue(
         make_var("left"), coordinate if formal_side == "left" else None
@@ -442,11 +464,7 @@ def test_either_formal_operand_is_enough_to_defer_binary_dispatch(formal_side):
 
     outcome = left.add(right, _site(), None)
 
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.coordinates == (
-        coordinate if formal_side == "left" else None,
-        coordinate if formal_side == "right" else None,
-    )
+    _undecided_binary_arms(outcome, "+")
 
 
 def test_coordinate_free_binary_dispatch_retains_existing_symbolic_faces():
@@ -1078,7 +1096,9 @@ def test_production_minted_operators_equal_projector_table_exactly():
     discharge silently undischarges.  Both directions must go red on drift.
     """
     production = production_native_operation_operators()
-    projectors = frozenset(_NATIVE_OPERATION_PROJECTORS)
+    # The table as production enrolls it, not as this module's stand-ins
+    # patch it for the carrier-mechanics tests.
+    projectors = _PRODUCTION_PROJECTOR_KEYS
     missing_projectors = production - projectors
     orphan_projectors = projectors - production
     assert missing_projectors == frozenset(), (
@@ -1095,13 +1115,24 @@ def test_production_minted_operators_equal_projector_table_exactly():
     # An item store or delete mints no carrier (``store_effect_sugar.
     # item_mutation``, #7757), nor does an attribute store, delete or read
     # (``store_effect_sugar.attribute_mutation``,
-    # ``AttributeSugar.project_attribute``): neither set names it.
+    # ``AttributeSugar.project_attribute``), nor a binary, in-place or
+    # comparison operator with a parameter operand (#7757, audit row NEW-1):
+    # neither set names one.
     for operator in (
         "setitem",
         "delitem",
         "setattr_named",
         "delattr_named",
         "attribute_named",
+        *_BINARY_OPERATOR_COORDINATE,
+        "iadd",
+        "isub",
+        "equals",
+        "less_than",
+        "less_equal",
+        "greater_than",
+        "greater_equal",
+        "contains",
     ):
         assert operator not in projectors
         assert operator not in production

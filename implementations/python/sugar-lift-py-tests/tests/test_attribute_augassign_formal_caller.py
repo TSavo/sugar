@@ -17,7 +17,6 @@ import pytest
 
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
-    project_iadd,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
@@ -109,7 +108,13 @@ class _FieldRead(Sugar):
         return ()
 
 
-def _read_modify_store(receiver, rhs, *, operation=project_iadd, attr="field"):
+def _project_iadd(left, right, site, ctx):
+    """``left += right`` through the ``+`` operator's own in-place edge
+    (``BinaryOperator.project_inplace``), as the statement runs it."""
+    return Add.instance().project_inplace(left, right, site, ctx)
+
+
+def _read_modify_store(receiver, rhs, *, operation=_project_iadd, attr="field"):
     """``receiver.attr OP= rhs`` as the statement runs it: the field's
     in-place result (``AttributeAugAssignSugar``) of its read, then the one
     field store of it on the same receiver (``ReceiverFieldStoreSugar``)."""
@@ -117,7 +122,6 @@ def _read_modify_store(receiver, rhs, *, operation=project_iadd, attr="field"):
     value = AttributeAugAssignSugar(
         current=_FieldRead(receiver, attr, get_site),
         rhs=rhs,
-        operator="iadd",
         operation=operation,
         op_site=op_site,
         site=site,
@@ -173,8 +177,9 @@ def test_attribute_augassign_constructs_attribute_augassign_sugar() -> None:
     sugar = keyed.value
     assert isinstance(sugar, AttributeAugAssignSugar)
     assert sugar.current.name == "field"
-    assert sugar.operator == "iadd"
+    assert not hasattr(sugar, "operator")
     assert sugar.operation.__func__ is BinaryOperator.project_inplace
+    assert type(sugar.operation.__self__) is Add
     # The receiver is evaluated once, first, and bound under its key: the
     # read and the store read it there.
     assert keyed.receiver is not None
@@ -295,7 +300,7 @@ def test_production_getattr_before_rhs_order() -> None:
 
     def _project_order(left, right, site_, ctx):
         order.append("op")
-        return project_iadd(left, right, site_, ctx)
+        return _project_iadd(left, right, site_, ctx)
 
     out = _read_modify_store(
         _FloorSugar(
@@ -598,7 +603,17 @@ def test_unrelated_source_attribute_augassign_uses_the_same_projection() -> None
     assert _stored(result).value == TermValue(7)
 
 
-def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
+def test_formal_operands_mint_no_carrier() -> None:
+    """Inverted from the deleted ``iadd`` mint (#7757, audit row NEW-1): a
+    formal's ``cell += rhs`` is the operator's own in-place edge, the
+    undecided binary law's two faces, owing the undecided member."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        _NATIVE_OPERATION_PROJECTORS,
+    )
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Halted
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -626,13 +641,17 @@ def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
 
     left = SymbolicValue(make_var("cell"), _coord("cell", 0))
     right = SymbolicValue(make_var("rhs"), _coord("rhs", 1))
-    out = project_augmented(
-        left, right, operator="iadd", projector=project_iadd, site=site, ctx=None
-    )
-    assert isinstance(out, NativeOperationExitCarrierV1)
-    assert out.demand.operator == "iadd"
-    with pytest.raises(AssertionError):
-        assert out.demand.operator == "add"
+    out = project_augmented(left, right, projector=_project_iadd, site=site, ctx=None)
+    assert not isinstance(out, NativeOperationExitCarrierV1)
+    assert isinstance(out, ExitSet), type(out)
+    (completed,) = [face for face in out.exits if isinstance(face, Completed)]
+    assert completed.value.term.name == "python:binary_result"
+    assert completed.value.term.args[0].value == "+"
+    (halted,) = [face for face in out.exits if isinstance(face, Halted)]
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == "UndecidedBinary:+"
+    assert unanswered_call(None, site) in owed_calls(out)
+    assert "iadd" not in _NATIVE_OPERATION_PROJECTORS
 
 
 def test_notimplemented_fallback_twins_via_production_projector() -> None:
@@ -651,7 +670,7 @@ def test_notimplemented_fallback_twins_via_production_projector() -> None:
             calls.append("add")
             return ExitSet.completed(TermValue(3))
 
-    out = project_iadd(_RawNI(), TermValue(1), "op", None)
+    out = _project_iadd(_RawNI(), TermValue(1), "op", None)
     assert out.completed_value() == TermValue(3)
     assert calls == ["inplace", "add"]
     calls.clear()
@@ -666,7 +685,7 @@ def test_notimplemented_fallback_twins_via_production_projector() -> None:
             calls.append("add")
             return ExitSet.completed(TermValue(4))
 
-    out = project_iadd(_CompleteNI(), TermValue(1), "op", None)
+    out = _project_iadd(_CompleteNI(), TermValue(1), "op", None)
     assert out.completed_value() == TermValue(4)
     assert calls == ["inplace", "add"]
 
@@ -687,4 +706,4 @@ def test_discrimination_incomplete_does_not_fall_through() -> None:
         def add(self, other, site, ctx):
             return ExitSet.completed(TermValue(0))
 
-    assert project_iadd(_Inc(), TermValue(1), "op", None) is face
+    assert _project_iadd(_Inc(), TermValue(1), "op", None) is face

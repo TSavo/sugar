@@ -164,14 +164,14 @@ def _equals_and_refine(left, right, site, ctx, left_coordinate):
 
 def _equals_with_derived_residue(left, right, site, ctx):
     from sugar_lift_py_tests.sugar.comparison_op_sugar import (
-        defer_formal_native_operation,
         publish_undecided_equality_edges,
     )
 
-    deferred = defer_formal_native_operation(left, right, site, operator="equals")
-    if deferred is not None:
-        return deferred
-
+    # A parameter operand is not deferred to a caller: ``==`` is
+    # ``type(left).__eq__``, then the reflection after ``NotImplemented``
+    # (the subclass rule first), then identity, which no one dispatched
+    # method states.  The floor answers it, and an undecided operand
+    # dual-edges below (#7757, audit row NEW-1).
     outcome = left.equals(right, site, ctx)
 
     from sugar_lift_py_tests.floor import CallSiteValue, PredicateValue

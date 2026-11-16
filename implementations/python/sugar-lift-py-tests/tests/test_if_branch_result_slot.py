@@ -68,20 +68,9 @@ def test_undecidable_if_elif_else_retains_complementary_faces() -> None:
     function = next(
         node for node in _tree(source).nodes() if isinstance(node, FunctionDef)
     )
-    pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-
-    left, right = pending.coordinates
-    from sugar_lift_py_tests.floor import SymbolicValue
-    from sugar_lift_py_tests.ir import make_var
-
-    exits = pending.discharge(
-        None,
-        {
-            left.coordinate_cid: SymbolicValue(make_var("actual_left")),
-            right.coordinate_cid: SymbolicValue(make_var("actual_right")),
-        },
-    )
+    exits = function.sugar().desugar(None)
+    # A parameter operand is no deferred operation (#7757, audit row NEW-1).
+    assert not isinstance(exits, NativeOperationExitCarrierV1)
     assert isinstance(exits, ExitSet)
     # ``left < right`` over two operands of undecided type selects
     # ``__lt__`` from types nobody looked at, so the comparison itself may
@@ -128,9 +117,10 @@ def test_condition_halt_bypasses_every_if_elif_else_body() -> None:
     """#7757 step 5 (#8705, "Edge, join at prove"): ``choose(None)`` is its
     coordinate and edge, never ``choose``'s body applied to ``None`` (which
     used to name the condition's ``TypeError`` here).  ``choose``'s own
-    reduction is the condition's carrier, pending on ``flag < 1`` before any
-    body is entered; its contract states the condition's halt over the
-    formal, and prove decides it for ``None`` at the join."""
+    reduction is the condition's undecided ordering, two-faced on ``flag <
+    1`` before any body is entered (no carrier, #7757 audit row NEW-1); its
+    contract states the condition's halt over the formal, and prove decides
+    it for ``None`` at the join."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 
     tree = _tree(f"{source}\nchoose(None)\n")
@@ -145,9 +135,12 @@ def test_condition_halt_bypasses_every_if_elif_else_body() -> None:
     assert type(halted.effect) is UndeterminedRaiseEffect
     assert halted.effect.exception_name is None
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "less_than"
+    own = function.sugar().desugar(None)
+    assert not isinstance(own, NativeOperationExitCarrierV1)
+    assert isinstance(own, ExitSet)
+    (condition_halt,) = own.halts()
+    assert condition_halt.effect.producer_node_owner == "UndecidedCompare:Lt"
+    assert condition_halt.effect.exception_name is None
 
 
 def _two_source_ifs() -> tuple[If, If]:

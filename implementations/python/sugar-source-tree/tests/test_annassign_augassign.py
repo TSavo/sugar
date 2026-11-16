@@ -479,12 +479,12 @@ def test_aug_assign_with_no_prior_binding_is_sound():
     function = _fn("def A(x):\n    x += 1\n    return x\n")
     sugar = function.sugar()
     outcome = sugar.desugar()
-    # May be ExitSet dual faces, completed fold, or formal binary carrier —
-    # never a construction panic / silent drop of the binding.
-    assert type(outcome).__name__ in {
-        "ExitSet",
-        "NativeOperationExitCarrierV1",
-    }
+    # The ``+=`` on the formal waits on no caller (#7757, audit row NEW-1):
+    # the undecided binary law's two faces, never a carrier, a construction
+    # panic or a silent drop of the binding.
+    assert type(outcome).__name__ == "ExitSet"
+    assert outcome.halts(), outcome
+    assert outcome.completed_value() is None
     # The in-place statement is present — the binding was not dropped.
     assert any(
         isinstance(s, ContainerMutationStatementSugar)

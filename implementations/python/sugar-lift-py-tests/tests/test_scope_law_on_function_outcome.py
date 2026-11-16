@@ -1,21 +1,19 @@
-"""A function whose operation waits on a caller's actual is read by the one row path.
+"""A function whose operation on a formal is undecided is read by the one row path.
 
-#7766, steps 6-7. A body whose operation on a formal waits for the caller's
-actual (``return x + 10``) reduces to a deferred native operation
-(``NativeOperationExitCarrierV1``), the one mechanism a caller applying the
-body in place discharges with its actuals. Before this, such a function
-emitted no contract row at all (only a scope check on the carrier's demand
-formula): its proof silently lacked its claims and its halt.
+#7766, steps 6-7. A body with a binary operation on a formal
+(``return x + 10``) once reduced to a deferred native operation that waited
+on a caller's actual; such a function emitted no contract row at all: its
+proof silently lacked its claims and its halt.
 
-Now its reduction is the set of arms its own proof states, with no actual
-(``tree_enumerate.as_its_own_proof_states``): the operation completes only
-under its own undecided guard, halts under the complement, and both faces owe
-one ``undecided`` member (``reason: unanswered``) at the operation's site.
-The rows are read off those arms like any other function's, and the scope law
-is the one every row goes through. The terms name the operator and the
-occurrence, never an operand, so a module-level operand (``LIMIT``) is not in
-the function's rows: what the operation does is not decided here, and that is
-stated once, as the member.
+A binary operator with a parameter operand is now the undecided two faces
+where it runs (``undecided_binary_faces``, #7757 audit row NEW-1): the
+operation completes only under its own undecided guard, halts under the
+complement, and both faces owe one ``undecided`` member
+(``reason: unanswered``) at the operation's site. The rows are read off those
+arms like any other function's, and the scope law is the one every row goes
+through. A module-level operand (``LIMIT``) is owed with its operation: what
+the operation does is not decided here, and that is stated once, as the
+member.
 """
 
 from __future__ import annotations

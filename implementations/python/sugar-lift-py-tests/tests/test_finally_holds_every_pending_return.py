@@ -30,10 +30,8 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import (
     GuardedReturn,
     ReturnValue,
-    SymbolicValue,
     TermValue,
 )
-from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
@@ -48,18 +46,12 @@ def _function(source: str) -> FunctionDef:
     return next(node for node in tree.nodes() if isinstance(node, FunctionDef))
 
 
-def _discharged_on_symbolic_actuals(source: str) -> ExitSet:
-    """``f(a, b)``'s exits once symbolic actuals discharge its ``a < b``."""
-    pending = _function(source).sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    left, right = pending.coordinates
-    exits = pending.discharge(
-        None,
-        {
-            left.coordinate_cid: SymbolicValue(make_var("actual_a")),
-            right.coordinate_cid: SymbolicValue(make_var("actual_b")),
-        },
-    )
+def _own_exits(source: str) -> ExitSet:
+    """``f(a, b)``'s own exits: its ``a < b`` over two parameters is the
+    undecided ordering's two faces where it runs, never a carrier waiting on
+    a caller (#7757, audit row NEW-1)."""
+    exits = _function(source).sugar().desugar(None)
+    assert not isinstance(exits, NativeOperationExitCarrierV1), type(exits)
     assert isinstance(exits, ExitSet), type(exits)
     return exits
 
@@ -80,7 +72,7 @@ def _returns(exits: ExitSet) -> list[tuple]:
 def test_a_return_in_finally_discards_a_return_taken_in_an_inner_arm() -> None:
     # Python: ``try: if c: return 1 finally: return 2`` returns 2 on every
     # path; the pending ``return 1`` never stands beside it.
-    exits = _discharged_on_symbolic_actuals(
+    exits = _own_exits(
         "def f(a, b):\n"
         "    try:\n"
         "        if a < b:\n"
@@ -100,7 +92,7 @@ def test_a_return_in_finally_discards_a_return_the_halt_record_holds() -> None:
     # The raise leaves after the guarded ``return 1``: its record holds that
     # return. The ``finally`` runs without it, and its own ``return 2``
     # supersedes the raise alone: no record holds the return of 1.
-    exits = _discharged_on_symbolic_actuals(
+    exits = _own_exits(
         "def f(a, b):\n"
         "    try:\n"
         "        if a < b:\n"
@@ -120,7 +112,7 @@ def test_a_return_in_finally_discards_a_return_the_halt_record_holds() -> None:
 def test_a_return_in_an_inner_arm_follows_a_finally_that_falls_through() -> None:
     # Under ``a < b`` the function returns 1 after the ``finally`` bound
     # ``x = 3``; on the other path the tail reads the ``finally``'s ``x``.
-    exits = _discharged_on_symbolic_actuals(
+    exits = _own_exits(
         "def f(a, b):\n"
         "    x = 0\n"
         "    try:\n"
@@ -222,7 +214,7 @@ def test_an_except_handlers_return_stands_alone_on_its_record() -> None:
     # ``a < b`` fails: the halt's record holds that return, dead there. The
     # handler resumes without it, so its ``return 2`` is the record's only
     # return; ``return 1`` leaves as its own face under ``a < b``.
-    exits = _discharged_on_symbolic_actuals(
+    exits = _own_exits(
         "def f(a, b):\n"
         "    try:\n"
         "        if a < b:\n"
@@ -237,7 +229,7 @@ def test_an_except_handlers_return_stands_alone_on_its_record() -> None:
 def test_an_except_handler_that_falls_through_leaves_the_dead_return_behind() -> None:
     # The handler falls through: the tail's ``return 3`` is the only return
     # on the handler's record, never after the dead guarded ``return 1``.
-    exits = _discharged_on_symbolic_actuals(
+    exits = _own_exits(
         "def f(a, b):\n"
         "    try:\n"
         "        if a < b:\n"
@@ -257,7 +249,7 @@ def test_an_except_star_handler_that_falls_through_leaves_the_dead_return_behind
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
-    exits = _discharged_on_symbolic_actuals(
+    exits = _own_exits(
         "def f(a, b):\n"
         "    try:\n"
         "        if a < b:\n"

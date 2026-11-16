@@ -1,4 +1,4 @@
-"""Ordinary source calls discharge formal native-operation demands."""
+"""A comparison over parameters, and the source calls of its function."""
 
 from __future__ import annotations
 
@@ -37,7 +37,12 @@ def _call_outcomes(*actuals: str):
     return tuple(node.sugar().desugar(None) for node in nodes)
 
 
-def test_function_definition_preserves_formal_demand_until_caller_discharge() -> None:
+def test_function_definition_is_the_undecided_ordering_two_faces() -> None:
+    """``left < right`` over two parameters waits on no caller (#7757, audit
+    row NEW-1): the rich method then its reflection is no one dispatched
+    method, so the definition states the undecided ordering's two faces."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
     source = "def compare(left, right):\n    return left < right\n"
     tree = SourceFile(
         (source, "formal_definition.py", blake3_512_of(source.encode())),
@@ -45,7 +50,15 @@ def test_function_definition_preserves_formal_demand_until_caller_discharge() ->
     )
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
 
-    assert isinstance(function.sugar().desugar(None), NativeOperationExitCarrierV1)
+    outcome = function.sugar().desugar(None)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert isinstance(outcome, ExitSet)
+    (halted,) = outcome.halts()
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.producer_node_owner == "UndecidedCompare:Lt"
+    (completed,) = (exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
+    assert "python:compare.completes" in repr(completed.guard)
+    assert "TypeError" not in repr(outcome)
 
 
 def _edge(outcome):
@@ -53,8 +66,8 @@ def _edge(outcome):
     is its coordinate and edge, the one unanswered call -- it completes under
     its ``python:unknown_callee_call.completes`` atom and halts under the
     complement naming nothing -- never ``compare``'s body applied to the
-    actuals.  ``compare``'s carrier over its formals (its contract) is what
-    prove joins; whether ``None < 2`` raises ``TypeError`` is decided there.
+    actuals.  ``compare``'s undecided ordering over its formals (its
+    contract) is what prove joins; whether ``None < 2`` raises ``TypeError`` is decided there.
     Before #8705 these tests read the completion and the named ``TypeError``
     off the body applied at the call."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect

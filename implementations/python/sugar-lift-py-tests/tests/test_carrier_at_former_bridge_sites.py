@@ -41,6 +41,18 @@ from sugar_source_tree.tree import SourceFile
 # --- one deferred carrier --------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _add_stands_in_for_a_carrier_operator(monkeypatch):
+    """The carrier these sites compose is a stand-in: production mints no
+    ``add`` carrier (a binary operator with a parameter operand is the
+    undecided two faces, #7757 audit row NEW-1), so this module enrolls the
+    ``+`` floor's explicit call as the stand-in's projector for each test.
+    What is tested is the composition, not the operator."""
+    from sugar_lift_py_tests.floor.floor_value import BINARY_FLOOR_OPERATIONS
+
+    monkeypatch.setitem(_NATIVE_OPERATION_PROJECTORS, "add", BINARY_FLOOR_OPERATIONS["add"])
+
+
 def _site():
     source = "def operation(left, right):\n    return left + right\n"
     tree = SourceFile(

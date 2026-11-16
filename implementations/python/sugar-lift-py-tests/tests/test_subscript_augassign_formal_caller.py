@@ -18,7 +18,6 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
     production_native_operation_operators,
-    project_iadd,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import ListValue, TermValue, TupleValue
@@ -33,11 +32,7 @@ from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import AugAssign, FunctionDef
-from sugar_source_tree.operators import (
-    Add,
-    BinaryOperator,
-    production_augassign_inplace_operators,
-)
+from sugar_source_tree.operators import Add, BinaryOperator
 from sugar_source_tree.tree import SourceFile
 
 
@@ -87,6 +82,12 @@ class _FloorSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return ()
+
+
+def project_iadd(left, right, site, ctx):
+    """``left += right`` through the ``+`` operator's own in-place edge
+    (``BinaryOperator.project_inplace``), as the door runs it."""
+    return Add.instance().project_inplace(left, right, site, ctx)
 
 
 class _Projecting:
@@ -235,75 +236,43 @@ def test_the_ordinary_augmented_item_store_is_deleted() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_production_inplace_set_is_independent_of_projector_table() -> None:
-    """Deleting a projector must not shrink the production-minted set."""
-    production = production_augassign_inplace_operators()
-    assert "iadd" in production
-    assert production == frozenset(
-        {
-            "iadd",
-            "isub",
-            "imul",
-            "itruediv",
-            "ifloordiv",
-            "imod",
-            "ipow",
-            "iand",
-            "ior",
-            "ixor",
-            "ilshift",
-            "irshift",
-            "imatmul",
-        }
-    )
-    # Independent source: BinaryOperator class attributes, not projector keys.
-    assert production == frozenset(
-        cls.inplace_operator
-        for cls in __import__(
-            "sugar_source_tree.operators",
-            fromlist=["AUGASSIGN_BINARY_OPERATOR_CLASSES"],
-        ).AUGASSIGN_BINARY_OPERATOR_CLASSES
-    )
+_INPLACE_OPERATORS = frozenset(
+    {
+        "iadd",
+        "isub",
+        "imul",
+        "itruediv",
+        "ifloordiv",
+        "imod",
+        "ipow",
+        "iand",
+        "ior",
+        "ixor",
+        "ilshift",
+        "irshift",
+        "imatmul",
+    }
+)
 
 
-def test_projector_keys_equal_independent_production_inplace_set() -> None:
-    production = production_augassign_inplace_operators()
-    projector_inplace = frozenset(
-        k
-        for k in _NATIVE_OPERATION_PROJECTORS
-        if k
-        in {
-            "iadd",
-            "isub",
-            "imul",
-            "itruediv",
-            "ifloordiv",
-            "imod",
-            "ipow",
-            "iand",
-            "ior",
-            "ixor",
-            "ilshift",
-            "irshift",
-            "imatmul",
-        }
-    )
-    assert production == projector_inplace
-    assert production_native_operation_operators() == frozenset(
-        _NATIVE_OPERATION_PROJECTORS
-    )
+def test_no_inplace_operator_is_minted_or_enrolled() -> None:
+    """Inverted from the in-place carrier set (#7757, audit row NEW-1): an
+    ``OP=`` with a parameter operand is the undecided binary law's two
+    faces, so no in-place operator is a carrier, none has a projector, and
+    the production mint set it was drawn from is gone.  The equality tooth
+    still holds both ways."""
+    import sugar_source_tree.operators as operators
 
-
-def test_discrimination_circular_tooth_would_hide_missing_projector() -> None:
-    """Lying: derive production set from projector table — circular, forbidden."""
-    circular = frozenset(k for k in _NATIVE_OPERATION_PROJECTORS if k.startswith("i"))
-    # Independent production must not be computed as circular (same object).
-    independent = production_augassign_inplace_operators()
-    # They currently equal when healthy — but sources differ: class attrs vs table.
-    assert independent == production_augassign_inplace_operators()
-    # Twin: claiming circular derivation is the independent source fails identity.
-    with pytest.raises(AssertionError):
-        assert circular is independent
+    assert not hasattr(operators, "production_augassign_inplace_operators")
+    production = production_native_operation_operators()
+    assert not production & _INPLACE_OPERATORS
+    assert not frozenset(_NATIVE_OPERATION_PROJECTORS) & _INPLACE_OPERATORS
+    assert production == frozenset(_NATIVE_OPERATION_PROJECTORS)
+    # ``inplace_operator`` still names the in-place method ``OP=`` calls.
+    assert (
+        frozenset(cls.inplace_operator for cls in operators.AUGASSIGN_BINARY_OPERATOR_CLASSES)
+        == _INPLACE_OPERATORS
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -610,7 +579,13 @@ def test_production_projector_incomplete_does_not_fall_through_to_binary() -> No
     assert out is incomplete_face
 
 
-def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
+def test_formal_operands_mint_no_carrier() -> None:
+    """Inverted from the deleted ``iadd`` mint (#7757, audit row NEW-1): a
+    formal's ``cell += rhs`` is the operator's own in-place edge, the
+    undecided binary law's two faces over both formals, owing the undecided
+    member at the operator's site."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -638,20 +613,28 @@ def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
 
     left = SymbolicValue(make_var("cell"), _coord("cell", 0))
     right = SymbolicValue(make_var("rhs"), _coord("rhs", 1))
-    out = project_augmented(
-        left, right, operator="iadd", projector=project_iadd, site=site, ctx=None
-    )
-    assert isinstance(out, NativeOperationExitCarrierV1)
-    assert out.demand.operator == "iadd"
-    with pytest.raises(AssertionError):
-        assert out.demand.operator == "add"
+    out = project_augmented(left, right, projector=project_iadd, site=site, ctx=None)
+    assert not isinstance(out, NativeOperationExitCarrierV1)
+    assert isinstance(out, ExitSet), type(out)
+    (completed,) = [face for face in out.exits if isinstance(face, Completed)]
+    assert completed.value.term.name == "python:binary_result"
+    assert completed.value.term.args[0].value == "+"
+    assert completed.value.term.args[1] == make_var("cell")
+    assert completed.value.term.args[2] == make_var("rhs")
+    (halted,) = [face for face in out.exits if isinstance(face, Halted)]
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == "UndecidedBinary:+"
+    assert unanswered_call(None, site) in owed_calls(out)
 
 
-def test_formal_iadd_projector_is_enrolled_with_authenticated_signature() -> None:
-    assert "iadd" in _NATIVE_OPERATION_PROJECTORS
-    assert _NATIVE_OPERATION_PROJECTORS["iadd"] is project_iadd
-    parameters = tuple(__import__("inspect").signature(project_iadd).parameters)
-    assert parameters == ("left", "right", "site", "ctx")
+def test_no_iadd_projector_is_enrolled() -> None:
+    """Inverted from the deleted ``iadd`` projector (#7757, audit row
+    NEW-1): nothing mints an in-place carrier, so nothing discharges one."""
+    import sugar_lift_py_tests.caller_parameter_contract as contract
+
+    assert "iadd" not in _NATIVE_OPERATION_PROJECTORS
+    assert not hasattr(contract, "project_iadd")
+    assert not hasattr(contract, "_INPLACE_NATIVE_OPERATION_PROJECTORS")
 
 
 def test_discrimination_projector_absence_must_not_mint_add() -> None:
