@@ -184,7 +184,9 @@ def loop_exit_slot(target_cid: str) -> BranchResultSlot:
     publishes on (``LoopRecurrenceSugar._exit_decision``,
     ``BranchResultDecision``), so a read after the loop takes the face it
     left by, as a read of its write slot takes one arm.  The recurrence
-    decides nothing: its read stays guarded by each face's own guard."""
+    decides it only where its symbolic item decided a ``while`` test (true
+    at every item: by its ``break``; false: by exhaustion); elsewhere its
+    read stays guarded by each face's own guard."""
     return BranchResultSlot(f"loop-exit:{target_cid}")
 
 

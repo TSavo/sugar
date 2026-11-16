@@ -650,7 +650,18 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         what follows the completed face of the iterable's ``iter``
         (``_desugar_with_iterable``), never the loop's whole outcome, and
         each item is what follows the faces its ``next`` of ``iterator``
-        goes on by (``iterator_operation.stepped``)."""
+        goes on by (``iterator_operation.stepped``).
+
+        A ``while`` whose test reads no binding has the symbolic item
+        evaluate it first (``_symbolic_test``, ``_tested``), as a live item
+        does: a halt of the test leaves the loop; a truth decided false
+        leaves by exhaustion and runs no item; a truth decided true runs the
+        item with no exhaustion arm at all (an arm that falls through goes
+        round again); each decided path publishes the exit it left by
+        (``_exit_decision``), which a read after the loop selects by
+        (``guarded_binding_read_sugar.decided_loop_exit``).  An undecided
+        truth, and every other ``while``, runs the item under the test's
+        slot guard."""
         runtime = self.construction.loop_runtime
 
         from sugar_lift_py_tests.floor import InvValue
@@ -709,7 +720,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             *self._publication(tuple(SymbolicValue(h) for h in heads), posted),
         )
 
-        def published_after_else(context):
+        def published_after_else(context, decided=()):
             # After the ``else`` suite ran (``context``, where it left), a
             # name is what the suite last wrote it to, as a concrete loop's
             # is (``_after_else``, ``_post_loop_writes``).
@@ -718,9 +729,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 *self._publication(
                     *self._after_symbolic_else(runtime, context, posted)
                 ),
+                *decided,
             )
 
-        def recurrence(entries=(), *, halt=None, can_fall_through=True):
+        def recurrence(entries=(), *, halt=None, can_fall_through=True, decided=()):
             # The loop leaves as its recurrence with what the item it leaves
             # from left (``entries``), as a concrete loop leaves with what its
             # items left (``_left_with``); no item: nothing.  The recurrence
@@ -730,8 +742,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # a ``return`` (``can_fall_through`` false) or another halt
             # (``halt``) leaves from inside the item, as a concrete item's
             # do (``_after_iteration_state``, ``_after_loop_control``).
+            # ``decided``: the exit this path left by, where the symbolic
+            # item's test decided it (``_exit_decision``), published with the
+            # rest as a concrete loop's is.
             if halt is None and can_fall_through:
-                return self._left_with(entries, published)
+                return self._left_with(entries, (*published, *decided))
             return self._left_with(
                 entries, recurrences, halt=halt, can_fall_through=can_fall_through
             )
@@ -744,9 +759,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         else_ctx, otherwise = self._symbolic_else(runtime, ctx, heads)
         witnesses = _else_witnesses(runtime, else_ctx)
 
-        def exhausted(entries=()):
+        def exhausted(entries=(), *, decided=()):
             if otherwise is None:
-                return recurrence(entries)
+                return recurrence(entries, decided=decided)
             from sugar_lift_py_tests.sugar.function_universe_sugar import (
                 past_prior_returns,
             )
@@ -754,7 +769,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             def after_suite(record):
                 return self._left_with(
                     (*entries, *record.entries),
-                    published_after_else(record.context),
+                    published_after_else(record.context, decided),
                     fall_through=record.fall_through,
                     can_fall_through=record.can_fall_through,
                 )
@@ -774,7 +789,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                         published_after_else(
                             _else_left_from(
                                 runtime, else_ctx, witnesses, halt, site=self.site
-                            )
+                            ),
+                            decided,
                         ),
                         halt=halt,
                     ),
@@ -816,21 +832,86 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # statement, which ran ahead of it.  The loop's exits are the arms of
         # that one run (``_leave_symbolic_item``).
         body_sugars, item_guard = self._symbolic_item()
+        test_sugar = self._symbolic_test()
 
-        def run_item(projections):
+        def run_body(item_ctx, target_bindings, guard, left, left_exhausted):
             from sugar_lift_py_tests.sugar.function_universe_sugar import (
                 reduce_block_to_exitset,
             )
 
-            item_ctx, target_bindings = enter(projections)
             with item():
                 body = reduce_block_to_exitset(body_sugars, item_ctx)
             return self._leave_symbolic_item(
                 body,
-                recurrence,
-                item_guard,
+                left,
+                guard,
                 target_bindings=target_bindings,
-                exhausted=exhausted,
+                exhausted=left_exhausted,
+            )
+
+        def after_symbolic_test(face, target_bindings):
+            # One completed face of the test the symbolic item evaluated
+            # (``_WhileTest``): what its evaluation stored (``face.entries``)
+            # leads every way the loop leaves from it, and the body runs in
+            # the context after it (``face.ctx``), as a live item's does
+            # (``_after_test``, ``_with_body``).
+            from sugar_lift_py_tests.outcome.exit_set import _is_false, _is_true
+
+            ahead = tuple(face.entries)
+            truth = face.formula
+            if truth is not None and _is_false(truth):
+                # Decided false at every item: no item runs.  The loop leaves
+                # by exhaustion, decided on this path.
+                return exhausted(ahead, decided=(self._exit_decision(True),))
+            if truth is not None and _is_true(truth):
+                # Decided true at every item: an item always runs, and the
+                # loop never leaves by exhaustion.  An arm of the item that
+                # falls through or continues goes round again: it leaves the
+                # loop by no arm (the empty set).  Its own ``break`` leaves,
+                # decided on that path; a ``return`` or a halt leaves as it
+                # does from any item.
+                decided = (self._exit_decision(False),)
+                return run_body(
+                    face.ctx,
+                    target_bindings,
+                    truth,
+                    lambda entries=(), **leaving: recurrence(
+                        (*ahead, *entries), decided=decided, **leaving
+                    ),
+                    lambda entries=(): ExitSet(()),
+                )
+            # Not decided here: the item runs under the test's slot guard,
+            # the no-item arm under its negation, both owed as before.
+            return run_body(
+                face.ctx,
+                target_bindings,
+                item_guard,
+                lambda entries=(), **leaving: recurrence((*ahead, *entries), **leaving),
+                lambda entries=(): exhausted((*ahead, *entries)),
+            )
+
+        def run_item(projections):
+            item_ctx, target_bindings = enter(projections)
+            if test_sugar is None:
+                return run_body(
+                    item_ctx, target_bindings, item_guard, recurrence, exhausted
+                )
+            # A ``while`` whose test the symbolic item evaluates
+            # (``LiveSymbolicItemV1.test_sugar``): the test runs first, in
+            # the item, through the one rule a live item's test runs by
+            # (``_tested``).  Each halt of it leaves the loop with what the
+            # items before it did (``recurrence``), as a live item's test
+            # halt does (``_test_item``); each completed face decides, or
+            # not, whether the item runs.
+            if item_ctx is None:
+                from sugar_lift_py_tests.context import ReduceContext
+
+                item_ctx = ReduceContext.root(owner="LoopRecurrenceSugar.symbolic-test")
+            with item():
+                tested = self._tested(test_sugar, item_ctx)
+            return tested.and_then(
+                lambda face: after_symbolic_test(face, target_bindings),
+                consume=lambda halt: recurrence(halt=halt),
             )
 
         from sugar_lift_py_tests.outcome import Completed
@@ -895,6 +976,16 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 ),
             )
         return symbolic_item.body_sugars, symbolic_item.guard
+
+    def _symbolic_test(self):
+        """The ``while`` test the recurrence's symbolic item evaluates before
+        its body (``live_loop_construction.LiveSymbolicItemV1.test_sugar``),
+        or None: a ``for``, or a test that reads a binding, whose value at
+        the symbolic item is not its value at every item.  The construction
+        hands it undecided; its truth is decided here, by the one rule a live
+        item's test takes (``_tested``), never by the rewrite."""
+        symbolic_item = getattr(self.construction, "symbolic_item", None)
+        return getattr(symbolic_item, "test_sugar", None)
 
     def _recurrence_starts(self, runtime, heads):
         """The value each carried name (``runtime.carried_names`` order) has
@@ -981,7 +1072,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         (``_left_with``): as its recurrence, or by ``halt``, or by a
         ``return``; ``exhausted(entries)`` is the loop leaving as its
         recurrence where its iterator is exhausted, through its ``else``
-        suite when it has one (``recurrence`` when none is handed).
+        suite when it has one (``recurrence`` when none is handed); where a
+        ``while`` test is decided true at every item it is the empty set: the
+        loop goes round again and never leaves by exhaustion.
 
         Each arm leaves as a concrete item's does (``_after_iteration_state``,
         ``_after_loop_control``): an arm that does not fall through (a
@@ -1414,9 +1507,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
         from sugar_lift_py_tests.outcome import Completed
         from sugar_lift_py_tests.outcome.exit_set import _is_false, _is_true
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            header_applied,
-        )
         from sugar_source_tree.panic import SugarNotWritten
 
         if index >= runtime.fuel:
@@ -1435,15 +1525,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
         with entered(loop_iteration_segment(self.target_cid, index)):
             item_ctx = self._enter_header(runtime, ctx, carried)
-            # The test is evaluated before every item: each evaluation is
-            # that item's header (``_WhileItemTestV1``).  A walrus bind or
-            # callee store its value carried reaches the body and the loop's
-            # exit by the one header rule (``header_applied``), the stores
-            # laid in this item's record (``_WhileTest.entries``) where the
-            # item runs, after the items before it.
-            item = _WhileItemTestV1(runtime.test_sugar, self.site)
-            headed, test = header_applied(item, "test", item_ctx)
-            tested = headed if headed is not None else item.faces(test, item_ctx)
+            # The test is evaluated before every item (``_tested``).
+            tested = self._tested(runtime.test_sugar, item_ctx)
             undecided = any(
                 isinstance(face, Completed)
                 and not (
@@ -1479,6 +1562,25 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             lambda item: self._after_test(item, runtime, entries=entries, index=index),
             consume=lambda halt: self._left_with(entries, (), halt=halt),
         )
+
+    def _tested(self, test_sugar, ctx):
+        """A ``while`` test evaluated once in ``ctx``: the one way the test
+        runs, at a live item (``_test_item``) and at the recurrence's
+        symbolic item (``_recurrence``) alike.  Each evaluation is that
+        item's header (``_WhileItemTestV1``): a walrus bind or callee store
+        its value carried reaches the body and the loop's exit by the one
+        header rule (``header_applied``), the stores laid in the item's
+        record (``_WhileTest.entries``), after the items before it.  Each
+        completed face is a ``_WhileTest`` whose truth the one truth rule
+        took (``truth_of``); each halt carries the record of where the item
+        began (``halts_recorded``)."""
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            header_applied,
+        )
+
+        item = _WhileItemTestV1(test_sugar, self.site)
+        headed, test = header_applied(item, "test", ctx)
+        return headed if headed is not None else item.faces(test, ctx)
 
     @staticmethod
     def _with_body(item, runtime):
@@ -2155,8 +2257,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         that guard, a function's return after a loop it ran in hand was a
         post no caller's join could read: the unrolled loop it replaced
         (#8957) had no such guard.  The decision is this path's own
-        (``BranchResultDecision``): the recurrence decides nothing, and its
-        read stays guarded and owed."""
+        (``BranchResultDecision``).  The recurrence decides only where its
+        symbolic item's ``while`` test decided the exit (``_recurrence``:
+        true at every item, the loop leaves by its ``break``; false, by
+        exhaustion); anywhere else its read stays guarded and owed."""
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
             BranchResultDecision,
         )

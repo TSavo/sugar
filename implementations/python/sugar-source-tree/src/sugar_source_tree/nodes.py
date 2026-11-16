@@ -6570,11 +6570,11 @@ def _read_at_halt(state) -> "Optional[Node]":
 def _ground_value(node) -> "Optional[Node]":
     """The ground literal ``node`` denotes, or None.
 
-    The one way substitution asks for a value to decide a shape: how many
-    times a loop unrolls (``For._concrete_elements``, ``For._concrete_int``),
-    which suite a ground condition selects (``While._ground_truth``), which
+    The one way substitution asks for a value to decide a shape: which
     member a starred unpack gives each name (``Assign._ground_members``),
-    which field a subscript key names (``ground_subscript_key``).
+    which field a subscript key names (``ground_subscript_key``).  It never
+    decides a condition or how many items a loop runs: the reduction does
+    (``LoopRecurrenceSugar``).
     The answer decides the shape only.  It never stands in for a read: a read
     of an assigned name is still the reference to its key, and the statement
     that reads it still reads the key at reduce.
@@ -17155,36 +17155,6 @@ class While(Statement):
             ),
             changed,
         )
-
-    def _ground_truth(self, test):
-        """Decide a GROUND condition structurally, or None. Constants only --
-        this is the same structural reading as For._concrete_int (recognizing
-        literals), never an evaluation of symbolic meaning: a bool Constant
-        stands as itself; a single-op Compare over int literals decides by the
-        operator. Anything else (a free name, a call) is not ground.  A key
-        reference decides by the ground value its key holds
-        (``_ground_value``): ``DEBUG = False; if DEBUG: break``."""
-        if test.kind in ("EvaluationRef", "Subscript"):
-            ground = _ground_value(test)
-            if ground is not None:
-                test = ground
-        if test.kind == "Constant" and isinstance(test.value, bool):
-            return test.value
-        if test.kind == "Compare" and len(test.ops) == 1:
-            left = For._concrete_int(self, test.left)
-            right = For._concrete_int(self, test.comparators[0])
-            if left is None or right is None:
-                return None
-            op = test.ops[0].kind
-            return {
-                "Lt": left < right,
-                "LtE": left <= right,
-                "Gt": left > right,
-                "GtE": left >= right,
-                "Eq": left == right,
-                "NotEq": left != right,
-            }.get(op)
-        return None
 
 
 class If(Statement):
