@@ -1031,28 +1031,12 @@ def function_universe_outcome(fn):
     """Construct one function universe through its authenticated entrance.
 
     ``fn`` is a ``def``, ``async def`` or ``lambda``; its universe is its own
-    contract (``contract_universe``).  Ordinary functions reduce with
-    symbolic formals.  The active ``__init__``
-    of a source class is different: its first parameter is the receiver that
-    the class call itself creates.  The backend's exact lexical-owner relation
-    selects the class, and its one constructor
-    (``ClassDef.source_visible_constructor_frame().body``, the
-    ``ClassConstructorBodySugar`` every class call applies) makes that
-    receiver and runs this universe on it (``enter_initializer``).  So an
-    unrun source ``__new__`` refuses it by name, and no receiver is made
-    here.
-
-    The class that constructor is entered on is the one its statement
-    bound: the one read of the statement's evaluation key
-    (``ClassDef.statement_value_ref``), in the state the module's one run
-    left (``DecoratorApplicationSugar``, ``module_end_contexts``), as a
-    class call's callee is.  The class statement is never reduced for this
-    universe (#7757 item 21): where the module's run completed on no arm,
-    the read is that run's halts (``module_run_halts``) and so is this
-    universe, which never runs; where the run bound no class under the key
-    otherwise (the statement runs in no module body, no completed arm ran
-    it), the read is refused by name and this function is undecided by it
-    (``refused_function_row``).
+    contract (``contract_universe``), reduced with symbolic formals.  An
+    ``__init__`` is one too (#7757 B2): its receiver is its first formal, and
+    its contract states what it leaves in that object over
+    ``python:after(out, "<self>")`` and its halts, as any method's does.  A
+    class call reaches it through the dispatched ``__init__`` edge, joined at
+    prove; no receiver is made here.
 
     A function's contract is stated over its inputs (#7757 step 5, #8292:
     one contract per function).  Each module global a call of it reads
@@ -1081,77 +1065,12 @@ def function_universe_outcome(fn):
     from sugar_source_tree.nodes import current_module_execution_site
 
     sugar = fn.contract_universe()
-    site = current_module_execution_site()
-    owner = fn._active_initializer_owner()
-    if owner is None:
-        entry = with_module_final_globals(
-            bind_global_inputs(None, fn, owner="function_universe_outcome"),
-            (fn,),
-            site=site,
-        )
-        return as_its_own_proof_states(sugar.desugar(entry), entry)
-
-    from sugar_lift_py_tests.context import ReduceContext
-    from sugar_source_tree.panic import SugarNotWritten
-
-    if not fn.params:
-        raise SugarNotWritten(
-            owner="function_universe_outcome",
-            blame=fn.fragment,
-            observed="class initializer has no receiver parameter",
-            requested="the active initializer receiver coordinate",
-            fix="preserve the parsed receiver parameter on __init__",
-        )
-    receiver_coordinate = fn._constructed_receiver_coordinate(owner, fn.params[0])
-    constructor = owner.source_visible_constructor_frame().body
-    if constructor.receiver_coordinate_cid != receiver_coordinate.cid:
-        raise SugarNotWritten(
-            owner="function_universe_outcome",
-            blame=fn.fragment,
-            observed="the class call seats its initializer receiver elsewhere",
-            requested="the receiver the class call makes for this initializer",
-            fix="construct the initializer through its lexical class owner",
-        )
-    from dataclasses import replace
-
-    from sugar_lift_py_tests.floor.class_definition_value import (
-        ClassDefinitionValue,
-    )
-    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
-
-    # The initializer's contract is stated over its global inputs as every
-    # function's is (``bind_global_inputs``), before the definition keys and
-    # defaults are bound.
     entry = with_module_final_globals(
-        bind_global_inputs(
-            ReduceContext.root(owner="function_universe_outcome"),
-            fn,
-            owner="function_universe_outcome",
-        ),
+        bind_global_inputs(None, fn, owner="function_universe_outcome"),
         (fn,),
-        site=site,
+        site=current_module_execution_site(),
     )
-
-    def on_its_class(read):
-        value = peel_walrus_binds(read)[1]
-        if not isinstance(value, ClassDefinitionValue):
-            raise SugarNotWritten(
-                owner="function_universe_outcome",
-                blame=fn.fragment,
-                observed=(
-                    f"the class statement's key holds a {type(value).__name__}"
-                ),
-                requested="the class the statement built, whose call makes the receiver",
-                fix="enter the initializer on the class its statement bound",
-            )
-        return replace(constructor, class_value=value).enter_initializer(
-            entry,
-            lambda _definition, initializer_ctx: as_its_own_proof_states(
-                sugar.desugar(initializer_ctx), initializer_ctx
-            ),
-        )
-
-    return owner.statement_value_ref().sugar().desugar(entry).and_then(on_its_class)
+    return as_its_own_proof_states(sugar.desugar(entry), entry)
 
 
 def class_universe_outcome(cls):

@@ -114,6 +114,13 @@ ISINSTANCE_COMPLETES = "python:isinstance.completes"
 #: ``<name>`` (``consistency::PYTHON_MAY_HOLD``), one fact per name.
 MAY_HOLD = "python:may_hold"
 
+#: ``python:holds_decided(<object>)``: the ``python:may_hold`` facts stated
+#: beside it of ``<object>`` are every name its ``__dict__`` may hold beyond
+#: what it held before the call that states them: an ``__init__``'s
+#: contract of its receiver (``UniverseValue.receiver_holds_facts``, #7757
+#: B2; ``consistency::PYTHON_HOLDS_DECIDED``).
+HOLDS_DECIDED = "python:holds_decided"
+
 #: ``python:class_undecided(<object>)``: what the object's class is, or what
 #: its ``__dict__`` holds, is not decided (``consistency::
 #: PYTHON_CLASS_UNDECIDED``).
@@ -498,14 +505,10 @@ def dispatch_on_receiver(
       whose own proof this is (its ``cell:<name>`` input,
       ``ContractInputCoordinateV1``) whose class is an input too
       (``nodes._receiver_class_cells``): its class is ``class:cell:<name>``,
-      under the same method-name guard (#7757 step 7);
-    - ``receiver`` is the instance an ``__init__``'s own contract runs on
-      (``self``: an ``ObjectValue`` that arrived through the initializer's
-      receiver coordinate, ``initializer_receiver_formals``) and the class
-      of that parameter is an input of the ``__init__``'s contract: its
-      class is ``class:<param>``, bound by the caller -- ``super().
-      __init__()`` from a subclass supplies the subclass -- under the same
-      method-name guard as a formal;
+      under the same method-name guard (#7757 step 7).  An ``__init__``'s
+      receiver is such a formal (#7757 B2): its class is ``class:<self>``,
+      bound by the caller -- the class call's dispatched ``__init__`` edge,
+      or ``super().__init__()`` from a subclass;
     - ``receiver`` is a same-file class's call result that ``type.__call__``
       makes with a builtin ``__new__`` (``class_value``:
       ``python:constructed(<class>)``), in a module that is not dynamic
@@ -539,7 +542,6 @@ _PARAMETER_KINDS = ("positional-only", "positional-or-keyword", "keyword-only")
 
 def _receiver_class(name, receiver, unit):
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.ir import make_var
 
@@ -550,18 +552,6 @@ def _receiver_class(name, receiver, unit):
         if module_attribute_names(unit)[1]:
             return None
         return class_value(receiver)
-    if isinstance(receiver, ObjectValue):
-        if receiver.allocation is not None or receiver.arrival is None:
-            return None
-        formal = initializer_receiver_formals(unit).get(receiver.arrival)
-        if formal is None:
-            return None
-        names, dynamic = module_attribute_names(unit)
-        if dynamic or name in names:
-            return None
-        from sugar_lift_py_tests.contract_input import CLASS_INPUT, input_formal
-
-        return make_var(input_formal(CLASS_INPUT, formal))
     coordinate = getattr(receiver, "formal_coordinate", None)
     if (
         type(receiver) is SymbolicValue
@@ -770,59 +760,6 @@ def receiver_field_read(receiver, name, site):
         name, site, owner="receiver_dispatch.receiver_field_read"
     ).guarded(not_(guard), other)
     return read.union(undecided)
-
-
-# Module -> (module, {receiver coordinate CID: formal}), the last few read.
-_INITIALIZER_RECEIVERS: dict = {}
-
-
-def initializer_receiver_formals(unit) -> dict:
-    """``{receiver coordinate CID: parameter name}`` for each ``__init__`` a
-    class statement of the module ``unit`` holds writes
-    (``SourceUnit.lexical_class_owner_for``) whose receiver parameter's
-    class is an input of its contract (``nodes._receiver_class_parameters``).
-
-    An ``__init__``'s own contract runs on the instance its class's
-    constructor makes, seated at that receiver coordinate
-    (``FunctionDef._constructed_receiver_coordinate``, the coordinate the
-    class's constructor frame mints) and arrived by binding through it
-    (``ClassConstructorBodySugar._made``: no class call of the reading frame
-    made it).  A method call on that instance is a method call on the
-    parameter: its class is the ``class:<param>`` input, never the class
-    whose body wrote the ``__init__`` (a subclass's ``super().__init__()``
-    runs it on an instance of the subclass).  Read once per typed module."""
-    from sugar_source_tree.nodes import FunctionDef, _receiver_class_parameters
-
-    module = getattr(unit, "typed_module", None)
-    if module is None:
-        return {}
-    held = _INITIALIZER_RECEIVERS.get(id(module))
-    if held is not None and held[0] is module:
-        return held[1]
-    found = {}
-    for statement in module.body:
-        for node in statement.walk():
-            if (
-                not isinstance(node, FunctionDef)
-                or node.name != "__init__"
-                or not node.params
-            ):
-                continue
-            receiver = node.params[0]
-            if receiver.name not in _receiver_class_parameters(node):
-                continue
-            # The coordinate is minted from the class statement and the
-            # parameter alone; an ``__init__`` the class does not run seats
-            # no instance there, so its entry is never read.
-            owner = node.unit.lexical_class_owner_for(node)
-            if owner is None:
-                continue
-            coordinate = node._constructed_receiver_coordinate(owner, receiver)
-            found[coordinate.cid] = receiver.name
-    if len(_INITIALIZER_RECEIVERS) >= 8:
-        _INITIALIZER_RECEIVERS.clear()
-    _INITIALIZER_RECEIVERS[id(module)] = (module, found)
-    return found
 
 
 def dispatch_edge_call(
