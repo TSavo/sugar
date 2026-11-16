@@ -214,7 +214,7 @@ def _and_finally_with_raise_context(
     """try/finally over ExitSet, retaining body raise as implicit context.
 
     The one ``finally`` of a ``try`` and of a ``try*`` (``TryStarSugar``).
-    The ``ExitSet.and_finally`` laws (restore / cleanup-halt supersede /
+    The ``finally`` laws (restore / cleanup-halt supersede /
     terminal cleanup supersede), composed through ``ExitSet.and_then``: the
     ``finally`` runs beneath every completed arm (``step``) and beneath every
     halted arm (``consume`` -- the try owns every halt that reaches its

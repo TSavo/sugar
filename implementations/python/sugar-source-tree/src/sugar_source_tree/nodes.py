@@ -19063,7 +19063,8 @@ class Try(Statement):
 
         if not self.handlers:
             # try/finally-only (no except): same TrySugar with empty handlers;
-            # finally is ExitSet.and_finally over the body exits.
+            # finally is the one finally over the body exits
+            # (``try_sugar._and_finally_with_raise_context``).
             if not self.finalbody:
                 return super()._construct_sugar()
             return TrySugar(

@@ -12,8 +12,8 @@ Two things are under test here, and they are different:
    finding -- so this is the tooth that has to hold before any number the
    census prints is worth reading.
 
-2. **The halted face grows as a product at three of the four sites, and is
-   flat at the fourth.** ``and_then`` is the control: its halted bypass means
+2. **The halted face grows as a product at two of the three sites, and is
+   flat at the third.** ``and_then`` is the control: its halted bypass means
    halted arms out stay equal to halted incomings no matter how wide the other
    operand gets. If the control ever showed growth, the law would be measuring
    the harness rather than the algebra.
@@ -113,17 +113,6 @@ def test_every_row_reconciles_at_and_exit_truthiness(width: int) -> None:
 
 
 @pytest.mark.parametrize("width", _WIDTHS)
-def test_every_row_reconciles_at_and_finally(width: int) -> None:
-    body = _mixed(width, "body")
-    cleanup = _mixed(width, "clean")
-
-    with arm_census() as rows:
-        body.and_finally(lambda: cleanup)
-
-    _assert_all_reconcile(_rows_for(rows, "and_finally"))
-
-
-@pytest.mark.parametrize("width", _WIDTHS)
 def test_every_row_reconciles_at_and_exit(width: int) -> None:
     body = _mixed(width, "body")
     exit_es = _mixed(width, "exit")
@@ -152,7 +141,6 @@ def test_conservation_holds_with_no_remainder_bucket() -> None:
 
     with arm_census() as rows:
         body.and_exit_truthiness(other, site=None)
-        body.and_finally(lambda: other)
         body.and_exit(other, disposition=NeverSuppresses())
 
     _assert_all_reconcile(rows)
@@ -244,7 +232,6 @@ def test_instrument_restores_every_patched_method() -> None:
         for name in (
             "normalize",
             "and_then",
-            "and_finally",
             "and_exit",
             "and_exit_truthiness",
         )
@@ -271,8 +258,6 @@ def _halted_out_by_width(site: str) -> dict[int, int]:
         with arm_census() as rows:
             if site == "and_exit_truthiness":
                 body.and_exit_truthiness(other, site=None)
-            elif site == "and_finally":
-                body.and_finally(lambda: other)
             elif site == "and_exit":
                 body.and_exit(other, disposition=NeverSuppresses())
             elif site == "and_then":
@@ -285,9 +270,9 @@ def _halted_out_by_width(site: str) -> dict[int, int]:
     return measured
 
 
-@pytest.mark.parametrize("site", ["and_exit", "and_finally", "and_exit_truthiness"])
+@pytest.mark.parametrize("site", ["and_exit", "and_exit_truthiness"])
 def test_halted_arms_grow_with_the_other_operand(site: str) -> None:
-    """The defect: the halted face is a product at all three unbypassed sites."""
+    """The defect: the halted face is a product at both unbypassed sites."""
     measured = _halted_out_by_width(site)
 
     assert measured[8] > measured[1], f"{site}: halted face did not grow: {measured}"
@@ -323,51 +308,8 @@ def test_sequence_is_the_control_and_stays_flat() -> None:
 
 
 # --------------------------------------------------------------------------
-# 3. the two splits that a four-cardinality row would get wrong
+# 3. the split that a four-cardinality row would get wrong
 # --------------------------------------------------------------------------
-
-
-def test_and_finally_terminal_cleanup_is_not_a_halted_arm() -> None:
-    """Return-in-finally converts a halted incoming into a COMPLETION.
-
-    A row that recorded a plain ``completed(cleanup)`` count would predict
-    ``|halted(self)| x |completed(cleanup)|`` halted arms here. The true
-    number is zero, because every completed cleanup is terminal.
-    """
-    body = _mixed(3, "body")
-    cleanup = _completed_only(2, "clean")
-
-    with arm_census() as rows:
-        body.and_finally(lambda: cleanup, cleanup_restores=lambda _value: False)
-
-    (row,) = _rows_for(rows, "and_finally")
-    assert row.reconciles, row.reconcile_detail
-    assert row.n_other_completed == 2
-    assert row.n_other_completed_restoring == 0
-    assert row.n_other_completed_terminal == 2
-    assert row.halted_from_incoming == 0
-    naive = row.n_incoming_halted * row.n_other_completed
-    assert naive == 6, "the naive four-cardinality prediction should be nonzero here"
-    assert row.halted_out == 0, (
-        "every arm is a terminal completion; a plain completed(cleanup) column "
-        f"would have overstated the halted face by {naive}"
-    )
-
-
-def test_and_finally_restoring_cleanup_does_carry_the_halted_incoming() -> None:
-    """The mirror of the above: with a restoring predicate the product is real."""
-    body = _mixed(3, "body")
-    cleanup = _completed_only(2, "clean")
-
-    with arm_census() as rows:
-        body.and_finally(lambda: cleanup, cleanup_restores=lambda _value: True)
-
-    (row,) = _rows_for(rows, "and_finally")
-    assert row.reconciles, row.reconcile_detail
-    assert row.n_other_completed_restoring == 2
-    assert row.n_other_completed_terminal == 0
-    assert row.halted_from_incoming == 6 == row.n_incoming_halted * 2
-    assert row.halted_out == 6
 
 
 def test_and_exit_halts_a_completed_incoming_against_a_completed_exit() -> None:
@@ -432,7 +374,6 @@ def test_totals_reports_every_site() -> None:
 
     with arm_census() as rows:
         body.and_exit_truthiness(other, site=None)
-        body.and_finally(lambda: other)
         body.and_exit(other, disposition=NeverSuppresses())
         body.and_then(lambda _value: other)
 

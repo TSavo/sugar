@@ -994,59 +994,6 @@ class ExitSet(Generic[T]):
             )
         return ExitSet(tuple(exits)).normalize()
 
-    def and_finally(
-        self,
-        cleanup: Callable[[], "ExitSet[object]"],
-        *,
-        cleanup_restores: Callable[[object], bool] | None = None,
-    ) -> "ExitSet[object]":
-        """Run cleanup over every completed and halted exit (try/finally).
-
-        Laws:
-        - Cleanup **completion that restores** keeps the incoming exit
-          (completed value or halted effect).
-        - Cleanup **halt** supersedes the incoming exit.
-        - Cleanup **terminal completion** (e.g. return in finally) supersedes
-          with that completed value — ``cleanup_restores`` is False.
-
-        Default: every completed cleanup restores (``cleanup_restores`` always
-        True). Callers that model return-in-finally pass a predicate on the
-        cleanup completed value.
-        """
-        restores = cleanup_restores or (lambda _value: True)
-        # Construct cleanup ExitSet once; fan the same exits across every
-        # incoming exit (cleanup runs on every path, not once per path).
-        cleanup_exits = cleanup().exits
-        # Obligations from BOTH sides ride onto every outgoing arm. The body
-        # ran and the cleanup ran, so both incurred what they incurred; which
-        # of the two decides the outgoing SHAPE says nothing about who owes.
-        # Superseding is a choice about the exit, never a discharge.
-
-        exits: list[Exit[object]] = []
-        for incoming in self.exits:
-            for clean in cleanup_exits:
-                guard = _and_guards(incoming.guard, clean.guard)
-                faces = incoming.faces | clean.faces
-                owed = _owed_union(incoming.owed, clean.owed)
-                if isinstance(clean, Halted):
-                    exits.append(
-                        Halted(guard, clean.effect, clean.state, faces, owed)
-                    )
-                    continue
-                if restores(clean.value):
-                    if isinstance(incoming, Completed):
-                        exits.append(Completed(guard, incoming.value, faces, owed))
-                    else:
-                        exits.append(
-                            Halted(
-                                guard, incoming.effect, incoming.state, faces, owed
-                            )
-                        )
-                else:
-                    # Terminal cleanup completion supersedes (return in finally).
-                    exits.append(Completed(guard, clean.value, faces, owed))
-        return ExitSet(tuple(exits)).normalize()
-
     def and_exit(
         self,
         exit_es: "ExitSet[object]",
