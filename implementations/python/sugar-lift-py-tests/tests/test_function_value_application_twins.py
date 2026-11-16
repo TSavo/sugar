@@ -24,7 +24,11 @@ rebinding.  One that reads the cell after a test that may run code (``if n >
 5: return``) is not stated, and stays open.  What an append
 or an item store leaves in a list or dict the call handed it is stated over
 the dispatched call's receiver and decided at prove where the caller binds
-the object's class to the builtin (#7757 step 7).
+the object's class to the builtin (#7757 step 7).  What a callee leaves
+unchanged -- a list or dict it is handed and never changes -- is stated by
+its contract's ``python:leaves("<param>")``, which prove's join reads as
+``python:after(<call result>, "<param>")`` being the operand the call bound
+(``consistency::left_unchanged_states``, #7757 step 7).
 """
 
 from __future__ import annotations
@@ -158,6 +162,28 @@ def test_put():
     assert e["k"] == {claim}
 """
 
+_LIST_LEFT_BY_A_PARAMETER = """\
+def peek(xs):
+    return 1
+
+
+def test_peek():
+    ys = [1, 2]
+    peek(ys)
+    assert ys[0] == {claim}
+"""
+
+_DICT_LEFT_BY_A_PARAMETER = """\
+def peek(d):
+    return 1
+
+
+def test_peek():
+    e = {{"k": 5}}
+    peek(e)
+    assert e["k"] == {claim}
+"""
+
 _MODULE_DEF_DEFAULT = """\
 def f(a=3):
     return a
@@ -201,7 +227,16 @@ _TWINS = {
 # answers the dispatched call by the builtin's law (``seq.++`` for
 # ``append``, the item replaced for ``xs[i] = v``, the key stored for ``d[k] =
 # v``) and reads ``len`` and the item through the same theory.
+#
+# What a callee leaves unchanged is stated too: ``peek`` never changes the
+# list or dict it is handed, so its contract states ``python:leaves("xs")``,
+# and prove's join reads the caller's ``python:after(<call result>, "xs")``
+# as the operand the call bound (``consistency::left_unchanged_states``,
+# #7757 step 7).  Open on both halves before: the caller's read of its own
+# list after the call was a term no contract stated.
 _STATED_BY_THE_CALLEE = {
+    "list-left-by-a-parameter": (_LIST_LEFT_BY_A_PARAMETER, "1", "2"),
+    "dict-left-by-a-parameter": (_DICT_LEFT_BY_A_PARAMETER, "5", "6"),
     "global-rebound": (_GLOBAL_REBOUND, "5", "0"),
     "nonlocal-rebound": (_NONLOCAL_REBOUND_THROUGH_THE_VALUE, "1", "0"),
     "direct-nonlocal-rebound": (_DIRECT_NONLOCAL_REBOUND, "1", "0"),
