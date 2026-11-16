@@ -600,19 +600,24 @@ def _class_scope_nodes(statement):
             stack.extend(child for _name, _index, child in node._child_edges())
 
 
-def _is_join_phi(node) -> bool:
-    """Whether ``node`` is the phi a join splices after itself
-    (``If._make_assign`` of ``If._make_ifexp``, for an ``if``, a ``try`` or
-    a ``match``): ``<name> = <a> if <slot result> else <b>``, whose test is
-    the ``BranchResultRef`` the join minted, which no source spells.  It is
+def _is_join_phi(node, if_spans) -> bool:
+    """Whether ``node`` is the phi an ``if`` splices after itself
+    (``If.substitute``: ``If._make_assign`` of the join of each name either
+    arm left changed), ``if_spans`` the spans of the ``if`` statements of
+    the threaded block it stands in.  The phi borrows its ``if``'s span
+    (``If._make_assign``), and where the join is an expression it is the
+    ``IfExp`` over the ``BranchResultRef`` the join minted
+    (``If._make_ifexp``); no assignment the source spells has either.  It is
     no statement of the source: it carries no evaluation key, and each name
     it joins is either one an arm's own statement bound (read off that
     statement) or the state a call in an arm left
     (``container_mutation.havoc_after``)."""
-    return (
-        isinstance(node, Assign)
-        and isinstance(node.value, IfExp)
-        and isinstance(node.value.test, BranchResultRef)
+    return isinstance(node, Assign) and (
+        node.span in if_spans
+        or (
+            isinstance(node.value, IfExp)
+            and isinstance(node.value.test, BranchResultRef)
+        )
     )
 
 
@@ -11825,14 +11830,18 @@ class ClassDef(Statement):
             if isinstance(assigned, str):
                 own.add(assigned)
             if isinstance(item, LoopRecurrenceStatement):
-                for node in _class_scope_nodes(item):
-                    if node is item or isinstance(node, (Global, Nonlocal)):
-                        continue
+                nodes = tuple(
+                    node
+                    for node in _class_scope_nodes(item)
+                    if node is not item and not isinstance(node, (Global, Nonlocal))
+                )
+                if_spans = frozenset(node.span for node in nodes if isinstance(node, If))
+                for node in nodes:
                     threaded = set(node.names_bound_here())
                     rebound = getattr(node, "rebinds", None)
                     if isinstance(rebound, str):
                         threaded.add(rebound)
-                    if _is_join_phi(node):
+                    if _is_join_phi(node, if_spans):
                         threaded &= bound | armed
                     own.update(threaded)
                     if isinstance(node, (FunctionDef, AsyncFunctionDef)):
