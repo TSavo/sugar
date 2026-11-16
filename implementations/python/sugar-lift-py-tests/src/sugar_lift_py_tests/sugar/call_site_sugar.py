@@ -20,7 +20,6 @@ class DefinitionOccurrenceAbsenceReasonV1(str, Enum):
     """Why a call producer positively claims no source definition occurrence."""
 
     NOT_SOURCE_RESOLVED = "not-source-resolved"
-    NO_LEXICAL_SOURCE_CALL_ROW = "no-lexical-source-call-row"
 
 
 @dataclass(frozen=True)
@@ -52,9 +51,6 @@ else:
 
 _DEFINITION_NOT_SOURCE_RESOLVED = DefinitionOccurrenceAbsentV1(
     DefinitionOccurrenceAbsenceReasonV1.NOT_SOURCE_RESOLVED
-)
-_NO_LEXICAL_SOURCE_CALL_ROW = DefinitionOccurrenceAbsentV1(
-    DefinitionOccurrenceAbsenceReasonV1.NO_LEXICAL_SOURCE_CALL_ROW
 )
 
 
@@ -102,9 +98,9 @@ def _off_population_unanswered_call(sugar):
 def _unknown_callee_call(sugar, callsite):
     """The may-raise testimony for a bodiless call nothing answered.
 
-    Reached once every answer has declined: no source frame (a seated frame
-    is the definition's edge, ``CallSiteSugar._definition_edge``) and no
-    builtin law answers the call
+    Reached once every answer has declined: no source ``def`` (a call of one
+    is its value's edge, ``Call._function_value_call``) and no builtin law
+    answers the call
     (``_builtin_law_answers``).  Whatever the name is bound to -- nothing, a
     value (``len = 5; len(x)``), a class whose constructor frame was not
     built, any name a star import may rebind (``from m import *; int('x')``),
@@ -257,19 +253,11 @@ class CallSiteSugar(ConstructedTermSugar):
     reference_symbol: str | None = None
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
-    source_call_frame: Any = dataclass_field(default=None, compare=False)
-    # A lexical call's frame is owned by its lexical row's definition
-    # (testified); ``_NO_LEXICAL_SOURCE_CALL_ROW`` for every other call.
-    expected_source_call_frame_owner: DefinitionOccurrenceReconciliationV1 = (
-        dataclass_field(default=_NO_LEXICAL_SOURCE_CALL_ROW, compare=False)
-    )
-    formal_function_sugar: Any = dataclass_field(default=None, compare=False)
+    # The formal coordinates of the ``def`` a call at its recursion seat
+    # names (``Call._recursion_seat_call``); empty for every other call.
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
     expected_definition_ref: DefinitionOccurrenceReconciliationV1 = dataclass_field(
         default=_DEFINITION_NOT_SOURCE_RESOLVED, compare=False
-    )
-    native_operation_formal_coordinates: tuple = dataclass_field(
-        default=(), compare=False
     )
     call_occurrence: SourceFragmentCoordinateV1 | None = dataclass_field(
         default=None, compare=False
@@ -279,13 +267,6 @@ class CallSiteSugar(ConstructedTermSugar):
     # binding, never its spelling; ``None`` for every other callee. What the
     # language decides for that callee is dispatched on this member.
     language_callee: Any = dataclass_field(default=None, compare=False)
-    # ``((name, coordinate cid, sugar), ...)``: a call of a local ``def`` in
-    # its enclosing body carries, for each enclosing local the body reads, the
-    # binding the enclosing scope holds at the call
-    # (``Call._closure_cells``).  Its value is bound under the frame's
-    # captured coordinate before the body runs (``_captured_values``); the
-    # name is never read in the callee.
-    captured: tuple = dataclass_field(default=(), compare=False)
 
     def __post_init__(self) -> None:
         for argument in self.args:
@@ -303,17 +284,6 @@ class CallSiteSugar(ConstructedTermSugar):
             self.expected_definition_ref,
             coordinate="CallSiteSugar.expected_definition_ref",
         )
-        self._require_definition_reconciliation(
-            self.expected_source_call_frame_owner,
-            coordinate="CallSiteSugar.expected_source_call_frame_owner",
-        )
-        if isinstance(
-            self.expected_definition_ref, DefinitionOccurrenceAbsentV1
-        ) and self.source_call_frame is not None:
-            raise TypeError(
-                "CallSiteSugar.expected_definition_ref cannot claim absence "
-                "when source_call_frame is present"
-            )
 
     @staticmethod
     def _require_definition_reconciliation(
@@ -335,21 +305,6 @@ class CallSiteSugar(ConstructedTermSugar):
                 "DefinitionOccurrenceAbsentV1; got "
                 f"{type(value).__name__}"
             )
-
-    @staticmethod
-    def _reconciled_definition_ref(value: object) -> object | None:
-        from sugar_source_tree.nodes import AsyncFunctionDef, ClassDef, FunctionDef
-
-        match value:
-            case DefinitionOccurrenceAbsentV1():
-                return None
-            case FunctionDef() | AsyncFunctionDef() | ClassDef() as definition:
-                return definition.ref
-            case _:
-                raise TypeError(
-                    "definition reconciliation must be a projected definition "
-                    "occurrence or DefinitionOccurrenceAbsentV1"
-                )
 
     @classmethod
     def witnesses(cls):
@@ -375,18 +330,11 @@ class CallSiteSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.ir import ctor, str_const
 
         occurrence = self.occurrence_term(owner=owner)
-        if self.source_call_frame is not None:
-            callee = ctor(
-                "python:source-callee",
-                (str_const(self.source_call_frame.frame_cid),),
-                symbol_kind="coordinate",
-            )
-        else:
-            # The exact call occurrence is the available callee authority for
-            # builtin/opaque calls; never elevate the target spelling.
-            callee = ctor(
-                "python:occurrence-callee", (occurrence,), symbol_kind="coordinate"
-            )
+        # The exact call occurrence is the available callee authority for
+        # builtin/opaque calls; never elevate the target spelling.
+        callee = ctor(
+            "python:occurrence-callee", (occurrence,), symbol_kind="coordinate"
+        )
         definition_authority = []
         if self.exception_type_coordinate is not None:
             coordinate_cid = getattr(self.exception_type_coordinate, "cid", None)
@@ -452,57 +400,6 @@ class CallSiteSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        if self.source_call_frame is not None:
-            from sugar_source_tree.panic import SugarNotWritten
-            from sugar_source_tree.nodes import (
-                AsyncFunctionDef,
-                FunctionDef,
-            )
-
-            expected_definition_ref = self._reconciled_definition_ref(
-                self.expected_definition_ref
-            )
-            owner_matches = (
-                expected_definition_ref is not None
-                and self.source_call_frame.owner.ref is expected_definition_ref
-            )
-            if not owner_matches:
-                raise SugarNotWritten(
-                    owner="CallSiteSugar.desugar",
-                    blame=self.site,
-                    observed="cached source frame has foreign definition owner",
-                    requested="authenticated lexical definition owner",
-                    fix="retain the seated frame or keep the call loud",
-                )
-            # Closure testimony belongs to function frames.  A class
-            # constructor frame is owned by ClassDef and has a class symtable,
-            # not a function symtable named after the class.  Asking the
-            # function-only lookup for it turns an authenticated constructor
-            # into a SourceTreePanic before its existing binder can run.
-            free_names: tuple[str, ...] = ()
-            if isinstance(
-                owner := self.source_call_frame.owner, (FunctionDef, AsyncFunctionDef)
-            ):
-                table = owner.unit.function_symtable(
-                    owner.name, owner.line_col_span().start_line
-                )
-                free_names = tuple(
-                    symbol.get_name()
-                    for symbol in table.get_symbols()
-                    if symbol.is_free() or symbol.is_nonlocal()
-                )
-            carried = {name for name, _cid, _sugar in self.captured}
-            uncarried = tuple(name for name in free_names if name not in carried)
-            if uncarried:
-                raise SugarNotWritten(
-                    owner="CallSiteSugar.desugar",
-                    blame=self.site,
-                    observed=(
-                        "closure bindings lack producer coordinates: " f"{uncarried!r}"
-                    ),
-                    requested="captured binding coordinate testimony",
-                    fix=("enroll producer-owned closure actuals before body reduction"),
-                )
         if self.contract_resolution_gap is not None:
             # Off-population is "we know exactly which callee this is, and we
             # have decided not to look inside it". Raising here would abort an
@@ -565,15 +462,13 @@ class CallSiteSugar(ConstructedTermSugar):
             target[len(_BUILTINS_PREFIX) :]
         )
 
-    def _applied_builtin_exception_class(self, source_call_frame):
+    def _applied_builtin_exception_class(self):
         """The builtin exception class this call applies, by its binding.
 
         The builtin floor's class the callee's binding names
         (``_builtin_floor_value``), never the call's spelling: a user class or
         rebinding named ``ValueError`` is not a builtin exception.
         """
-        if source_call_frame is not None:
-            return None
         from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
 
         receiver = self._builtin_floor_value()
@@ -581,9 +476,7 @@ class CallSiteSugar(ConstructedTermSugar):
             return None
         return receiver
 
-    def _applied_builtin_type_of(
-        self, source_call_frame, positional, kw_values, term
-    ):
+    def _applied_builtin_type_of(self, positional, kw_values, term):
         """The class coordinate ``type(obj)`` returns, by the callee's binding.
 
         One positional actual applied through the language-owned ``type``
@@ -598,25 +491,11 @@ class CallSiteSugar(ConstructedTermSugar):
 
         if (
             self.language_callee is not LanguageCallee.BUILTIN_TYPE
-            or source_call_frame is not None
             or len(positional) != 1
             or kw_values
         ):
             return None
         return term
-
-    def _captured_values(self, ctx) -> tuple:
-        """``((name, coordinate cid, value), ...)``: each carried enclosing
-        binding (``captured``) read here, at the call
-        (``read_captured_values``)."""
-        return read_captured_values(self.captured, ctx, site=self.site)
-
-    def _with_captured_values(self, ctx, frame, captured_values):
-        """``ctx`` with each captured value bound under ``frame``'s captured
-        coordinate for its name (``with_captured_values``)."""
-        return with_captured_values(
-            ctx, frame, captured_values, site=self.site, blame=self.target_name
-        )
 
     def _collect(
         self, remaining: tuple, accumulated: tuple, ctx: object, inside=()
@@ -756,19 +635,10 @@ class CallSiteSugar(ConstructedTermSugar):
             isinstance(receiver, BuiltinSemanticCallable)
             or (
                 isinstance(receiver, ClassDefinitionValue)
-                and self.source_call_frame is None
                 and not positional
                 and not kw_values
             )
-            or (
-                isinstance(receiver, LambdaCallable)
-                and self.source_call_frame is None
-                and isinstance(
-                    self.expected_source_call_frame_owner,
-                    DefinitionOccurrenceAbsentV1,
-                )
-                and self.formal_function_sugar is None
-            )
+            or isinstance(receiver, LambdaCallable)
         ):
             return receiver
         return None
@@ -778,8 +648,8 @@ class CallSiteSugar(ConstructedTermSugar):
     ) -> ExitSet:
         """``_applied`` for a callee other than a function's value, over its
         actuals as operation receivers: the builtin's or the class value's
-        own application (``receiver``), else the call by name through its
-        seated frame or as its bodiless coordinate."""
+        own application (``receiver``), else the call by name as its
+        bodiless coordinate."""
         if receiver is not None:
             from sugar_lift_py_tests.callable_application import CallableApplication
 
@@ -799,60 +669,19 @@ class CallSiteSugar(ConstructedTermSugar):
             ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
             for name, value in kw_values
         ]
-        # What the callee reads from its enclosing scope is an input of this
-        # call as its actuals are: two calls that read different values are
-        # two coordinates.
-        captured_values = self._captured_values(ctx)
-        closure_terms = [
-            ctor("py.closure", [str_const(name), value.to_term(owner=owner)])
-            for name, _cid, value in captured_values
-        ]
         # The head is classified by the callee's binding, never its spelling:
         # a ``len`` the module rebinds is a coordinate, not the builtin.
         term = ctor(
             call_symbol(self.spelled_target),
-            [value.to_term(owner=owner) for value in positional]
-            + kwarg_terms
-            + closure_terms,
+            [value.to_term(owner=owner) for value in positional] + kwarg_terms,
             symbol_kind=(
                 "builtin" if self._builtin_reference() is not None else "coordinate"
             ),
         )
-        # The frame is the one construction read (``Call._construct_sugar``:
-        # the lexical row's definition's own), carried as
-        # ``source_call_frame``.
-        source_call_frame = self.source_call_frame
-        if not isinstance(
-            self.expected_source_call_frame_owner, DefinitionOccurrenceAbsentV1
-        ):
-            from sugar_source_tree.panic import SugarNotWritten
-
-            # A lexical call: the frame it carries is owned by the lexical
-            # row's exact definition.
-            expected_owner_ref = self._reconciled_definition_ref(
-                self.expected_source_call_frame_owner
-            )
-            owner_matches = (
-                source_call_frame is not None
-                and expected_owner_ref is not None
-                and source_call_frame.owner.ref is expected_owner_ref
-            )
-            if source_call_frame is None or not owner_matches:
-                raise SugarNotWritten(
-                    owner="CallSiteSugar.desugar",
-                    blame=self.site,
-                    observed="seated source frame has foreign lexical owner",
-                    requested="the lexical row's exact definition-owned source frame",
-                    fix="retain the authenticated frame at the exact call coordinate or keep loud",
-                )
-        if source_call_frame is not None:
-            return self._definition_edge(
-                source_call_frame, positional, kw_values, captured_values, term, ctx
-            )
-        # The one binder (``object_value.bind_call``): a call with no frame
-        # binds bodyless.  No call by name applies a body (#7757 step 6): a
-        # seated frame is a ``def``'s, and its call is its coordinate and
-        # edge (``_definition_edge``).
+        # The one binder (``object_value.bind_call``): a call by name binds
+        # bodyless.  No call by name seats a frame or applies a body (#7757
+        # step 6): a call of a source ``def`` is its value's coordinate and
+        # edge (``Call._function_value_call``).
         callsite = bind_source_frame_call(
             self.target_name,
             positional,
@@ -867,78 +696,13 @@ class CallSiteSugar(ConstructedTermSugar):
             authenticated_target_symbol=self.import_target_symbol,
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
-            builtin_exception_class=self._applied_builtin_exception_class(None),
+            builtin_exception_class=self._applied_builtin_exception_class(),
             python_type_coordinate=self._applied_builtin_type_of(
-                None, positional, kw_values, term
+                positional, kw_values, term
             ),
             language_callee=self.language_callee,
         )
         return self._apply_bound(callsite)
-
-    def _definition_edge(
-        self, frame, positional, kw_values, captured_values, term, ctx
-    ):
-        """The call of the ``def`` whose frame ``Call._construct_sugar``
-        seated by the callee's name -- a generator function, an ``async
-        def``, a ``contextmanager`` generator -- as its coordinate and edge
-        (#7757 step 6, the owner's ruling of 2026-11-15, "Edge, join at
-        prove"), through the one edge every call of a same-file definition
-        stands as (``lambda_callable.definition_edge_call``).
-
-        The frame is entered and the call bound by the one binder
-        (``object_value.bind_call``, no body) only to read what the edge
-        supplies; a call that does not fit the signature is refused by name
-        there.  The body is never applied: what the call returns (a
-        generator, a coroutine, a manager) and what iterating, awaiting or
-        entering it does are what the callee's contract states, joined at
-        prove, and otherwise undecided and owed."""
-        from sugar_lift_py_tests.floor.lambda_callable import (
-            definition_edge_call,
-            variadic_formals,
-        )
-        from sugar_lift_py_tests.floor.object_value import bind_call
-
-        caller_ctx = ctx
-        ctx, module_halt = enter_source_frame(
-            frame,
-            ctx,
-            owner="CallSiteSugar.desugar",
-            blame=self.site,
-            covered=frozenset(name for name, _cid, _value in captured_values),
-        )
-        ctx = self._with_captured_values(ctx, frame, captured_values)
-        if module_halt is not None:
-            return module_halt
-        bound = bind_call(
-            self.target_name,
-            positional,
-            kw_values,
-            frame=frame,
-            parameters=frame.parameters,
-            frame_cid=frame.frame_cid,
-            formal_coordinate_cids=tuple(
-                item.cid for item in frame.formal_coordinates
-            ),
-            ctx=ctx,
-            owner="CallSiteSugar.desugar",
-            blame=self.site,
-            refuse=_refuse_loud,
-            term=term,
-        )
-        return definition_edge_call(
-            symbol_definition=frame.owner,
-            signature=frame.owner,
-            parameters=tuple(frame.parameters),
-            packed=variadic_formals(frame),
-            positional=positional,
-            keywords=kw_values,
-            captured=captured_values,
-            actuals=tuple(bound.arg_values),
-            site=self.site,
-            call_occurrence=self.call_occurrence,
-            caller_ctx=caller_ctx,
-            fallback_target=self.target_name,
-        )
 
     def _apply_bound(self, callsite):
         """The bodiless call ``callsite`` the one binder bound: a builtin

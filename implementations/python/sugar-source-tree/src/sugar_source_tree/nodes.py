@@ -5338,8 +5338,9 @@ class SourceUnit:
         the call is a call of that value (``DecoratedDefinitionRef``), never
         of the definition's own frame or the class statement read again at
         the call (#7757).  A ``contextlib.contextmanager`` generator function
-        is the one decorated definition whose call keeps its frame
-        (``call_applies_own_frame``).
+        is the one decorated definition whose name is bound to its function
+        (``call_applies_own_frame``): its call is that value's
+        (``Call._function_value_call``).
 
         Which definition the callee denotes is the one resolver's
         (``module_definition_denoted_by``).  Only a ``Name`` callee is asked:
@@ -5358,9 +5359,12 @@ class SourceUnit:
             return None
         return definition
 
-    def function_definition_for_read(self, read: "Name") -> "FunctionDef | None":
-        """The undecorated module ``def`` a value read of a name reaches from
-        a function body, or None.
+    def function_definition_for_read(
+        self, read: "Name"
+    ) -> "FunctionDef | AsyncFunctionDef | None":
+        """The module ``def`` whose name is bound to the function its
+        statement built (``_binds_function_value``) a value read of a name
+        reaches from a function body, or None.
 
         ``h(g)``, ``x = g`` and ``return g`` read ``g`` as a value: the
         function its ``def`` statement built (#7757).  That value is the
@@ -5373,9 +5377,11 @@ class SourceUnit:
 
         Answered by the same law a call of the name is
         (``module_definition_at``: the one module binding, CPython's scope
-        classification at the read), for a plain function only: an ``async
-        def`` or generator function is no value this carries, and a decorated
-        ``def`` or a ``class`` binds its statement's value under its own key.
+        classification at the read), for every ``def`` whose name is bound to
+        its function, whatever its kind (a plain function, a generator
+        function, an ``async def``, a ``contextmanager`` generator, #7757); a
+        decorated ``def`` or a ``class`` binds its statement's value under its
+        own key.
         Answered only for a read that runs when some function is called
         (``module_execution_site`` is None: it sits in a ``def`` or lambda
         body).  A read the module body itself runs (a module statement, a
@@ -5387,11 +5393,7 @@ class SourceUnit:
         if len(bindings) != 1:
             return None
         definition = bindings[0]
-        if (
-            not isinstance(definition, FunctionDef)
-            or definition.decorators
-            or FunctionDef._owns_yield(definition.body)
-        ):
+        if not _binds_function_value(definition):
             return None
         if self.module_definition_at(read.id, read.line_col_span()) is not definition:
             return None
@@ -10546,7 +10548,7 @@ class FunctionDef(Statement):
         reads it as a captured coordinate, like a formal, and the call binds
         it: a call in the enclosing body carries the binding its own scope
         holds for the name (``Call._closure_cells``) and binds its value under
-        the coordinate (``CallSiteSugar._captured_values``).  The name itself
+        the coordinate (``ComputedCallSugar.captured``).  The name itself
         is never read.  A ``nonlocal`` name the body writes is read so too:
         its writes rebind it in the frame, and the caller reads the cell
         after the call as unknown (the one exposure rule, ``_ambient_targets``):
@@ -22955,15 +22957,15 @@ class Call(Expression):
         reads the enclosing cell when the function runs, so ``y = 1; def g():
         return y; y = 2; g()`` reads ``y``'s binding of ``y = 2``, and so
         does ``y = 1; g = lambda: y; y = 2; g()``.  The call binds each value
-        under the frame's captured coordinate (``CallSiteSugar``,
-        ``ComputedCallSugar``); the name is never read in the callee, nor
+        under the frame's captured coordinate (``ComputedCallSugar``); the
+        name is never read in the callee, nor
         the binding the function was made under.
 
         Empty when the callee is neither a local ``def`` this scope binds
         nor a lambda (``(lambda: y)()``, or a name bound to one,
         ``rewritten``'s callee through ``of``), and otherwise as
         ``_cells_at_call`` answers: the call then stays refused by name
-        (``CallSiteSugar``, ``ComputedCallSugar``).
+        (``ComputedCallSugar``).
 
         The function runs after the callee and every argument are evaluated,
         so the cells are read in the scope those leave (``_scope_after``): a
@@ -23170,7 +23172,7 @@ class Call(Expression):
     def _closure_definition(self, scope, rewritten):
         """The function this call runs whose captured names it binds: the
         local ``def`` the callee name is bound to here (the definition itself,
-        or the function value a local plain ``def`` binds its name to,
+        or the function value a local ``def`` binds its name to,
         ``_binds_function_value``), the local ``def`` whose function value
         the substituted callee is (``_function_value_definition``: ``x = g;
         x()``), or the lambda the substituted callee denotes (the lambda
@@ -23178,7 +23180,7 @@ class Call(Expression):
         ``_construct_sugar`` follows it); otherwise None.
 
         A callee name ``scope`` does not bind is the call by name of the
-        plain ``def`` the call applies (``_named_function_value``: the
+        ``def`` the call applies (``_named_function_value``: the
         lexical row, ``SourceUnit.source_function_definition_for_call``).  A
         call frame's body (``_source_visible_call_frame_unguarded``) is
         threaded without the function's lexical locals, so a local ``def``
@@ -23189,7 +23191,7 @@ class Call(Expression):
         func = self.func
         if isinstance(func, Name) and func.id in scope:
             definition = _local_function_bound(unwrap_binding_state(scope[func.id]))
-            if isinstance(definition, FunctionDef):
+            if isinstance(definition, (FunctionDef, AsyncFunctionDef)):
                 return definition
         if isinstance(func, Name) and func.id not in scope:
             definition = self.unit.source_function_definition_for_call(self)
@@ -23332,9 +23334,10 @@ class Call(Expression):
 
     def _construct_call_sugar(self):
         """A call constructs its callee's sugar WITH the argument sugars.
-        A call of a plain source ``def``, by name or through its value, is
-        the call of the function its statement built
-        (``_function_value_call``: ComputedCallSugar, the one application).
+        A call of a source ``def`` whose name is bound to the function its
+        statement built, of whatever kind, by name or through its value, is
+        the call of that function (``_function_value_call``:
+        ComputedCallSugar, the one application, its coordinate and edge).
         Any other `<name>(<args>)` -> CallSiteSugar, the call-site coordinate
         (THE DIG CUE). `<receiver>.<name>(<args>)` -> MethodCallSugar, the method
         coordinate `call:<name>(receiver, args)` with the receiver riding as
@@ -23413,11 +23416,35 @@ class Call(Expression):
             )
             # A decorated definition's name is bound to its decorators'
             # result, a class's name to its statement's value, decorated or
-            # not, and a plain ``def``'s name to the function its statement
-            # built: ``g(*a, **k)`` calls that value, through the one call
-            # routine (``SpreadCallSugar._finish``), as ``g(...)`` does
-            # (``_decorated_definition_call``, ``_function_value_call``).  No
-            # call seats a definition's frame by its name (#7757).
+            # not, and any other ``def``'s name -- a plain function, a
+            # generator function, an ``async def``, a ``contextmanager``
+            # generator (``_binds_function_value``) -- to the function its
+            # statement built: ``g(*a, **k)`` calls that value, through the
+            # one call routine (``SpreadCallSugar._finish``), as ``g(...)``
+            # does (``_decorated_definition_call``, ``_function_value_call``),
+            # and the spread is bound by the one binder and carried in the
+            # edge's term like any actual.  No call seats a definition's frame
+            # by its name (#7757).
+            seat = self._recursion_seat()
+            if seat is not None:
+                # The definition's own universe is under construction up the
+                # stack: the same seat ``g(x)`` stands as (below), never a
+                # call with no symbol.
+                return self._recursion_seat_call(
+                    seat,
+                    coordinate,
+                    language_callee,
+                    args=tuple(
+                        sugar
+                        for role, _name, sugar in arguments
+                        if role in ("positional", "star")
+                    ),
+                    keywords=tuple(
+                        ("**" if role == "double-star" else name, sugar)
+                        for role, name, sugar in arguments
+                        if role in ("keyword", "double-star")
+                    ),
+                )
             decorated = self.unit.decorated_definition_for_call(self)
             named = None if decorated is not None else self._named_function_value()
             if (
@@ -23441,10 +23468,10 @@ class Call(Expression):
                     arguments=arguments,
                     site=self.fragment,
                 )
-            # Any other callee by name -- an import, a builtin, a generator
-            # function or ``async def`` (no value this carries), a recursion
-            # seat -- is the one unanswered call (``SpreadCallSugar._finish``);
-            # any other expression is its value's call.
+            # Any other callee by name -- an import, a builtin, a name no
+            # source definition binds -- is the one unanswered call
+            # (``SpreadCallSugar._finish``); any other expression is its
+            # value's call.
             return SpreadCallSugar(
                 callee_name=callee_name,
                 callee=(None if isinstance(self.func, Name) else self.func.sugar()),
@@ -23463,148 +23490,15 @@ class Call(Expression):
             (kw.arg if kw.arg is not None else "**", kw.value.sugar())
             for kw in self.keywords
         )
-        source_call_frame = None
-        recursion_seat = None
-
-        # What is left of a frame seated by the callee's name: a generator
-        # function, an ``async def`` and a ``contextmanager`` generator, whose
-        # values the one application does not yet carry
-        # (``DecoratorApplicationSugar.uncarried``), and a plain ``def`` at its
-        # recursion seat, which seats no frame and stands as the call whose
-        # resolution gap names the seat.  Every other call of a plain ``def``
-        # is its value's (``_function_value_call``, above).
-        #
-        # Applicability first, relation second.  A non-lexical call is lawfully
-        # not enrolled; a stranded enrolled row refuses instead of quietly
-        # losing the source frame (#7348 caller 4).
-        lexical_row = (
-            self.unit.require_lexical_call_rows(self)[0]
-            if isinstance(
-                self.unit.lexical_call_enrollment(self), LexicalCallEnrolledV1
-            )
-            else None
-        )
-        if lexical_row is not None and not call_applies_own_frame(
-            lexical_row.definition_occurrence
-        ):
-            # A decorated local definition binds its name to the decorators'
-            # result: the call is that value's (its read is the
-            # ``DecoratedDefinitionRef`` the definition bound), never the
-            # definition's frame (#7757).
-            lexical_row = None
-        if lexical_row is not None and not isinstance(
-            self.func, (Name, FormalRef, BindingCoordinateRef)
-        ):
-            # The row was enrolled by the source callee's spelling, and names
-            # the last ``def`` of that name before the call.  A substitution
-            # that read the name as something else -- a binding two branches'
-            # ``def``s merged (``GuardedBindingRead``: each def's face, and a
-            # ``NameError`` face where an arm left it unbound), a phi's
-            # reference -- left no spelling the seat could absorb: the call is
-            # that value's (``ComputedCallSugar`` below), which builds the
-            # callee and keeps every face.  Seating the row's one ``def``
-            # dropped the others, and the callee was built by nothing: it
-            # registered and never answered (``core/internals/managers.py:
-            # 1403``, ``value_getitem`` after ``iset``'s live loop).
-            lexical_row = None
-        if lexical_row is not None:
-            function_definition = lexical_row.definition_occurrence
-            if (
-                lexical_row.source_cid != self.unit.source_cid
-                or not isinstance(function_definition, (FunctionDef, AsyncFunctionDef))
-                or lexical_row.definition_occurrence_identity
-                is not function_definition.ref
-                or lexical_row.lexical_scope_identity
-                is not lexical_row.lexical_scope.ref
-            ):
-                from .panic import backend_defect
-
-                backend_defect(
-                    blame=self.fragment,
-                    owner="Call._construct_sugar",
-                    observed="foreign or malformed lexical source-call row",
-                    requested="this source unit's exact call, definition, and lexical scope",
-                    fix="repair lexical call enrollment before constructing the source frame",
-                )
-            try:
-                source_call_frame = function_definition.source_visible_call_frame()
-            except SourceCallFrameCycle as cycle:
-                # The callee's frame is under construction up the stack: this
-                # call is the recursion seat. Definition known, body not unfolded.
-                source_call_frame = None
-                recursion_seat = (
-                    f"call-graph-cycle:{cycle.definition.name}"
-                    f"@{cycle.definition.line_col_span().start_line}"
-                )
-        if source_call_frame is not None and _class_method_lookup_call(
-            self, source_call_frame
-        ):
-            # ``Class.m(...)`` of a ``classmethod``: the lookup binds the
-            # class as ``cls``.  The one method door binds it
-            # (``object_value.implicit_arguments``, through the method call
-            # below), never this seated frame with the class spliced in.
-            source_call_frame = None
-        if source_call_frame is not None:
-            # A frame is applied only through the call's own lexical row
-            # (above), so the row is present here.
-            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-            from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
-
-            if any(keyword.arg is None for keyword in self.keywords):
-                raise SourceCallBindingGap(
-                    "spread keyword requires typed variadic projection"
-                )
-            bind_args = self.args
-            bound_frame = source_call_frame.bind_node_actuals(
-                bind_args,
-                tuple(
-                    (keyword.arg, keyword.value)
-                    for keyword in self.keywords
-                    if keyword.arg is not None
-                ),
-            )
-            projected_definition = self._project_call_definition_occurrence(
-                bound_frame.owner,
-                coordinate="CallSiteSugar.expected_definition_ref",
-            )
-            bound_frame = replace(bound_frame, owner=projected_definition)
-            if isinstance(self.func, (Name, FormalRef, BindingCoordinateRef)):
-                # The call-site coordinate absorbs the callee's spelling
-                # (``target_name``) instead of its sugar, so the callee never
-                # constructs: that absorption is its discharge, as it is for
-                # the call by name below.  Without it a call of a local
-                # generator function (``reader = _read()``) left its callee's
-                # Name registered and never answered (#7757).  In a frame's
-                # body the callee is the frame's read of the name (a captured
-                # cell's ``BindingCoordinateRef`` re-spanned to the callee,
-                # ``Name.substitute``: ``return _check(inst)`` where ``_check``
-                # is the enclosing function's local ``def``), and the lexical
-                # row seats the same definition: that read is absorbed alike.
-                self.func.discharge_by_substitution()
-            # The call is spelled by its callee, as every other call is; the
-            # frame rides beside it.  It never mints a name of its own.
-            return CallSiteSugar(
-                target_name=(
-                    self.func.id
-                    if isinstance(self.func, Name)
-                    else self._spread_callee_name(self.func)
-                ),
-                reference_symbol=self._import_reference_callee(),
-                args=tuple(a.sugar() for a in bind_args),
-                site=self.fragment,
-                call_occurrence=coordinate,
-                keywords=keyword_sugars,
-                source_call_frame=bound_frame,
-                expected_source_call_frame_owner=(
-                    self._project_call_definition_occurrence(
-                        lexical_row.definition_occurrence,
-                        coordinate="CallSiteSugar.expected_source_call_frame_owner",
-                    )
-                ),
-                expected_definition_ref=projected_definition,
-                language_callee=language_callee,
-                captured=self._captured_cells(bound_frame),
-            )
+        # No call seats a definition's frame by the callee's name (#7757):
+        # every call of a ``def`` whose name is bound to the function its
+        # statement built -- a plain function, a generator function, an
+        # ``async def``, a ``contextmanager`` generator
+        # (``_binds_function_value``) -- is that value's call, above
+        # (``_function_value_call``: its coordinate and edge,
+        # ``lambda_callable.definition_edge_call``).  What is left by name is
+        # a callee no source definition answers, and a definition at its
+        # recursion seat.
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import (
                 CallSiteSugar,
@@ -23616,145 +23510,30 @@ class Call(Expression):
             # its sugar, so the callee never constructs. That absorption IS its
             # discharge; without it the Name registers and never answers.
             self.func.discharge_by_substitution()
-
+            seat = self._recursion_seat()
+            if seat is not None:
+                return self._recursion_seat_call(
+                    seat,
+                    coordinate,
+                    language_callee,
+                    args=tuple(a.sugar() for a in self.args),
+                    keywords=keyword_sugars,
+                )
             # The call's edge symbol, and the unanswered-call member's, is the
             # one import table's target symbol at the callee's own coordinate
             # (#7837). Nothing is bound into the kit to supply it.
-            import_target_symbol = self.unit.import_reference_of(self.func)
-            contract_resolution_gap = None
-
-            source_call_frame = None
-            formal_function_sugar = None
-            formal_coordinates = ()
-            formal_coordinate_cids = ()
-            # Applicability first, relation second (#7348 caller 5): an
-            # external/module/shadowed Name call is lawfully not enrolled, but
-            # a stranded enrolled row must not fall through to a weaker
-            # ordinary CallSiteSugar.
-            lexical_row = (
-                self.unit.require_lexical_call_rows(self)[0]
-                if isinstance(
-                    self.unit.lexical_call_enrollment(self), LexicalCallEnrolledV1
-                )
-                else None
-            )
-            if lexical_row is not None and not call_applies_own_frame(
-                lexical_row.definition_occurrence
-            ):
-                # The decorators' result, not this frame (#7757).
-                lexical_row = None
-            if lexical_row is not None:
-                function_definition = lexical_row.definition_occurrence
-                if (
-                    lexical_row.source_cid != self.unit.source_cid
-                    or not isinstance(
-                        function_definition, (FunctionDef, AsyncFunctionDef)
-                    )
-                    or lexical_row.definition_occurrence_identity
-                    is not function_definition.ref
-                    or lexical_row.lexical_scope_identity
-                    is not lexical_row.lexical_scope.ref
-                ):
-                    from .panic import backend_defect
-
-                    backend_defect(
-                        blame=self.fragment,
-                        owner="Call._construct_sugar",
-                        observed="foreign or malformed lexical source-call row",
-                        requested="this source unit's exact call, definition, and lexical scope",
-                        fix="repair lexical call enrollment before constructing the source frame",
-                    )
-            else:
-                function_definition = self.unit.source_function_definition_for_call(
-                    self
-                )
-            if function_definition is not None:
-                try:
-                    formal_function_sugar = function_definition.sugar()
-                except SourceCallFrameCycle as cycle:
-                    # Recursion seat: the callee's universe is under
-                    # construction up the stack. Definition known, no second
-                    # unfolding; the call carries a call-graph-cycle gap.
-                    formal_function_sugar = None
-                    recursion_seat = (
-                        f"call-graph-cycle:{cycle.definition.name}"
-                        f"@{cycle.definition.line_col_span().start_line}"
-                    )
-                formal_coordinates = function_definition.formal_coordinates()
-                formal_coordinate_cids = tuple(
-                    coordinate.coordinate_cid for coordinate in formal_coordinates
-                )
-                try:
-                    source_call_frame = function_definition.source_visible_call_frame()
-                except SourceCallFrameCycle as cycle:
-                    # The callee's frame is under construction up the stack: this
-                    # call is the recursion seat. Definition known, body not unfolded.
-                    source_call_frame = None
-                    recursion_seat = (
-                        f"call-graph-cycle:{cycle.definition.name}"
-                        f"@{cycle.definition.line_col_span().start_line}"
-                    )
-                if recursion_seat is not None:
-                    contract_resolution_gap = recursion_seat
-                if lexical_row is not None:
-                    if source_call_frame is not None:
-                        if (
-                            source_call_frame.owner
-                            is not lexical_row.definition_occurrence
-                        ):
-                            from .panic import backend_defect
-
-                            backend_defect(
-                                blame=self.fragment,
-                                owner="Call._construct_sugar",
-                                observed="seated source frame has foreign lexical owner",
-                                requested="the lexical row's authenticated scope owner",
-                                fix="retain the seated frame or keep the call loud",
-                            )
-                    else:
-                        try:
-                            source_call_frame = (
-                                function_definition.source_visible_call_frame()
-                            )
-                        except SourceCallFrameCycle as cycle:
-                            source_call_frame = None
-                            recursion_seat = (
-                                f"call-graph-cycle:{cycle.definition.name}"
-                                f"@{cycle.definition.line_col_span().start_line}"
-                            )
-            # A source class the name reaches is never this path: its call is
-            # the call of the class statement's value, read through its key
-            # (``decorated_definition_for_call``, ``call_applies_own_frame``).
-            if function_definition is None:
-                expected_definition = DefinitionOccurrenceAbsentV1(
-                    DefinitionOccurrenceAbsenceReasonV1.NOT_SOURCE_RESOLVED
-                )
-            else:
-                expected_definition = self._project_call_definition_occurrence(
-                    function_definition,
-                    coordinate="CallSiteSugar.expected_definition_ref",
-                )
-                if source_call_frame is not None:
-                    source_call_frame = replace(
-                        source_call_frame, owner=expected_definition
-                    )
-
             return CallSiteSugar(
                 target_name=self.func.id,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
                 call_occurrence=coordinate,
                 keywords=keyword_sugars,
-                contract_resolution_gap=contract_resolution_gap,
-                import_target_symbol=import_target_symbol,
+                import_target_symbol=self.unit.import_reference_of(self.func),
                 reference_symbol=self._import_reference_callee(),
-                source_call_frame=source_call_frame,
-                formal_function_sugar=formal_function_sugar,
-                formal_coordinate_cids=formal_coordinate_cids,
-                expected_definition_ref=expected_definition,
-                native_operation_formal_coordinates=tuple(formal_coordinates),
+                expected_definition_ref=DefinitionOccurrenceAbsentV1(
+                    DefinitionOccurrenceAbsenceReasonV1.NOT_SOURCE_RESOLVED
+                ),
                 language_callee=language_callee,
-                captured=self._captured_cells(source_call_frame),
             )
         if isinstance(self.func, Attribute):
             # Lexical import binding is the ONLY door to a closed callee
@@ -23854,14 +23633,18 @@ class Call(Expression):
         )
 
     def _function_value_call(self, coordinate):
-        """A call of a plain ``def`` (``_binds_function_value``): the call of
-        the function its statement built, through the one application
+        """A call of a ``def`` whose name is bound to the function its
+        statement built (``_binds_function_value``: a plain function, a
+        generator function, an ``async def``, a ``contextmanager``
+        generator): the call of that function, through the one application
         (``ComputedCallSugar`` -> ``apply_callee`` ->
         ``LambdaCallable.callable_application_with``), whatever spelled the
-        callee (#7757).  None for any other call.
+        callee and whatever the definition's kind (#7757).  None for any
+        other call.  What a generator's or coroutine's call returns is what
+        its contract states, joined at prove; no call runs its body.
 
         The callee is the function's value: the read of the key a local
-        plain ``def`` bound it under (``DecoratedDefinitionRef``, directly or
+        ``def`` bound it under (``DecoratedDefinitionRef``, directly or
         through ``x = g``: ``_function_value_definition``), or, for a call by
         name (``SourceUnit.source_function_definition_for_call``: the
         lexical row, else the module binding), the same application with no
@@ -23875,10 +23658,11 @@ class Call(Expression):
         imported call is (``LambdaCallable._edge_call``, #7757 step 5): no
         body is followed at the call.
 
-        A call by name whose ``def`` is at its recursion seat (its frame is
-        under construction up the stack) or has no frame is not answered
-        here: the definition is not unfolded again, and the call stands as
-        the coordinate whose resolution gap names the seat."""
+        A call by name whose ``def`` is at its recursion seat (its own
+        universe is under construction up the stack) is not answered here:
+        the definition is not unfolded again, and the call stands as the
+        coordinate whose resolution gap names the seat
+        (``_recursion_seat_call``)."""
         from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 
         definition = _function_value_definition(self.func)
@@ -23903,13 +23687,15 @@ class Call(Expression):
         )
 
     def _named_function_value(self):
-        """``(definition, value sugar)``: for a call by name of a plain
-        ``def`` (``_binds_function_value``) the name resolves to
-        (``SourceUnit.source_function_definition_for_call``), the function
-        its statement built (``_decorated_definition_ref`` with no key: the
-        application applies no decorator and evaluates no default).  None
-        for any other callee, and where the definition's frame is a
-        recursion seat or none (``_definition_call_frame``)."""
+        """``(definition, value sugar)``: for a call by name of a ``def``
+        whose name is bound to the function its statement built
+        (``_binds_function_value``: a plain function, a generator function,
+        an ``async def``, a ``contextmanager`` generator) the name resolves
+        to (``SourceUnit.source_function_definition_for_call``), that
+        function (``_decorated_definition_ref`` with no key: the application
+        applies no decorator and evaluates no default).  None for any other
+        callee, and where the definition is at its recursion seat
+        (``_recursion_seat``)."""
         if not isinstance(self.func, Name):
             return None
         definition = self.unit.source_function_definition_for_call(self)
@@ -23919,6 +23705,50 @@ class Call(Expression):
         if frame is None:
             return None
         return definition, _decorated_definition_ref(definition, self.func.span).sugar()
+
+    def _recursion_seat(self):
+        """``(definition, seat)``: the ``def`` a call by name reaches
+        (``_binds_function_value``) whose own universe is under construction
+        up the stack, and the seat that names it (``call-graph-cycle:<name>@<line>``,
+        ``_definition_call_frame``); None for any other call.  The definition
+        is not unfolded again: the call is the seat, whatever its arguments
+        (``_recursion_seat_call``)."""
+        if not isinstance(self.func, Name):
+            return None
+        definition = self.unit.source_function_definition_for_call(self)
+        if not _binds_function_value(definition):
+            return None
+        frame, seat = _definition_call_frame(definition)
+        if frame is not None or seat is None:
+            return None
+        return definition, seat
+
+    def _recursion_seat_call(self, seat, coordinate, language_callee, *, args, keywords):
+        """The call at its definition's recursion seat (``_recursion_seat``):
+        the call-site coordinate whose resolution gap names the seat, refused
+        by name where it reduces (``CallSiteSugar.desugar``).  One form for
+        ``g(x)`` and ``g(*xs)`` alike."""
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+        definition, gap = seat
+        return CallSiteSugar(
+            target_name=self.func.id,
+            args=args,
+            site=self.fragment,
+            call_occurrence=coordinate,
+            keywords=keywords,
+            contract_resolution_gap=gap,
+            import_target_symbol=self.unit.import_reference_of(self.func),
+            reference_symbol=self._import_reference_callee(),
+            formal_coordinate_cids=tuple(
+                item.coordinate_cid for item in definition.formal_coordinates()
+            ),
+            expected_definition_ref=self._project_call_definition_occurrence(
+                definition,
+                coordinate="CallSiteSugar.expected_definition_ref",
+            ),
+            language_callee=language_callee,
+        )
 
     def _decorated_definition_call(self, definition):
         """A call of the name a decorated module ``def``/``class`` binds: the
@@ -24930,8 +24760,9 @@ class Name(Expression):
         scope when the body reduces (an unbound name panics there, loudly).
         The construction is the one read of a name (``_name_read_sugar``).
 
-        A function-body read of a name one undecorated module ``def`` binds
-        is that function (``SourceUnit.function_definition_for_read``): the
+        A function-body read of a name one module ``def`` binds to its
+        function, of whatever kind, is that function
+        (``SourceUnit.function_definition_for_read``): the
         value its statement built, through the one application
         (``DecoratedDefinitionRef``, no decorator to apply), which every call
         through the value applies by the one call door (#7757).  Where the
@@ -25311,10 +25142,12 @@ def call_applies_own_frame(definition) -> bool:
 
     An undecorated ``def`` does; so does a generator function whose one
     decorator is ``contextlib.contextmanager`` (read through the one builtin
-    door, ``SourceUnit.language_callee_of``): its call is the definition's
-    coordinate and edge (``CallSiteSugar._definition_edge``).  Every other
-    decorated definition binds its name to the decorators' result
-    (``DecoratedDefinitionRef``), and a call of it calls that value.
+    door, ``SourceUnit.language_callee_of``): its name is bound to the
+    function its statement built (``_binds_function_value``), and its call
+    is that value's, the definition's coordinate and edge
+    (``Call._function_value_call``).  Every other decorated definition binds
+    its name to the decorators' result (``DecoratedDefinitionRef``), and a
+    call of it calls that value.
 
     A ``class`` statement never does, decorated or not: it binds its name to
     the class its run builds, under its evaluation key, as an assignment
@@ -25326,17 +25159,14 @@ def call_applies_own_frame(definition) -> bool:
 
     What it answers is whether the name is bound to the definition itself
     rather than to a statement's value; it no longer decides how a call
-    applies a plain ``def``.  Every call of a plain ``def``
-    (``_binds_function_value``) -- by name, through its value, local or
-    module -- is the call of the function its statement built, through the
-    one application (``Call._function_value_call``,
-    ``LambdaCallable.callable_application_with``, #7757).  Only a generator
-    function, an ``async def`` and a ``contextmanager`` generator, whose
-    values that application does not yet carry, still have their frame
-    seated by the call's name (``Call._construct_sugar``), and that call is
-    the definition's coordinate and edge too (#7757 step 6): no call applies
-    the frame's body.  Anything that is not a definition applies no
-    decoration.
+    applies a ``def``.  Every call of such a ``def``
+    (``_binds_function_value``), whatever its kind -- by name, through its
+    value, local or module -- is the call of the function its statement
+    built, through the one application (``Call._function_value_call``,
+    ``LambdaCallable.callable_application_with``, #7757): its coordinate and
+    edge, joined at prove (step 6).  No call seats a frame by the callee's
+    name, and no call applies a body.  Anything that is not a definition
+    applies no decoration.
     """
     if isinstance(definition, ClassDef):
         return False
@@ -25360,23 +25190,6 @@ def _definition_evaluation_key(definition, scope) -> str:
     from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
     return projection_key(definition._evaluation_key(scope), definition.name)
-
-
-def _class_method_lookup_call(call, frame) -> bool:
-    """Whether ``call`` is ``<receiver>.m(...)`` and ``frame`` is the frame of
-    a ``classmethod`` ``m`` of a source class: its implicit first actual is the
-    lookup's, bound by the one method door (``MethodCallSugar``,
-    ``object_value.bind_method_call``)."""
-    if not isinstance(call.func, Attribute):
-        return False
-    owner = getattr(frame, "owner", None)
-    if not isinstance(owner, (FunctionDef, AsyncFunctionDef)):
-        return False
-    class_owner = owner.unit.lexical_class_owner_for(owner)
-    return (
-        class_owner is not None
-        and class_owner._method_descriptor_kind(owner) == "classmethod"
-    )
 
 
 def _default_evaluation_key(definition, index: int) -> str:
@@ -26443,11 +26256,16 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     the per-parameter keys; the function value it applies the decorators to
     carries them, and every call of it binds them.  The definition's frame
     is constructed where it is called.
-    An ``async def`` or generator function is no value this carries: its
-    decorators are evaluated and their application is the one ``undecided``
-    citation (``DecoratorApplicationSugar.uncarried``).  Only a genuine
-    construction failure (the application reading its own result, a
-    definition with no frame) refuses.
+    Every ``def`` is a value this carries, whatever its kind: a generator
+    function's and an ``async def``'s value is its function as a plain
+    function's is, and every call of it is its coordinate and edge
+    (``LambdaCallable.callable_application_with``, #7757).  A ``def`` whose
+    name is bound to the function itself (``call_applies_own_frame``: an
+    undecorated one, a ``contextmanager`` generator) is that function with
+    no decorator applied: its statement evaluated its decorator expressions
+    (``_definition_defaults_sugar``).  Only a genuine construction failure
+    (the application reading its own result, a definition with no frame)
+    refuses.
 
     A read of a ``class``'s or decorated ``def``'s name is the statement's
     key and nothing else: where the reduction the read stands in bound it,
@@ -26512,24 +26330,35 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     module_site = (
         unit.module_execution_site(definition) if unit.module_threaded_names() else None
     )
-    padded = tuple(bindings)[: len(definition.decorators)]
-    padded = padded + (None,) * (len(definition.decorators) - len(padded))
+    # A ``def`` whose name is bound to the function itself
+    # (``call_applies_own_frame``: undecorated, or a ``contextmanager``
+    # generator) is that function: no decorator is applied to it here, and
+    # its statement evaluated its decorator expressions where it ran
+    # (``_definition_defaults_sugar``).
+    applied = (
+        ()
+        if isinstance(definition, (FunctionDef, AsyncFunctionDef))
+        and call_applies_own_frame(definition)
+        else tuple(definition.decorators)
+    )
+    padded = tuple(bindings)[: len(applied)]
+    padded = padded + (None,) * (len(applied) - len(padded))
 
     def construct_statement():
         # The decorator expressions, then the defaults: the order the
         # statement evaluates them in.
         decorators = tuple(
             _decorator_step(definition, decorator, bound)
-            for decorator, bound in zip(definition.decorators, padded, strict=True)
+            for decorator, bound in zip(applied, padded, strict=True)
         )
         # An undecorated ``def``'s value -- a module ``def`` read as a value
-        # (no key), a local plain ``def`` bound to its value under its key
+        # (no key), a local ``def`` bound to its value under its key
         # (``_binds_function_value``) -- evaluates no default here: its
         # statement bound each one under its per-parameter key where it ran
         # (``_definition_defaults_sugar``), and every call of the function
         # reads those keys (``DefaultValueSugar``), as a call by name does.
         # A default is never evaluated again where the name is read.
-        statement_evaluates = bool(definition.decorators) and isinstance(
+        statement_evaluates = bool(applied) and isinstance(
             definition, (FunctionDef, AsyncFunctionDef)
         )
         defaults = (
@@ -26551,7 +26380,6 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     frame = None
     class_sugar = None
     refusal = None
-    uncarried = False
     _FRAMES_UNDER_CONSTRUCTION.add(key)
     try:
         decorators, defaults, annotations = (
@@ -26561,15 +26389,11 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
         )
         if isinstance(definition, ClassDef):
             class_sugar = definition.sugar()
-        elif isinstance(definition, AsyncFunctionDef):
-            # A coroutine function is not a value this carries: what the
-            # decorators make of it is the one ``undecided`` citation.
-            uncarried = True
         else:
+            # Every ``def``, a generator function and an ``async def`` among
+            # them, is its function: its frame, called by the one call door
+            # as its coordinate and edge (#7757).
             frame, refusal = _definition_call_frame(definition)
-            if frame is not None and FunctionDef._owns_yield(definition.body):
-                # A generator function, likewise.
-                frame, uncarried = None, True
     finally:
         _FRAMES_UNDER_CONSTRUCTION.discard(key)
     return DecoratorApplicationSugar(
@@ -26580,7 +26404,6 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
         refusal=refusal,
         site=site,
         evaluation=evaluation,
-        uncarried=uncarried,
         defaults=defaults,
         annotations=annotations,
         module_run=module_run,
@@ -26758,13 +26581,16 @@ def _definition_decorator_step(target, site, spelling):
     """A decorator bound to the source ``def``/``class`` ``target``: its value,
     applied through the one call routine.  A ``class`` (decorated or not)
     and a decorated ``def`` are read through their statement's evaluation
-    key (``DecoratedDefinitionRef``), as every read of the name is.  An
-    undecorated ``def`` is read as every value read of its name is: the
-    function its statement built, the same reference with no decorator to
-    apply (``SourceUnit.function_definition_for_read``), never a frame this
-    step seats for itself.  A definition whose frame is under construction
-    up the stack, or that has none, is refused by name where that read
-    reduces (``DecoratorApplicationSugar.desugar``)."""
+    key (``DecoratedDefinitionRef``), as every read of the name is.  A
+    ``def`` whose name is bound to its function, of whatever kind (a plain
+    function, a generator function, an ``async def``, a ``contextmanager``
+    generator: ``_binds_function_value``), is read as every value read of
+    its name is: the function its statement built, the same reference with
+    no decorator to apply (``SourceUnit.function_definition_for_read``),
+    never a frame this step seats for itself; applying it is its call, its
+    coordinate and edge (#7757).  A definition whose frame is under
+    construction up the stack, or that has none, is refused by name where
+    that read reduces (``DecoratorApplicationSugar.desugar``)."""
     from sugar_lift_py_tests.sugar.decorator_application_sugar import (
         DecoratorStepV1,
     )
@@ -26778,16 +26604,6 @@ def _definition_decorator_step(target, site, spelling):
                 target.span,
                 evaluation=_definition_evaluation_key(target, {}),
             ).sugar(),
-        )
-    if isinstance(target, AsyncFunctionDef):
-        return DecoratorStepV1.refused(
-            site, spelling, f"`async def {target.name}` returns a coroutine"
-        )
-    if FunctionDef._owns_yield(target.body):
-        return DecoratorStepV1.refused(
-            site,
-            spelling,
-            f"generator function `{target.name}` is not carried as a callable value",
         )
     return DecoratorStepV1.apply(
         site,
@@ -26830,20 +26646,21 @@ class ImportBindingRef(Expression):
 
 
 def _binds_function_value(definition) -> bool:
-    """Whether the local ``def`` statement ``definition`` binds its name to
-    the function value it builds, under its evaluation key: a plain
-    undecorated ``def`` (not ``async``, not a generator function, whose
-    values this does not carry; ``SourceUnit.function_definition_for_read``
-    answers the same shapes for a module ``def``).  Its decorators are none,
-    so the application applies none: the value is the function, its own
-    frame, whose calls read the defaults the statement bound under their
-    per-parameter keys (``_definition_defaults_sugar``), as a module
-    ``def``'s value does."""
-    return (
-        isinstance(definition, FunctionDef)
-        and not definition.decorators
-        and not FunctionDef._owns_yield(definition.body)
-    )
+    """Whether the ``def`` statement ``definition`` binds its name to the
+    function value it builds (a local one under its evaluation key): every
+    ``def`` whose call applies its own frame (``call_applies_own_frame``) --
+    an undecorated plain function, generator function or ``async def``, and
+    a ``contextmanager`` generator -- whatever its kind
+    (``SourceUnit.function_definition_for_read`` answers the same shapes for
+    a module ``def``).  The application applies no decorator: the value is
+    the function, its own frame, whose calls read the defaults the
+    statement bound under their per-parameter keys
+    (``_definition_defaults_sugar``), as a module ``def``'s value does, and
+    whose every call is its coordinate and edge
+    (``LambdaCallable.callable_application_with``, #7757)."""
+    return isinstance(
+        definition, (FunctionDef, AsyncFunctionDef)
+    ) and call_applies_own_frame(definition)
 
 
 def _local_function_bound(binding):
@@ -26861,8 +26678,10 @@ def _local_function_bound(binding):
     return binding
 
 
-def _function_value_definition(callee) -> "FunctionDef | None":
-    """The plain ``def`` (``_binds_function_value``) whose function value a
+def _function_value_definition(
+    callee,
+) -> "FunctionDef | AsyncFunctionDef | None":
+    """The ``def`` (``_binds_function_value``) whose function value a
     call's substituted callee ``callee`` is: the value a local plain ``def``
     binds its name to (``DecoratedDefinitionRef``), read directly or through
     a reference to an evaluation that denotes it (``x = g; x()``: ``of``, as
@@ -26880,7 +26699,11 @@ def _function_value_definition(callee) -> "FunctionDef | None":
     if not isinstance(callee, DecoratedDefinitionRef):
         return None
     definition = _local_function_bound(callee)
-    return definition if isinstance(definition, FunctionDef) else None
+    return (
+        definition
+        if isinstance(definition, (FunctionDef, AsyncFunctionDef))
+        else None
+    )
 
 
 def _local_definition_binding(definition, scope):
@@ -26888,9 +26711,11 @@ def _local_definition_binding(definition, scope):
 
     Only a name the enclosing function holds as a lexical local is threaded,
     and, while a module body is threaded for its readers, a module name one
-    of them reads (``_module_threads``).  A local plain undecorated ``def``
-    (``_binds_function_value``) binds the function value its statement
-    builds, a decorated one the decorators' result, and a ``class``,
+    of them reads (``_module_threads``).  A local ``def`` whose name is bound
+    to its function, of whatever kind (``_binds_function_value``: a plain
+    function, a generator function, an ``async def``, a ``contextmanager``
+    generator), binds the function value its statement builds, a decorated
+    one the decorators' result, and a ``class``,
     decorated or not, the class its run builds with its decorators (none or
     more) applied (``DecoratedDefinitionRef``): its decorators read where
     the statement runs (``scope``), and the value read through the
@@ -26899,11 +26724,10 @@ def _local_definition_binding(definition, scope):
     read of the name -- an argument, a ``return``, an ``if``'s or a
     ``try``'s join -- is that key's read; the statement never stands for the
     name, and every call of it is the call of that value
-    (``Call._function_value_call``), as every call of a module plain ``def``
-    is.  Any other ``def`` whose name is bound to itself
-    (``call_applies_own_frame``: a module ``def`` a reader threads, an
-    ``async def``, a generator function, a ``contextmanager`` generator)
-    still binds itself.
+    (``Call._function_value_call``), as every call of a module ``def`` is.
+    A module ``def`` a reader threads, whose name is bound to itself
+    (``call_applies_own_frame``), still binds itself; its call by name is its
+    value's all the same (``Call._named_function_value``).
     """
     lexical = scope.get(_LEXICALLY_BOUND_NAMES)
     local = isinstance(lexical, frozenset) and definition.name in lexical

@@ -19,8 +19,6 @@ statement runs (``sugar_source_tree.nodes._decorator_step``) into one
 - ``identity``: a builtin the one builtin door names whose application returns
   its argument (``typing.final``, ``abc.abstractmethod``, a modeled
   ``dataclasses.dataclass``, ``functools.wraps(w)``);
-- ``refused``: a source decorator this does not carry as a value (an
-  ``async def`` or generator function used as a decorator), refused by name;
 - ``unanswered``: an imported decorator (or a factory call of one), or a
   builtin with no modeled application (``functools.lru_cache``,
   ``typing.overload``, a builtin decorator factory).  Nothing here answers
@@ -36,12 +34,13 @@ statement runs (``sugar_source_tree.nodes._decorator_step``) into one
   ``definition_edge_call``), so the decorator's call is its coordinate and edge
   and its faces are the statement's.
 
-An ``async def`` or generator function is no value this carries
-(``uncarried``): its decorator expressions are evaluated, and what they make of
-it is one unanswered call, the ``undecided`` citation under the outermost
-decorator's target symbol where it has one.
+Every ``def`` is a value this carries, whatever its kind: a generator
+function's and an ``async def``'s value is its function, as a plain
+function's is, and the decorators are applied to it; every call of it is its
+coordinate and edge (``LambdaCallable.callable_application_with``, #7757).
 
-An undecorated ``def`` read as a value is the same application with no
+A ``def`` whose name is bound to its function (undecorated, or a
+``contextmanager`` generator) read as a value is the same application with no
 decorator to apply (``nodes.SourceUnit.function_definition_for_read``): the
 function its statement built, its own frame, with no default evaluated at the
 read.  Its statement bound each default under its per-parameter key
@@ -89,7 +88,6 @@ class DecoratorStepV1:
     site: object = field(compare=False)
     spelling: str = ""
     symbol: str | None = None
-    refusal: str | None = None
     # ``unanswered``: what is evaluated, in order, before the result is
     # applied by nothing (an imported factory call, a builtin factory's
     # arguments).
@@ -101,10 +99,6 @@ class DecoratorStepV1:
     @classmethod
     def identity(cls, site, spelling):
         return cls("identity", site, spelling)
-
-    @classmethod
-    def refused(cls, site, spelling, refusal):
-        return cls("refused", site, spelling, refusal=refusal)
 
     @classmethod
     def unanswered(cls, site, spelling, symbol, *, evaluate=()):
@@ -122,8 +116,6 @@ class DecoratorStepV1:
         """The decorator expression evaluated where the statement runs, then
         ``then(decorator)``: the decorator's value for ``apply``, else None
         (nothing here is called)."""
-        if self.kind == "refused":
-            _refuse(self.site, self.refusal)
         if self.kind == "unanswered":
             return _evaluated_in_order(self.evaluate, ctx, lambda: then(None))
         if self.kind == "apply":
@@ -164,9 +156,6 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
     # applies the decorators again.  The statement's own application carries
     # None (``nodes._decorated_statement_sugar``).
     evaluation: str | None = None
-    # The definition is an ``async def`` or generator function, no value this
-    # carries: the application is one unanswered call (``_uncarried``).
-    uncarried: bool = False
     # ``((key, sugar), ...)``: the ``def``'s defaults, left to right, under
     # their per-parameter keys (``nodes._definition_default_evaluations``).
     # Python evaluates them when the statement runs, after the decorator
@@ -395,8 +384,6 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
             )
 
         def define(defaults) -> ExitSet:
-            if self.uncarried:
-                return self._uncarried(ctx)
             return self._definition_value(defaults, ctx).and_then(
                 lambda value: self._decorated(evaluated, value, ctx)
             )
@@ -429,20 +416,6 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
                 lambda *completed: then(tuple(zip(keys, completed, strict=True))),
                 *values,
             )
-        )
-
-    def _uncarried(self, ctx) -> ExitSet:
-        """``d1(d2(<definition>))`` over a definition this carries no value
-        of: one call nothing here answers, the ``undecided`` member under the
-        outermost decorator's target symbol where it has one (reason
-        ``unanswered``), completing with that call's own result."""
-        outermost = self.decorators[0]
-        return _unanswered_call(
-            outermost.symbol,
-            outermost.spelling or self.definition_name,
-            (),
-            outermost.site,
-            ctx,
         )
 
     def _definition_value(self, defaults, ctx) -> ExitSet:
