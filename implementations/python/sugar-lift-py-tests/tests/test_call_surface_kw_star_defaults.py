@@ -79,8 +79,12 @@ def _module_run_completes(tree: SourceFile) -> bool:
 
 def test_named_keyword_actual_constructs_on_call_site() -> None:
     """f(a=1) — a call of a source ``def`` is the call of its value (#7757);
-    its keywords ride the call, values are ConstructedTermSugar."""
-    tree = _sf("def f(a):\n    return a\nf(a=1)\n", "kw.py")
+    its keywords ride the call, values are ConstructedTermSugar.  The call
+    sits in a function body so its callee name reads ``f``'s ``def``
+    (``SourceUnit.function_definition_for_read``): a call the module body
+    runs is answered as the module-level read is, not at all, the unanswered
+    call (#9007 decision 1)."""
+    tree = _sf("def f(a):\n    return a\ndef g():\n    return f(a=1)\n", "kw.py")
     call = next(n for n in tree.nodes() if isinstance(n, Call))
     sugar = call.sugar()
     assert isinstance(sugar, ComputedCallSugar)

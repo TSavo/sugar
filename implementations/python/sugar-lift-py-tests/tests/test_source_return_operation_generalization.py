@@ -336,10 +336,16 @@ def test_keyword_bound_call_carries_its_keyword_on_the_edge() -> None:
 
 
 def test_keyword_binding_does_not_accept_an_unknown_formal() -> None:
+    # The call sits in a function body so its callee name reads ``combine``'s
+    # ``def`` (``SourceUnit.function_definition_for_read``) and the one binder
+    # binds its actuals: a call the module body runs is answered as the
+    # module-level read is, not at all, the unanswered call, which binds
+    # nothing (#9007 decision 1).
     tree, _, _ = _tree(
         "def combine(left, right):\n"
         "    return left + right\n\n"
-        "result = combine(2, stranger=3) + 1\n",
+        "def caller():\n"
+        "    return combine(2, stranger=3) + 1\n",
     )
     outer = next(
         node
@@ -373,14 +379,24 @@ def test_an_explicit_actual_for_a_defaulted_formal_rides_the_edge() -> None:
     assert edge.arg_values == (TermValue(2), TermValue(8))
 
 
-def test_an_omitted_default_no_def_statement_bound_is_refused_by_name() -> None:
-    """``choose(2) + 0`` reduced alone, outside the module's run.
+def test_an_omitted_default_at_a_module_level_call_is_never_invented() -> None:
+    """``choose(2) + 0`` run by the module body.
 
-    An omitted formal rides the edge as ``py.default(<param>, <value>)``,
-    the value the ``def`` statement bound under its default's key, read
-    where the call runs (#8698, #8705).  Reduced alone, no ``def``
-    statement ran, so nothing bound that key: the binder refuses by name
-    rather than invent ``5``.  (This was 7 when the lift applied the body.)
+    An omitted formal of a call whose callee name reads its ``def`` rides
+    the edge as ``py.default(<param>, <value>)``, the value the ``def``
+    statement bound under its default's key, read where the call runs
+    (#8698, #8705); where nothing bound that key the binder refuses by name
+    (``DefaultValueSugar``, pinned by
+    ``test_a_default_read_is_the_one_bound_value_for_every_call``).
+
+    Expected shape changed (#9007 decision 1): a call the module body runs
+    is answered as the module-level read is, not at all.  ``choose`` there
+    reads no ``def``, so the call is the unanswered call: it binds no
+    actual to a formal and reads no default, so it is neither refused nor
+    handed ``5``.  Its edge carries the actual as written and no
+    ``py.default``; the sum is not decided at lift.  (This was 7 when the
+    lift applied the body, and a refusal by name while the module-level
+    call read the ``def``.)
     """
     tree, _, _ = _tree(
         "def choose(left, right=5):\n"
@@ -392,8 +408,12 @@ def test_an_omitted_default_no_def_statement_bound_is_refused_by_name() -> None:
         for node in tree.nodes()
         if isinstance(node, BinOp) and isinstance(node.left, Call)
     )
-    with pytest.raises(SugarNotWritten, match="default did not construct"):
-        outer.sugar().desugar(None)
+    assert outer.left.unit.function_definition_for_read(outer.left.func) is None
+    _not_decided_at_lift(outer.sugar().desugar(None), 7)
+    edge = _edge(outer.left.sugar().desugar(None))
+    assert edge.arg_values == (TermValue(2),)
+    assert "py.default" not in repr(edge.term)
+    assert TermValue(5) not in edge.arg_values
 
 
 # ---------------------------------------------------------------------------

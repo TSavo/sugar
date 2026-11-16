@@ -15,8 +15,14 @@ from sugar_source_tree.tree import SourceFile
 
 
 def _call_outcome(actuals: str):
+    """``compare({actuals})`` in a caller's body, reduced alone.  The call
+    sits in a function body so its callee name reads ``compare``'s ``def``
+    (``SourceUnit.function_definition_for_read``): a call the module body
+    runs is answered as the module-level read is, not at all, the
+    unanswered call (#9007 decision 1)."""
     source = (
-        f"def compare(left, right):\n    return left < right\n\ncompare({actuals})\n"
+        "def compare(left, right):\n    return left < right\n\n"
+        f"def caller():\n    return compare({actuals})\n"
     )
     tree = SourceFile(
         (source, "formal_call.py", blake3_512_of(source.encode())),
@@ -27,7 +33,12 @@ def _call_outcome(actuals: str):
 
 
 def _call_outcomes(*actuals: str):
-    calls = "".join(f"compare({value})\n" for value in actuals)
+    """Each ``compare(<actuals>)`` in its own caller's body (``_call_outcome``),
+    each call reduced alone."""
+    calls = "".join(
+        f"def caller_{index}():\n    return compare({value})\n"
+        for index, value in enumerate(actuals)
+    )
     source = f"def compare(left, right):\n    return left < right\n\n{calls}"
     tree = SourceFile(
         (source, "formal_calls.py", blake3_512_of(source.encode())),

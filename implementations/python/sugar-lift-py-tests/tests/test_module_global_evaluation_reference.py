@@ -940,27 +940,28 @@ def test_a_star_import_leaves_every_global_undecided_from_it_on() -> None:
     _assert_undecided(_returned(_function(tree, "g")), "Y")
 
 
-@pytest.mark.parametrize(
-    ("half", "claim", "holds"), [("truthful", 1, True), ("lying", 2, False)]
-)
-def test_a_read_before_a_star_import_is_decided_by_the_module_run(
-    half: str, claim: int, holds: bool
-) -> None:
+def test_a_call_the_module_body_runs_before_a_star_import_supplies_no_global() -> None:
     # Python runs ``Y = f()`` before ``from opaque import *``: ``f`` returns
-    # ``X = 1``'s value, 1, whatever the star import binds later.  ``f()``
-    # is ``f``'s coordinate and edge (#7757 step 5, #8705), and the run binds
-    # ``Y``'s key to its result: the call supplies ``f``'s input
-    # ``global:X`` as the binding standing at the call, ``py.global(X, 1)``
-    # (``global_value_at_call``), never what the star import binds later.
-    # Prove reads ``f``'s post (``out == global:X``) at that input: the
-    # truthful claim holds, the lying one does not.  Before step 5 ``f``'s
-    # body was followed and the run bound ``Y`` to 1 itself.
-    from sugar_lift_py_tests.ir import num
+    # ``X = 1``'s value, 1, whatever the star import binds later.  What ``f``
+    # reads there is the binding at the call
+    # (``test_a_star_import_leaves_every_global_undecided_from_it_on``).
+    # Expected shape changed (#9007 decision 1): a call the module body runs
+    # is answered as the module-level read of its callee name is, not at
+    # all, so ``f()`` there is the unanswered call, owed ``undecided``: it
+    # supplies no ``global:X`` input (no ``py.global(X, ...)``), neither the
+    # truthful 1 nor a lying 2 nor what the star import binds later, and
+    # ``Y``'s key is bound to that call's result.  A claim on ``Y`` is owed,
+    # never decided by a value nobody bound.  (Before, the call was ``f``'s
+    # coordinate and edge supplying ``py.global(X, 1)``, #8705.)
+    from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
     tree = _source(STAR_AFTER_A_CALL)
+    (call,) = _calls(tree)
+    assert call.unit.function_definition_for_read(call.func) is None
+    assert type(call.sugar()) is CallSiteSugar
     (key,) = _assignment_keys(tree, "Y")
     supplied = _globals_supplied(_module_end_value(tree, key).to_term(owner="test"))
-    assert (supplied.get("X") == num(claim)) is holds, (half, supplied)
+    assert "X" not in supplied, supplied
 
 
 def test_a_name_bound_after_a_star_import_is_decided_again() -> None:
@@ -1052,30 +1053,32 @@ def test_a_call_in_the_module_body_reads_the_binding_at_that_call() -> None:
     assert after_import.evaluation == second
 
 
-def test_the_call_constructs_its_callee_frame_at_its_site() -> None:
+def test_a_call_the_module_body_runs_is_the_unanswered_call() -> None:
+    # Expected shape changed (#9007 decision 1): a call the module body runs
+    # is answered as the module-level read of its callee name is, not at
+    # all.  Whether ``def f`` has run where ``y = f()`` stands is decided
+    # only by the module run's binding, so the call constructs no callee
+    # frame at its site: it is the unanswered call (``CallSiteSugar``, its
+    # definition ``NOT_SOURCE_RESOLVED``), owed ``undecided``.  (Before, the
+    # call was ``ComputedCallSugar`` over ``f``'s value, its frame built at
+    # the call's module execution site.)
+    from sugar_lift_py_tests.sugar.call_site_sugar import (
+        CallSiteSugar,
+        DefinitionOccurrenceAbsenceReasonV1,
+        DefinitionOccurrenceAbsentV1,
+    )
+
     tree = _source(CALLED_DURING_IMPORT)
     _module_evaluations(tree)
     (call,) = _calls(tree)
-    # A call of a plain ``def`` seats no frame by its name (#8647): it is the
-    # call of the function the ``def`` statement built (``ComputedCallSugar``
-    # over ``DecoratorApplicationSugar``), and that function's frame -- the
-    # one its application enters -- is constructed where the call is.
-    from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
-    from sugar_lift_py_tests.sugar.decorator_application_sugar import (
-        DecoratorApplicationSugar,
-    )
-
+    assert call.unit.module_execution_site(call) is not None
+    assert call.unit.function_definition_for_read(call.func) is None
     sugar = call.sugar()
-    assert isinstance(sugar, ComputedCallSugar), sugar
-    assert sugar.source_call_frame is None
-    assert isinstance(sugar.callee, DecoratorApplicationSugar), sugar.callee
-    frame = sugar.callee.definition_frame
-    assert frame is not None
-    assert frame.module_execution_site == call.unit.module_execution_site(call)
-    # The frame is the signature: the body is the function's own universe's,
-    # and the global it reads is supplied on the edge where the call runs
-    # (``py.global``, ``global_value_at_call``), never read off a body here.
-    assert frame.body is None
+    assert type(sugar) is CallSiteSugar, sugar
+    assert sugar.target_name == "f"
+    assert sugar.expected_definition_ref == DefinitionOccurrenceAbsentV1(
+        DefinitionOccurrenceAbsenceReasonV1.NOT_SOURCE_RESOLVED
+    )
 
 
 def test_a_call_reached_from_a_module_call_reads_the_binding_there() -> None:

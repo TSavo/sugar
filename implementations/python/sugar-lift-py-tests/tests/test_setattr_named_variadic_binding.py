@@ -240,7 +240,10 @@ def _applied_frame(program: str):
     A call of a plain ``def`` seats no frame by its name (#8647): it is the
     call of the function the ``def`` statement built (``ComputedCallSugar``),
     which applies its definition's own frame
-    (``LambdaCallable.source_call_frame``) and binds the actuals there."""
+    (``LambdaCallable.source_call_frame``) and binds the actuals there.
+    The call sits in a caller's body: a call the module body
+    runs is answered as the module-level read is, not at all (#9007
+    decision 1)."""
     from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 
     tree = _tree(program)
@@ -264,7 +267,9 @@ def test_bind_actuals_packs_star_without_self_name_shift() -> None:
     """
     from sugar_lift_py_tests.floor import ListValue
 
-    frame = _applied_frame(HELPER_STAR + "\nhelper([0], 1, 2, 3)\n")
+    frame = _applied_frame(
+        HELPER_STAR + "\ndef caller():\n    return helper([0], 1, 2, 3)\n"
+    )
     assert frame.parameters == ("obj", "values")
     assert frame.parameter_kinds == ("positional_or_keyword", "vararg")
     bound = frame.bind_actuals(
@@ -283,7 +288,9 @@ def test_bind_actuals_packs_kw_without_self_name_shift() -> None:
     """SourceCallFrame.bind_actuals packs extra keywords into **values."""
     from sugar_lift_py_tests.floor import ListValue
 
-    frame = _applied_frame(HELPER_KW + "\nhelper([0], a=1, b=2)\n")
+    frame = _applied_frame(
+        HELPER_KW + "\ndef caller():\n    return helper([0], a=1, b=2)\n"
+    )
     assert frame.parameters == ("obj", "values")
     assert frame.parameter_kinds == ("positional_or_keyword", "kwarg")
     bound = frame.bind_actuals(
