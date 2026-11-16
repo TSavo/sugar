@@ -1,14 +1,24 @@
-"""An unrolled ``for`` evaluates its iterable once, before the first item (#7757).
+"""A loop's, a comprehension's and an unpack's iterable is built (#7757).
 
-A ``for`` over a ground iterable unrolls into its items (``_concrete_elements``)
-and consumed the iterable by its ground value without building it: the
-``range(...)`` call was a dropped evaluation, and the list display was never
-answered (the board's first absentees ``tests/tseries/offsets/test_week.py:110:19``
-``for day in range(1, 8)`` (``Call``), ``core/indexes/datetimes.py:99:23``
-``for key in ["tz", "freq"]`` (``List``)).  The unrolled loop now opens with the
-``range(...)`` call as a statement, every face of it the loop's
-(``For._iterable_evaluated``), and a display it consumes member by member
-answers with it.
+Python evaluates a ``for``'s iterable once, before the first item; a
+comprehension's outermost iterable once, before the first element; an
+unpack's right-hand side once, before any target is bound.  Each is built
+as a node of its own and answers the roll where it stands: the
+``range(...)`` call is never a dropped evaluation, and a display iterable
+answers with the loop (the board's first absentees
+``tests/tseries/offsets/test_week.py:110:19`` ``for day in range(1, 8)``
+(``Call``), ``core/indexes/datetimes.py:99:23`` ``for key in ["tz",
+"freq"]`` (``List``)).
+
+This file once pinned the unroll of a ``for`` and the dissolution of a
+comprehension into its display, both deleted (#8957: the comprehension is
+the one recurrence, ``ComprehensionSugar``).  What it states now is what
+the one way owes: every iterable is built.  An unpack whose right-hand side
+holds a comprehension at a level substitution cannot pair
+(``a, (b, c) = 1, [x for x in range(2)]``) takes the reduce-time unpack of
+the statement's one evaluation (``Assign._dynamic_unpack_target``), so the
+``range(2)`` call is built there, never refused with the statement
+(#7757 S2).
 """
 
 import tempfile
@@ -53,10 +63,9 @@ def test_a_ground_range_iterable_is_built():
         "{x: 0 for x in range(1, 3)}",
     ],
 )
-def test_a_dissolved_comprehension_builds_its_range_iterable(comprehension):
-    # The comprehension dissolves into its display through the same step a
-    # ``for`` unrolls by (``For._iterable_evaluations``): the ``range(...)``
-    # call is evaluated before the first member, never dropped (#7757).
+def test_a_comprehension_builds_its_range_iterable(comprehension):
+    # The comprehension is the one recurrence: its outermost iterable is
+    # evaluated once, before the first element, and built (#7757).
     report = _report(f"def f():\n    return {comprehension}\n")
     column = comprehension.index("range")
     present = {(e.kind, e.start_line, e.start_col) for e in report.present}
@@ -65,8 +74,7 @@ def test_a_dissolved_comprehension_builds_its_range_iterable(comprehension):
     assert ("Call", 2, 11 + column) not in absent
 
 
-def test_a_dissolved_comprehension_carries_its_iterable_into_a_loop():
-    # A loop over a dissolved display evaluates what the display carried.
+def test_a_loop_over_a_comprehension_builds_its_iterable():
     report = _report(
         "def f(g):\n    for k in [x for x in range(2)]:\n        g(k)\n    return g\n"
     )
@@ -82,10 +90,9 @@ def test_a_dissolved_comprehension_carries_its_iterable_into_a_loop():
         "[0 for i in range(3)]",
     ],
 )
-def test_a_range_item_answers_where_it_is_minted(comprehension):
-    # Past the unroll fuel no item is minted; an item an unroll that refuses
-    # (an undecided dict key) or never reads (an unread target) minted
-    # answers where it was minted (``_minted_binding_reference``).
+def test_a_comprehension_over_a_range_answers(comprehension):
+    # However many items the range holds, and whether or not a key is
+    # decided, the comprehension answers where it stands.
     report = _report(f"def f():\n    return {comprehension}\n")
     absent = {(e.kind, e.start_line, e.start_col) for e in report.minority}
     assert ("Constant", 2, 11) not in absent
@@ -99,12 +106,12 @@ def test_a_range_item_answers_where_it_is_minted(comprehension):
         ("{x: x + 1 for x in range(0) if x > 5}", "Compare", 42),
     ],
 )
-def test_a_template_never_evaluated_answers_with_the_display(
+def test_a_template_never_evaluated_answers_with_the_comprehension(
     comprehension, kind, column
 ):
     # ``core/_numba/kernels/mean_.py:161``: Python evaluates no element of
-    # an empty unroll (nor a filter where there is no item); the template
-    # answers with the display it dissolved into.
+    # an empty iteration (nor a filter where there is no item); the template
+    # answers with the comprehension it belongs to.
     report = _report(f"def f():\n    return {comprehension}\n")
     absent = {(e.kind, e.start_line, e.start_col) for e in report.minority}
     assert (kind, 2, column) not in absent
@@ -117,13 +124,11 @@ def test_a_template_never_evaluated_answers_with_the_display(
         "[0 for _ in [abs(1), abs(2)]]",
     ],
 )
-def test_a_dissolved_comprehension_builds_each_member_before_its_elements(
+def test_a_comprehension_builds_each_member_of_its_display_iterable(
     comprehension,
 ):
     # Python evaluates every member of the iterable display before the first
-    # element: each member that calls is built once, as an evaluation the
-    # display carries (``ListComp._members_evaluated_first``), and the
-    # reference the element reads it through answers where it is minted.
+    # element: each member that calls is built once.
     report = _report(f"def f():\n    return {comprehension}\n")
     column = 11 + comprehension.index("abs(2)")
     present = {(e.kind, e.start_line, e.start_col) for e in report.present}
@@ -141,10 +146,10 @@ def test_a_dissolved_comprehension_builds_each_member_before_its_elements(
         "a, *b = [x for x in range(3)]",
     ],
 )
-def test_an_unpack_of_a_dissolved_comprehension_builds_its_iterable(statement):
-    # The unpack consumes the dissolved display member by member and
-    # evaluates what it carries before its first member
-    # (``Assign._unpacked_in_order``): the ``range(...)`` call is built.
+def test_an_unpack_of_a_comprehension_builds_its_iterable(statement):
+    # The unpack evaluates its right-hand side once and unpacks the value at
+    # reduce: the comprehension, a nested level of a display among them, is
+    # built, and so is its ``range(...)`` call (#7757 S2).
     report = _report(f"def f():\n    {statement}\n    return a\n")
     column = 4 + statement.index("range")
     present = {(e.kind, e.start_line, e.start_col) for e in report.present}
@@ -154,11 +159,9 @@ def test_an_unpack_of_a_dissolved_comprehension_builds_its_iterable(statement):
 
 
 @pytest.mark.parametrize("iterable", ["range(0)", "[]"])
-def test_an_empty_unroll_s_body_answers_with_the_loop(iterable):
+def test_an_empty_iteration_s_body_answers_with_the_loop(iterable):
     # Python evaluates no item of an empty iterable: the body and the target
-    # are never evaluated, and answer inert with the loop
-    # (``For._answer_unevaluated_body``), as #8673's empty comprehension
-    # template does.
+    # are never evaluated, and answer with the loop.
     report = _report(
         f"def f(g):\n    for day in {iterable}:\n        g(day + 1)\n    return g\n"
     )

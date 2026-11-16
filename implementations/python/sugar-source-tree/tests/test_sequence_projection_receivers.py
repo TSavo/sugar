@@ -33,7 +33,6 @@ from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
 from sugar_lift_py_tests.ir import _Atomic, _Connective, _Var
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-from sugar_source_tree.panic import SugarNotWritten
 
 
 def _source_file(source: str):
@@ -341,13 +340,15 @@ def test_too_few_members_is_the_same_ground_value_error() -> None:
     _ground_value_error(out)
 
 
-def test_a_display_right_hand_side_never_reaches_this_operation() -> None:
-    """DISCRIMINATING, and the reason the two tests above are unit-level.
+def test_a_display_the_tree_does_not_pair_reaches_this_operation() -> None:
+    """DISCRIMINATING.
 
     `a, b = (1, 2)` is paired by the TREE (`Assign._destructured_binding` zips
-    displays), so no dynamic unpack is ever constructed and the operation is not
-    submitted. If a display ever did start arriving here, these twins would be
-    asserting a path the source cannot reach, and this test would say so.
+    displays), so no dynamic unpack is constructed and the operation is not
+    submitted.  A display the tree does not pair (`a, b = (1, 2, 3)`) is no
+    refusal: Python builds it, then unpacks it, so it is the one unpack of
+    the statement's evaluation, and its decided wrong count is the ground
+    ``ValueError`` the unit twins above state (#7757 S2).
     """
     seen, out = _receivers("def A():\n a, b = (1, 2)\n return a\n")
     assert seen == []
@@ -357,10 +358,9 @@ def test_a_display_right_hand_side_never_reaches_this_operation() -> None:
     assert seen == []
     assert out.completed_value() is not None
 
-    # And the tree owns the display mismatch, ahead of any floor question.
-    seen, raised = _receivers("def A():\n a, b = (1, 2, 3)\n return a\n")
-    assert seen == []
-    assert isinstance(raised, SugarNotWritten)
+    seen, out = _receivers("def A():\n a, b = (1, 2, 3)\n return a\n")
+    assert len(seen) == 1, seen
+    _ground_value_error(out)
 
 
 # ==========================================================================

@@ -56,7 +56,6 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import path_source, workspace_path_source
 from sugar_source_tree.nodes import Assign
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
@@ -438,12 +437,18 @@ def test_list_indexerror_store_halt_originates_in_setitem_not_boundary(
 
 
 def test_display_arity_mismatch_does_not_fabricate_completion(tmp_path: Path) -> None:
-    """Two targets, one display member: not a completed unpack."""
+    """Two targets, one display member: not a completed unpack.
+
+    The display the tree does not pair is built and unpacked at reduce, as
+    any right-hand side is (#7757 S2): its decided count is wrong, so every
+    face halts and none completes; nothing is stored."""
     path = tmp_path / "arity.py"
     path.write_text("def f(a, i, p):\n    x, a[i] = (p,)\n    return x\n")
     fn = next(SourceFile(path_source(str(path))).functions())
-    with pytest.raises(SugarNotWritten, match="Assign"):
-        fn.sugar()
+    out = fn.sugar().desugar()
+    assert isinstance(out, ExitSet), out
+    assert out.halts(), out
+    assert not any(isinstance(exit_, Completed) for exit_ in out.exits), out
 
 
 def test_starred_opaque_unpack_stays_loud_not_exact_arity_completion(
