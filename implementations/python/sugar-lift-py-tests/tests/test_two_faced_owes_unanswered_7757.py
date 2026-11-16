@@ -123,8 +123,8 @@ def test_a_subscript_on_an_undecided_value_is_two_faced_and_owes_its_read() -> N
     faces = SymbolicValue(make_var("s")).subscript(TermValue(0), _Site())
     _assert_two_faced_and_owed(faces, "SymbolicValue.subscript")
     (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
-    assert "python:subscript.completes" in repr(done.guard)
-    assert "py.subscript" in repr(done.value)
+    assert "python:subscript_op.completes" in repr(done.guard)
+    assert "python:subscript_result" in repr(done.value)
     assert "KeyError" not in repr(faces) and "IndexError" not in repr(faces)
 
 
@@ -166,7 +166,7 @@ def test_a_symbolic_subscript_through_its_operation_owes_its_read() -> None:
     faces = operation.submit(SymbolicValue(make_var("s")), None)
     _assert_two_faced_and_owed(faces, "SymbolicValue.subscript")
     (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
-    assert "python:subscript.completes" in repr(done.guard)
+    assert "python:subscript_op.completes" in repr(done.guard)
     assert faces.completed_value() is None
 
 

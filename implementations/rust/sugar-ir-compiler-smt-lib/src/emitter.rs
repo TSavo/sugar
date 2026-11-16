@@ -3990,29 +3990,13 @@ fn py_decided_operation(name: &str, args: &[Term]) -> Option<PyDecided> {
         // `str[int]`: IndexError unless -len <= i < len; a negative index
         // counts from the end. A list's or a tuple's item, or a dict's value:
         // `py_container_subscript`.
-        ("py.subscript", [receiver, index]) => {
-            let Some(receiver) = py_decided(receiver) else {
-                return py_container_subscript(None, receiver, index);
-            };
-            if receiver.ty.is_container() {
-                return py_container_subscript(Some(receiver), &args[0], index);
-            }
-            let index = py_decided(index)?;
-            if receiver.ty != PyType::Str || index.ty != PyType::Int {
-                return None;
-            }
-            let (r, i) = (&receiver.value, &index.value);
-            let len = format!("(str.len {r})");
-            let law = format!("(and (<= (- {len}) {i}) (< {i} {len}))");
-            let value = format!("(str.at {r} (ite (< {i} 0) (+ {i} {len}) {i}))");
-            Some(PyDecided::operation(
-                PyType::Str,
-                &[&receiver, &index],
-                law,
-                "true".to_string(),
-                value,
-            ))
-        }
+        ("py.subscript", [receiver, index]) => py_subscript(receiver, index),
+        // The kit's undecided read, keyed per evaluation (#7757, audit 2 row
+        // NEW-1): `python:subscript_result(<receiver>, <index>, <key>)`. Over
+        // operands whose builtin types are decided (a caller's actual joined
+        // on a formal) it is the same read; the key only keeps two
+        // evaluations two terms where it is not decided.
+        ("python:subscript_result", [receiver, index, _key]) => py_subscript(receiver, index),
         ("array", items) => py_sequence_display(PyType::List, items),
         ("tuple", items) => py_sequence_display(PyType::Tuple, items),
         ("python:dict", entries) => py_dict_display(entries),
@@ -4311,6 +4295,35 @@ fn py_dict_item(dict: &PyDecided, key: &Term) -> Option<PyDecided> {
         PyDecided::operation(PyType::Value, &[dict], law, "true".to_string(), value);
     decided.ready = smt_and(&[decided.ready.as_str(), key_ready.as_str()]);
     Some(decided)
+}
+
+/// `receiver[index]`, the one read `py.subscript(r, i)` and the keyed
+/// undecided read `python:subscript_result(r, i, <key>)` both state: a
+/// `str[int]` (IndexError unless -len <= i < len; a negative index counts
+/// from the end), or a list's or a tuple's item, or a dict's value
+/// (`py_container_subscript`).
+fn py_subscript(receiver_term: &Term, index: &Term) -> Option<PyDecided> {
+    let Some(receiver) = py_decided(receiver_term) else {
+        return py_container_subscript(None, receiver_term, index);
+    };
+    if receiver.ty.is_container() {
+        return py_container_subscript(Some(receiver), receiver_term, index);
+    }
+    let index = py_decided(index)?;
+    if receiver.ty != PyType::Str || index.ty != PyType::Int {
+        return None;
+    }
+    let (r, i) = (&receiver.value, &index.value);
+    let len = format!("(str.len {r})");
+    let law = format!("(and (<= (- {len}) {i}) (< {i} {len}))");
+    let value = format!("(str.at {r} (ite (< {i} 0) (+ {i} {len}) {i}))");
+    Some(PyDecided::operation(
+        PyType::Str,
+        &[&receiver, &index],
+        law,
+        "true".to_string(),
+        value,
+    ))
 }
 
 /// `x[i]` / `d[k]` over a container: `receiver` where it is decided, else

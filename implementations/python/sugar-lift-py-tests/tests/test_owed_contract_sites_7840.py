@@ -151,9 +151,9 @@ def test_a_formal_subscript_owes_the_undecided_read_instead() -> None:
     (halted,) = outcome.halts()
     # The one form every undecided subscript takes
     # (``FloorValue.undecided_subscript``): it completes under
-    # ``python:subscript.completes``, never under a generic
+    # ``python:subscript_op.completes``, never under a generic
     # unanswered-operation guard.
-    assert "python:subscript.completes" in repr(completed.guard)
+    assert "python:subscript_op.completes" in repr(completed.guard)
     assert "python:unanswered_native_operation" not in repr(completed.guard)
     assert type(halted.effect) is UndeterminedRaiseEffect
     assert halted.effect.exception_name is None

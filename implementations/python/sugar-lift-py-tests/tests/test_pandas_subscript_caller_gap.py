@@ -261,7 +261,7 @@ def _assert_two_faced_read(exits, owner: str) -> None:
     (done,) = [arm for arm in exits.exits if isinstance(arm, Completed)]
     assert type(halt.effect) is UndeterminedRaiseEffect
     assert halt.effect.producer_node_owner == owner
-    assert "python:subscript.completes" in repr(done.guard)
+    assert "python:subscript_op.completes" in repr(done.guard)
     assert any(item.site is not None for item in owed_calls(exits))
 
 

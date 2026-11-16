@@ -73,7 +73,7 @@ def test_opaque_subscript_is_two_faced():
     guards = " ".join(str(getattr(f, "guard", "")) for f in exits)
 
     assert halts
-    assert "python:subscript.completes" in guards
+    assert "python:subscript_op.completes" in guards
     assert "KeyError" not in repr(halts)
     assert "IndexError" not in repr(halts)
 

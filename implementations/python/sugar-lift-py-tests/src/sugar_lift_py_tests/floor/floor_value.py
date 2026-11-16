@@ -415,25 +415,53 @@ class FloorValue:
         opaque-subscript law.  It is the one two-faced unanswered outcome
         (``ExitSet.two_faced``), and the one form every undecided subscript
         takes -- ``SymbolicValue.subscript_with`` and the opaque arm of
-        ``CallSiteValue.subscript_with`` answer through it too: the symbolic
-        ``py.subscript(<receiver>, <index>)`` completes only under
-        ``python:subscript.completes(python:subscript(<term>, <site>))``,
-        keyed on the exact source site so two subscripts of the same term are
-        never forced to agree, and the complement halts with an
-        ``UndeterminedRaiseEffect`` (producer ``owner``); both arms owe the
-        ``undecided`` member (reason ``unanswered``) at the read's site.  No
-        ``KeyError`` or ``IndexError`` is guessed and no member is chosen.
+        ``CallSiteValue.subscript_with`` answer through it too.  Its value is
+        keyed per evaluation (#7757, audit 2 row NEW-1, the owner's key
+        rule): ``python:subscript_result(<receiver>, <index>, <key>)``, the
+        key ``occurrence_key(site)`` taken where the read evaluates (inside a
+        live loop item it carries that item's path), so two evaluations of
+        one read are never one term -- a counting ``__getitem__`` read twice
+        is two unknowns.  It completes only under
+        ``python:subscript_op.completes(python:subscript_op(<result>,
+        <key>))`` (``undecided_result_terms``), and the complement halts with
+        an ``UndeterminedRaiseEffect`` (producer ``owner``, occurrence the
+        same key); both arms owe the ``undecided`` member (reason
+        ``unanswered``) at the read's site.  No ``KeyError`` or
+        ``IndexError`` is guessed and no member is chosen.  ``py.subscript``
+        stays the decided and typed paths' term.
 
         A read that reached the floor with no site is the lifter's own gap:
         it cannot key the completes atom or the debt, so it refuses by name.
         """
-        return self._undecided_protocol_faces(
+        if site is None:
+            _siteless_undecided_read(
+                owner, f"{type(self).__name__}[{type(index).__name__}]", "Subscript"
+            )
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.floor.object_identity import identity_term
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        key = occurrence_key(site)
+        term, completes = undecided_result_terms(
             "subscript",
-            (index,),
-            site,
-            owner=owner,
-            read=f"{type(self).__name__}[{type(index).__name__}]",
-            node="Subscript",
+            (
+                identity_term(self, site, "receiver", owner=owner),
+                identity_term(index, site, "operand0", owner=owner),
+            ),
+            key,
+        )
+        return ExitSet.two_faced(
+            SymbolicValue(term),
+            UndeterminedRaiseEffect(
+                blame=str(site),
+                occurrence=key,
+                producer_node_owner=owner,
+                site=site,
+            ),
+            guard=completes,
+            site=site,
         )
 
     def undecided_iteration(self, site, *, owner: str):
