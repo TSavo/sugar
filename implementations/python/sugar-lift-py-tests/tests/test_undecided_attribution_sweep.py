@@ -106,7 +106,7 @@ def test_mutable_global_attribute_is_undecided_not_write_more_floor(
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     assert type(halt.effect) is UndeterminedRaiseEffect
     assert halt.effect.producer_node_owner == "MutableGlobalValue.attribute"
-    assert done.guard.name == "python:attribute.completes"
+    assert done.guard.name == "python:attribute_op.completes"
 
 
 def test_mutable_global_dict_contains_still_constructs() -> None:

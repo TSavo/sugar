@@ -89,7 +89,7 @@ class ExitValueCoordinate(FloorValue):
 
     def attribute(self, name, site, ctx):
         """``exc.name`` on the parametric exit value: the one two-faced
-        undecided read (``undecided_attribute``).
+        undecided read (``floor_value.undecided_attribute_result``).
 
         An exit slot does not authenticate a field's existence, runtime type,
         descriptor effects, or rich comparison dispatch, so the read may
@@ -98,8 +98,10 @@ class ExitValueCoordinate(FloorValue):
         later, so the read waits on no actual (#7757).
         """
         del ctx
-        return self.undecided_attribute(
-            name, site, owner="ExitValueCoordinate.attribute"
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+
+        return undecided_attribute_result(
+            self, name, site, owner="ExitValueCoordinate.attribute"
         )
 
 

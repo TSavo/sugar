@@ -126,7 +126,7 @@ def test_a_dotted_member_read_may_raise_and_owes_its_target_symbol(
     """Truthful: Python can raise at ``module.attr`` (the member may be
     absent), and nothing here holds the module's namespace.  The read is the
     two faces: it completes with the reference only under its own
-    ``python:attribute.completes`` atom, the complement halts with an
+    ``python:attribute_op.completes`` atom, the complement halts with an
     undetermined raise (no ``AttributeError`` is named), and what is not
     decided here is stated once, by the ``undecided`` member under the import
     table's target symbol."""
@@ -139,9 +139,9 @@ def test_a_dotted_member_read_may_raise_and_owes_its_target_symbol(
     assert type(halt.effect) is UndeterminedRaiseEffect
     assert halt.effect.producer_node_owner == "ImportMemberValue.read"
     assert halt.effect.exception_name is None
-    assert "python:attribute.completes" in repr(halt.guard)
+    assert "python:attribute_op.completes" in repr(halt.guard)
     (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
-    assert "python:attribute.completes" in repr(completed.guard)
+    assert "python:attribute_op.completes" in repr(completed.guard)
     owed = owed_calls(outcome)
     assert [call.symbol for call in owed] == [symbol]
     assert owed[0].site is not None

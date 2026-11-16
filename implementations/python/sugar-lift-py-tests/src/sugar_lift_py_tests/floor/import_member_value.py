@@ -109,11 +109,15 @@ class ImportMemberValue(FloorValue):
         ``AttributeError``; a module ``__getattr__`` may raise anything).  The
         lifter holds no module's namespace, so whether the member is there is
         not decided here.  It is the one two-faced unanswered outcome
-        (``ExitSet.two_faced``), the form every undecided attribute read takes
-        (``FloorValue.undecided_attribute``): this reference completes only
-        under ``python:attribute.completes(python:attribute(<head>, <path>,
-        <site>))``, keyed on the exact source site, and the complement halts
-        with an ``UndeterminedRaiseEffect``.  Both arms owe the ``undecided``
+        (``ExitSet.two_faced``) under the one completes atom every undecided
+        attribute read states (``floor_value.undecided_result_terms``, the
+        terms of ``undecided_attribute_result``): this reference completes
+        only under ``python:attribute_op.completes(python:attribute_op(
+        python:attribute_result(<path>, <head>, <key>), <key>))``, keyed per
+        evaluation, and the complement halts with an
+        ``UndeterminedRaiseEffect`` at the same key.  The completed value is
+        the import reference itself, which the join answers by the target
+        symbol, not the result term.  Both arms owe the ``undecided``
         member (reason ``unanswered``) at the read's site, under the one
         import table's target symbol, so the join can answer it (step 9).  No
         ``AttributeError`` is named and no namespace is consulted.
@@ -123,23 +127,19 @@ class ImportMemberValue(FloorValue):
         arm (``ImportMemberSugar.desugar``).
         """
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.floor.floor_value import undecided_result_terms
+        from sugar_lift_py_tests.ir import str_const
         from sugar_lift_py_tests.occurrence import occurrence_key
         from sugar_lift_py_tests.outcome import ExitSet
 
         key = occurrence_key(site)
-        completes = atomic(
-            "python:attribute.completes",
-            [
-                ctor(
-                    "python:attribute",
-                    (
-                        _import_member_head_term(self.receipt),
-                        str_const(".".join(self.receipt.use["exportedMemberPath"])),
-                        str_const(key),
-                    ),
-                )
-            ],
+        _result, completes = undecided_result_terms(
+            "attribute",
+            (
+                str_const(".".join(self.receipt.use["exportedMemberPath"])),
+                _import_member_head_term(self.receipt),
+            ),
+            key,
         )
         return ExitSet.two_faced(
             self,
@@ -166,10 +166,11 @@ class ImportMemberValue(FloorValue):
     # ------------------------------------------------------------------
     # Import-member operations door (one surface; type undecided)
     # ------------------------------------------------------------------
-    # Wiring: FloorValue already owns undecided_subscript / undecided_attribute /
-    # undecided_contains. ImportMemberValue's only job is to enter those doors
-    # instead of the default construction-panic "write more Floor" arm — which
-    # would miscount an undecided runtime type as OUR missing floor method.
+    # Wiring: FloorValue already owns undecided_subscript / undecided_contains,
+    # and floor_value owns undecided_attribute_result. ImportMemberValue's
+    # only job is to enter those doors instead of the default
+    # construction-panic "write more Floor" arm — which would miscount an
+    # undecided runtime type as OUR missing floor method.
 
     def subscript(self, index, site):
         """``mod.member[k]`` over a member whose runtime value is not projected.
@@ -187,7 +188,11 @@ class ImportMemberValue(FloorValue):
 
     def attribute(self, name, site, ctx):
         del ctx
-        return self.undecided_attribute(name, site, owner="ImportMemberValue.attribute")
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+
+        return undecided_attribute_result(
+            self, name, site, owner="ImportMemberValue.attribute"
+        )
 
     def truth(self, site):
         """``bool(mod.FLAG)``: the one truth rule's two faces

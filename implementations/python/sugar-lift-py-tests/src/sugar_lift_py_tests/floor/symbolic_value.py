@@ -384,11 +384,12 @@ class SymbolicValue(FloorValue):
         )
 
     def attribute(self, name, site, ctx):
-        """``self.name``: the one two-faced undecided read
-        (``undecided_attribute``), whatever bound the receiver -- a formal, a
-        free name, a module alias with no member receipt (``import sys``;
-        ``sys.maxsize``).  Nothing here decides the receiver's runtime type or
-        its ``__getattribute__``, so every member may raise.
+        """``self.name``: the one two-faced undecided read, keyed per
+        evaluation (``floor_value.undecided_attribute_result``), whatever
+        bound the receiver -- a formal, a free name, a module alias with no
+        member receipt (``import sys``; ``sys.maxsize``): two reads are two
+        values (#7757 NEW-3).  Nothing here decides the receiver's runtime
+        type or its ``__getattribute__``, so every member may raise.
 
         ``__name__`` / ``__qualname__`` complete as a coordinate, without
         inventing the string: RaisesExc's absent-effect diagnostic formats
@@ -398,24 +399,12 @@ class SymbolicValue(FloorValue):
         (``type_name_attribute``), the same way ``format_data_model`` names
         ``call:__format__`` without inventing the formatted string.  It keeps
         the read's raise face: an object need not have a ``__name__``.
-
-        On an input of the function whose own proof this is (a parameter, a
-        captured cell: ``formal_coordinate``) the undecided read is keyed per
-        evaluation (``floor_value.undecided_attribute_result``): two reads
-        of one parameter are two values (#7757).
         """
-        if self.formal_coordinate is not None:
-            from sugar_lift_py_tests.floor.floor_value import (
-                undecided_attribute_result,
-            )
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
 
-            outcome = undecided_attribute_result(
-                self, name, site, owner="SymbolicValue.attribute"
-            )
-        else:
-            outcome = self.undecided_attribute(
-                name, site, owner="SymbolicValue.attribute"
-            )
+        outcome = undecided_attribute_result(
+            self, name, site, owner="SymbolicValue.attribute"
+        )
         if name not in {"__name__", "__qualname__"}:
             return outcome
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue

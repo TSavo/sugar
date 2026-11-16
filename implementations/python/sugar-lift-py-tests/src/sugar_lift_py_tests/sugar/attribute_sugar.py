@@ -74,8 +74,8 @@ class AttributeSugar(ConstructedTermSugar):
         2. Authenticated CallSiteValue body → ``force_floor`` then attribute
         3. Else Floor ``receiver.attribute(name, site, ctx)`` (a property
            getter applies under the reading caller's ``ctx``; a symbolic
-           receiver is the two-faced undecided read,
-           ``FloorValue.undecided_attribute``)
+           receiver is the same two-faced undecided read,
+           ``floor_value.undecided_attribute_result``)
         Callers that already hold a reduced receiver (AugAssign) enter here
         without re-evaluating the receiver expression.
         """
@@ -197,7 +197,7 @@ class AttributeSugar(ConstructedTermSugar):
         # read, whatever bound it: a symbolic receiver -- a module alias with
         # no member receipt (``import sys``; ``sys.maxsize``) as much as a
         # formal -- is the one two-faced undecided read
-        # (``FloorValue.undecided_attribute``).
+        # (``floor_value.undecided_attribute_result``).
         return arrived_outcome(receiver.attribute(name, site, ctx), site)
 
     def desugar(self, ctx: object = None) -> ExitSet:

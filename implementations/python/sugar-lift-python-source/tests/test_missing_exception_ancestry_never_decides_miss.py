@@ -97,7 +97,7 @@ def _split_survives_beside_the_read(exits) -> bool:
         and any("adt.is_python_type" in repr(face.guard) for face in completed)
         and len(halted) == 1
         and "adt.is_python_type" in repr(halted[0].guard)
-        and "python:attribute.completes" in repr(halted[0].guard)
+        and "python:attribute_op.completes" in repr(halted[0].guard)
     )
 
 

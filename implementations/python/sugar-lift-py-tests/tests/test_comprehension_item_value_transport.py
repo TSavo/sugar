@@ -169,7 +169,7 @@ def test_nonfinite_iterable_with_undecided_filter_owes_the_filter_read() -> None
     (``SugarNotWritten``: "undecided receiver runtime type or member
     semantics: SymbolicValue.keep"), which this test pinned as "stays loud".
     #8090 made "not decided here" one way: the read completes only under its
-    ``python:attribute.completes`` atom, halts with an undetermined raise under
+    completes atom (``python:attribute_op.completes`` since #7757 NEW-3), halts with an undetermined raise under
     the complement, and both arms owe the ``undecided`` member at the read's
     site (step 8's one member kind).  Still loud, by that member: the filter
     is undecided, nothing is projected, and no exception is named.
@@ -208,7 +208,7 @@ def test_nonfinite_iterable_with_undecided_filter_owes_the_filter_read() -> None
     assert any(arm.effect.producer_node_owner == "ListValue.iter" for arm in halts)
     # The completed arm stands only under both completes atoms.
     assert "python:iter_op.completes" in repr(done.guard), done.guard
-    assert "python:attribute.completes" in repr(done.guard), done.guard
+    assert "python:attribute_op.completes" in repr(done.guard), done.guard
     # Nothing is projected: the value is the comprehension's own coordinate,
     # its kind over its occurrence and this evaluation of it.  The filter's
     # read is stated where it ran (its halt and its debt, above), never
@@ -220,7 +220,7 @@ def test_nonfinite_iterable_with_undecided_filter_owes_the_filter_read() -> None
     occurrence, evaluation = value.term.args
     assert occurrence.name == "python:source-occurrence", value.term
     assert evaluation.name == "python:occurrence", value.term
-    assert "attr:keep" not in repr(value.term), value.term
+    assert "python:attribute_result" not in repr(value.term), value.term
     # Every arm owes the read as the one ``undecided`` member (no symbol: a
     # read is not an import-bound call).
     owed = owed_calls(outcome)

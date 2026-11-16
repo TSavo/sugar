@@ -675,74 +675,6 @@ class FloorValue:
         )
         construction_panic(info)
 
-    def undecided_attribute(self, name, site, *, owner: str, receiver_term=None):
-        """``self.name`` whose behaviour is not decided here: the two faces.
-
-        ``receiver_term`` names the object the read reads when the receiver's
-        own value names a state another proof states (a class call's result
-        as its construction left it, ``CallSiteValue.attribute``); by default
-        the receiver's identity (``identity_term``).
-
-        The receiver's runtime type and ``__getattribute__`` / ``__getattr__``
-        are not decided here, so the read may complete with any member or
-        raise anything -- the #7585 law.  It is the one two-faced unanswered
-        outcome (``ExitSet.two_faced``): the member completes as the
-        coordinate ``attr:<name>(<receiver>)`` -- the spelling ``__name__``
-        already uses, no value invented -- only under
-        ``python:attribute.completes(python:attribute(<receiver>, <name>,
-        <site>))``, keyed on the exact source site; the complement halts with
-        an ``UndeterminedRaiseEffect`` (producer ``owner``).  Both arms owe the
-        ``undecided`` member (reason ``unanswered``) at the read's site.  No
-        ``AttributeError`` is named.
-
-        Distinct from the default :meth:`attribute` construction panic: that
-        door means a decided-type floor arm is missing (OUR defect).  A read
-        that reached the floor with no site is also the lifter's own gap: it
-        cannot key the completes atom or the debt, so it refuses by name.
-        """
-        if site is None:
-            _siteless_undecided_read(
-                owner, f"{type(self).__name__}.{name}", "Attribute"
-            )
-        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.floor.object_identity import identity_term
-        from sugar_lift_py_tests.ir import atomic, ctor, str_const
-        from sugar_lift_py_tests.occurrence import occurrence_key
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        if receiver_term is None:
-            receiver_term = identity_term(self, site, "receiver", owner=str(site))
-        member = CallSiteValue(
-            target_name=name,
-            arg_values=(self,),
-            parameters=(),
-            term=ctor(f"attr:{name}", [receiver_term], symbol_kind="method-coordinate"),
-            body=None,
-            site=site,
-        )
-        key = occurrence_key(site)
-        completes = atomic(
-            "python:attribute.completes",
-            [
-                ctor(
-                    "python:attribute",
-                    (receiver_term, str_const(name), str_const(key)),
-                )
-            ],
-        )
-        return ExitSet.two_faced(
-            member,
-            UndeterminedRaiseEffect(
-                blame=str(site),
-                occurrence=key,
-                producer_node_owner=owner,
-                site=site,
-            ),
-            guard=completes,
-            site=site,
-        )
-
     def undecided_contains(self, item, site, *, owner: str):
         """Membership whose container dispatch is not source-decided: two faces.
 
@@ -1584,7 +1516,7 @@ def undecided_binary_terms(operator: str, left_term, right_term, key: str):
     return term, completes
 
 
-def undecided_result_terms(name: str, operand_terms, key: str):
+def undecided_result_terms(name: str, operand_terms, key):
     """The one form of an undecided operation's value, one per evaluation
     (#7757 NEW-1): its result term ``python:<name>_result(*operands,
     <key>)`` and its completes atom ``python:<name>_op.completes(
@@ -1597,13 +1529,19 @@ def undecided_result_terms(name: str, operand_terms, key: str):
     result names no Python operation the prover decides: it is the
     uninterpreted application, and its operands are the inputs a joined
     actual binds.
+
+    A contract that states what every evaluation of a read gives
+    (``class_constructor_body_sugar.stored_field_facts``) passes the bound
+    variable that ranges over the keys instead of one key: the same terms,
+    quantified.
     """
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
 
-    term = ctor(f"python:{name}_result", (*operand_terms, str_const(key)))
+    key_term = str_const(key) if isinstance(key, str) else key
+    term = ctor(f"python:{name}_result", (*operand_terms, key_term))
     completes = atomic(
         f"python:{name}_op.completes",
-        [ctor(f"python:{name}_op", (term, str_const(key)))],
+        [ctor(f"python:{name}_op", (term, key_term))],
     )
     return term, completes
 
@@ -1631,10 +1569,14 @@ def undecided_predicate_result(name: str, operand_terms, key: str):
     return atomic(f"python:{name}_result", [*operand_terms, str_const(key)])
 
 
-def undecided_attribute_result(receiver, name: str, site, *, owner: str):
-    """``receiver.name`` on an input of the function whose own proof this is
-    (a parameter, a captured cell): the one two-faced undecided read, keyed
-    per evaluation (``undecided_result_terms``).
+def undecided_attribute_result(
+    receiver, name: str, site, *, owner: str, receiver_term=None
+):
+    """``receiver.name`` whose behaviour is not decided here, whatever the
+    receiver is (a parameter, a captured cell, a free name, a module alias,
+    a call's result, an object of this reduction): the one two-faced
+    undecided read, keyed per evaluation (``undecided_result_terms``,
+    #7757 NEW-3).  There is no other builder of an undecided read.
 
     A read is ``type(receiver).__getattribute__`` then ``__getattr__`` and
     the descriptors they find: a protocol with a fallback no one dispatched
@@ -1643,8 +1585,19 @@ def undecided_attribute_result(receiver, name: str, site, *, owner: str):
     only under ``python:attribute_op.completes(python:attribute_op(<result>,
     <key>))``; the complement halts with an ``UndeterminedRaiseEffect``
     (``owner``) at the same key.  Both arms owe the ``undecided`` member.
-    The ``attr:<name>(<receiver>)`` coordinate stays the decided and typed
-    paths' (a constructed instance's stated field, a type-name read)."""
+    No ``AttributeError`` is named.
+
+    ``receiver_term`` names the object the read reads when the receiver's
+    own value names a state another proof states (a class call's result as
+    its construction left it, ``CallSiteValue.attribute``); by default the
+    receiver's identity (``identity_term``).  A contract that states such a
+    field answers the read at prove over the same terms
+    (``class_constructor_body_sugar.stored_field_facts``).  The
+    ``attr:<name>(<object>)`` coordinate is the decided paths' only: the
+    field's value a contract states, and the type-name read.
+
+    A read that reached here with no site is the lifter's own gap: it
+    cannot key the completes atom or the debt, so it refuses by name."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor.object_identity import identity_term
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -1657,13 +1610,10 @@ def undecided_attribute_result(receiver, name: str, site, *, owner: str):
             owner, f"{type(receiver).__name__}.{name}", "Attribute"
         )
     key = occurrence_key(site)
+    if receiver_term is None:
+        receiver_term = identity_term(receiver, site, "receiver", owner=str(site))
     term, completes = undecided_result_terms(
-        "attribute",
-        (
-            str_const(name),
-            identity_term(receiver, site, "receiver", owner=str(site)),
-        ),
-        key,
+        "attribute", (str_const(name), receiver_term), key
     )
     return ExitSet.two_faced(
         SymbolicValue(term),

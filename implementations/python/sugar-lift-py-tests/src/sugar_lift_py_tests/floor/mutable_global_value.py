@@ -51,8 +51,10 @@ class MutableGlobalValue(FloorValue):
     def attribute(self, name, site, ctx):
         """Mutable pin has no field layout at lift — undecided, not missing Floor.attribute."""
         del ctx
-        return self.undecided_attribute(
-            name, site, owner="MutableGlobalValue.attribute"
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+
+        return undecided_attribute_result(
+            self, name, site, owner="MutableGlobalValue.attribute"
         )
 
     def subscript(self, index, site):

@@ -115,7 +115,7 @@ def test_an_attribute_on_an_undecided_value_is_two_faced_and_owes_its_read() -> 
     faces = SymbolicValue(make_var("s")).attribute("member", _Site(), None)
     _assert_two_faced_and_owed(faces, "SymbolicValue.attribute")
     (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
-    assert "python:attribute.completes" in repr(done.guard)
+    assert "python:attribute_op.completes" in repr(done.guard)
     assert "AttributeError" not in repr(faces)
 
 
@@ -129,11 +129,12 @@ def test_a_subscript_on_an_undecided_value_is_two_faced_and_owes_its_read() -> N
 
 
 def test_an_undecided_read_with_no_site_is_the_lifters_gap() -> None:
+    from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
     from sugar_source_tree.panic import SugarNotWritten
 
     receiver = SymbolicValue(make_var("s"))
     with pytest.raises(SugarNotWritten, match="no source site"):
-        receiver.undecided_attribute("member", None, owner="t")
+        undecided_attribute_result(receiver, "member", None, owner="t")
     with pytest.raises(SugarNotWritten, match="no source site"):
         receiver.undecided_subscript(TermValue(0), None, owner="t")
 

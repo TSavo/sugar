@@ -112,7 +112,7 @@ class BuiltinDescriptorValue(FloorValue):
         property: its accessor, or ``None``; ``getter`` / ``setter`` /
         ``deleter``: the accessor that copies it (``PropertyAccessorValue``).
         Any other attribute is not modelled here: the undecided read, two
-        faces, owed (``undecided_attribute``)."""
+        faces, owed (``floor_value.undecided_attribute_result``)."""
         del ctx
         from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.outcome import ExitSet
@@ -126,7 +126,9 @@ class BuiltinDescriptorValue(FloorValue):
                 return ExitSet.completed(PropertyAccessorValue(self, name))
         elif name in ("__func__", "__wrapped__"):
             return ExitSet.completed(self.function)
-        return self.undecided_attribute(name, site, owner=f"{_OWNER}.attribute")
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+
+        return undecided_attribute_result(self, name, site, owner=f"{_OWNER}.attribute")
 
 
 @dataclass(frozen=True)

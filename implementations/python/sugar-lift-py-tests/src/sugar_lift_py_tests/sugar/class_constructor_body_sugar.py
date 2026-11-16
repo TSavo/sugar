@@ -536,14 +536,15 @@ class ConstructedInstanceValue(FloorValue):
 
         - ``attr:<name>(python:after(out, "out")) == <value>``: the field of
           the instance as the construction left it
-          (``source_call_resolution.object_after_call``), the one term a
-          caller's read of a field of the call's result names
-          (``CallSiteValue.attribute``, #7757 step 7);
+          (``source_call_resolution.object_after_call``), #7757 step 7;
         - where a read of the name is the ``__dict__`` entry by Python's own
-          rule (``ObjectValue.reads_plain_field``), that every such read
-          completes: ``forall k. python:attribute.completes(
-          python:attribute(python:after(out, "out"), <name>, k))``, ``k``
-          the read's site key, so the caller's read is answered at prove.
+          rule (``ObjectValue.reads_plain_field``), that every such read --
+          the one undecided read over that object (``CallSiteValue.
+          attribute``) -- is the field and completes: ``forall k.
+          python:attribute_result(<name>, python:after(out, "out"), k) ==
+          attr:<name>(...)`` and its ``python:attribute_op.completes`` atom
+          (``stored_field_facts``), ``k`` the read's key, so the caller's
+          read is answered at prove.
 
         A field the construction did not decide, or one whose value names an
         object of this reduction, is not stated: a read of it stays owed.
@@ -659,9 +660,9 @@ class InitializedInstanceValue(FloorValue):
         return facts[0] if len(facts) == 1 else and_(facts)
 
 
-# The bound variable of a contract's field-read fact: the read's site key
-# (``FloorValue.undecided_attribute``'s ``occurrence_key``).  A name no
-# contract formal or Python identifier spells.
+# The bound variable of a contract's field-read fact: the read's key
+# (``floor_value.undecided_attribute_result``'s ``occurrence_key``).  A name
+# no contract formal or Python identifier spells.
 _READ_KEY = "python:read_key"
 
 
@@ -673,15 +674,21 @@ def stored_field_facts(obj, name: str, value) -> tuple:
     field_facts``, #7757 step 7):
 
     - ``value_fact``: ``attr:<name>(<obj>) == <value>``, ``<obj>`` the object as
-      the call left it (``python:after(out, <label>)``), the one term a
-      caller's read of the field names;
-    - ``read_completes``: ``forall k. python:attribute.completes(
-      python:attribute(<obj>, <name>, k))``, ``k`` the read's site key: a
-      read of it completes, so the caller's read is answered at prove.  The
-      caller states it only where the read is the ``__dict__`` entry."""
+      the call left it (``python:after(out, <label>)``), the field's value
+      (what prove reads an instance's fields off,
+      ``consistency::stated_instance_fields``);
+    - ``read_completes``: ``forall k. and(python:attribute_result(<name>,
+      <obj>, k) == attr:<name>(<obj>), python:attribute_op.completes(
+      python:attribute_op(python:attribute_result(<name>, <obj>, k), k)))``,
+      ``k`` the read's key: the caller's read, the one undecided read
+      (``floor_value.undecided_attribute_result`` over ``<obj>``), is the
+      field and completes, so it is answered at prove.  The caller states it
+      only where the read is the ``__dict__`` entry; elsewhere the read
+      stays owed."""
+    from sugar_lift_py_tests.floor.floor_value import undecided_result_terms
     from sugar_lift_py_tests.ir import (
         Int,
-        atomic,
+        and_,
         ctor,
         eq,
         forall,
@@ -689,21 +696,20 @@ def stored_field_facts(obj, name: str, value) -> tuple:
         str_const,
     )
 
-    read = ctor(f"attr:{name}", [obj], symbol_kind="method-coordinate")
-    value_fact = eq(read, value)
+    field = ctor(f"attr:{name}", [obj], symbol_kind="method-coordinate")
+    value_fact = eq(field, value)
+    read, completes = undecided_result_terms(
+        "attribute", (str_const(name), obj), make_var(_READ_KEY)
+    )
     read_completes = forall(
         _READ_KEY,
         # The key ranges over the sort a site key lowers to where it stands:
-        # an argument of the ``python:attribute`` coordinate, whose string
-        # constants the SMT backend declares as opaque ``Int`` constants
-        # (``strlit_*``).  Bound over ``String`` the quantified read was
-        # another function to the solver, and z3 refused the row (``unknown
-        # constant python:attribute``).
+        # an argument of the ``python:attribute_result`` coordinate, whose
+        # string constants the SMT backend declares as opaque ``Int``
+        # constants (``strlit_*``).  Bound over ``String`` the quantified
+        # read was another function to the solver, and z3 refused the row.
         Int(),
-        atomic(
-            "python:attribute.completes",
-            [ctor("python:attribute", (obj, str_const(name), make_var(_READ_KEY)))],
-        ),
+        and_([eq(read, field), completes]),
     )
     return value_fact, read_completes
 

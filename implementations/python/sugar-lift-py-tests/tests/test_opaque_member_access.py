@@ -3,8 +3,9 @@
 An unexecuted call authenticates which call produced the receiver, but not its
 runtime type or members.  A completed coordinate alone would silently choose
 the success edge; a guessed ``AttributeError`` would silently choose the
-failure edge.  Neither is chosen: the lookup completes as the coordinate
-``attr:<name>(<receiver>)`` only under ``python:attribute.completes(...)`` and
+failure edge.  Neither is chosen: the lookup completes as the one undecided
+read ``python:attribute_result(<name>, <receiver>, <key>)`` only under
+``python:attribute_op.completes(...)`` and
 halts with an ``UndeterminedRaiseEffect`` (no exception type named) under the
 complement.
 """
@@ -57,7 +58,7 @@ def test_opaque_attribute_is_two_faced():
         "def f(x):\n    return g(x).foo\n"
     )
     assert len(halts) == 1
-    assert "python:attribute.completes" in guards
+    assert "python:attribute_op.completes" in guards
 
 
 def test_opaque_subscript_is_two_faced():
