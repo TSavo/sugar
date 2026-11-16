@@ -14,7 +14,7 @@ def f():
 
 CPython adds ``[1]`` to the set as the first member runs and raises
 ``TypeError`` there; the second member, ``[1 // 0]``, never runs.  So
-``f()`` is 1.  The comprehension in hand (``ComprehensionSugar._finite_map``)
+``f()`` is 1.  The comprehension in hand (``ComprehensionSugar._run_in_hand``)
 ran every member first and applied the display rule (``_built_set``,
 ``_built_dict``) to the finished members, so the second member's
 ``ZeroDivisionError`` was the stated halt and the lie ``f() == 2`` could read

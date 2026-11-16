@@ -545,9 +545,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
-        from sugar_lift_py_tests.floor.object_identity import contents_stale
         from sugar_lift_py_tests.operations.iterator_operation import (
-            IteratorOperation,
+            in_hand_iterator,
+            in_hand_members,
         )
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -555,25 +555,14 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             halts_recorded,
         )
 
-        # A ``for`` runs ``iter`` on its iterable once, before any item,
-        # whatever the iterable is: the one ``iter`` operation, submitted to
-        # the receiver, which owns the answer.  Its halt carries the record
-        # of where it halted (``halts_recorded``).
-        iterator_operation = IteratorOperation(
-            owner="LoopRecurrenceSugar", blame=self.site
-        )
-        from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.floor.generator_value import GeneratorValue
-        from sugar_lift_py_tests.operations.iterator_operation import (
-            in_hand_iterable,
-            within_unroll_budget,
-        )
-
         # The loop's one mechanism (#7757 new 6): its items run one by one
-        # here where the reduction holds the iterable's members -- a
-        # container in hand, or the ints a ground ``range(...)`` yields
-        # (``in_hand_iterable``) -- within the one unroll budget
-        # (``within_unroll_budget``); anything else runs as the recurrence
+        # here, through the one item runner a comprehension's members run
+        # through too (``iterator_operation.advance_in_hand``), where the
+        # reduction holds the iterable's members in iteration order within
+        # the one unroll budget (``in_hand_members``: a container in hand,
+        # the ints a ground ``range(...)`` yields).  Iterating those is
+        # decided never to raise, so no ``iter`` is submitted (as
+        # ``iterated`` submits none).  Anything else runs as the recurrence
         # below.  No rewrite unrolls the loop before it gets here.  An item
         # hands the next only the names the loop carries: a loop whose item
         # leaves changed a name it does not carry (a name a call in the body
@@ -583,37 +572,31 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         in_hand = runtime is not None and not getattr(
             runtime, "uncarried_item_changes", ()
         )
-        if in_hand:
-            iterable = in_hand_iterable(iterable)
-        if (
-            in_hand
-            and not isinstance(iterable, (SymbolicValue, CallSiteValue, GeneratorValue))
-            and not contents_stale(iterable)
-            and within_unroll_budget(iterable)
-        ):
+        members = in_hand_members(iterable) if in_hand else None
+        if members is not None:
+
             def first(runtime_ctx, carried):
-                return halts_recorded(
-                    iterator_operation.submit(iterable, runtime_ctx),
-                    halt_record(ctx),
-                ).and_then(
-                    lambda iterator: self._advance_iterator(
-                        iterator, runtime, runtime_ctx, entries=(), carried=carried
-                    )
+                return self._advance_iterator(
+                    in_hand_iterator(members),
+                    runtime,
+                    runtime_ctx,
+                    entries=(),
+                    carried=carried,
                 )
 
             return self._start(runtime, ctx, first)
 
-        # An iterable the reduction has not decided -- a symbolic value (a
-        # formal, an unknown), a call's result (what the callee returned is
-        # its contract's, joined at prove: #7757 steps 5 and 6, so its
-        # ``iter`` is the undecided read, ``CallSiteValue.iter_with``, whose
-        # iterator has no item a live loop could step), a generator pulled
-        # where it is consumed (``GeneratorValue``: its members are not in
-        # hand, and its pull is stated by its ``next``), or a container whose
-        # contents are not current (``object_identity.contents_stale``),
-        # which has no members in hand -- has an ``iter`` it has not decided
-        # either: an undecided
-        # operation like every other.  The receiver answers it as it answers
+        # An iterable whose members the reduction does not hold in order --
+        # a symbolic value (a formal, an unknown), a call's result (what the
+        # callee returned is its contract's, joined at prove: #7757 steps 5
+        # and 6, so its ``iter`` is the undecided read,
+        # ``CallSiteValue.iter_with``), a generator pulled where it is
+        # consumed (``GeneratorValue``: its pull is stated by its ``next``),
+        # a container whose contents are not current
+        # (``object_identity.contents_stale``), an instance, a ``str``, a
+        # ``set`` -- runs as the recurrence, over the one iterator path a
+        # comprehension's symbolic fold takes too.  The receiver answers its
+        # ``iter`` as it answers
         # ``iter(x)`` (``SymbolicValue.iter_with``, ``ListValue.iter_with``):
         # a formal's is the ``iter`` carrier its caller's actual discharges,
         # owed as the unanswered operation where there is none; any other is
@@ -1087,93 +1070,59 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         the previous item's latch (``_latched``) after it.  An item handed
         nothing for the names it carries is refused by name
         (``_require_carried``): the names are never read in its place.
+
+        The item is stepped by the one item runner a comprehension's members
+        are stepped by too (``iterator_operation.advance_in_hand``, #7757 new
+        6): its ``next``, read arm by arm.  A halt of it halted where the
+        items before it left (``ctx``): it carries that record
+        (``halts_recorded``).  Exhaustion is this loop's own control: the
+        loop consumes the ``StopIteration`` and leaves beneath it, under its
+        guard and faces, owing what the exhausting ``next`` owed, through its
+        ``else`` suite (``_finish_iterator``; one still waiting on its
+        caller's actuals is composed beneath it too).  Any other halt of the
+        ``next`` leaves the loop with what the items before it did
+        (``_left_with``).  The value runs the item (``_run_item``).
         """
-        from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
-        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.floor.iterator_value import NextResult
+        from sugar_lift_py_tests.operations.iterator_operation import (
+            advance_in_hand,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
+
+        return advance_in_hand(
+            iterator,
+            ctx,
+            index=index,
+            owner="LoopRecurrenceSugar",
+            site=self.site,
+            record=halt_record(ctx),
+            item=lambda value, advanced: self._run_item(
+                value,
+                advanced,
+                runtime,
+                ctx,
+                entries=entries,
+                carried=carried,
+                index=index,
+            ),
+            exhausted=lambda: self._finish_iterator(
+                runtime, ctx, entries=entries, carried=carried, items=index
+            ),
+            left=lambda halt: self._left_with(entries, (), halt=halt),
+        )
+
+    def _run_item(self, value, advanced, runtime, ctx, *, entries, carried, index):
+        """Item ``index`` of the live loop on the member ``value`` its
+        ``next`` yielded: the target unpacked, the body run, and the next
+        item stepped from ``advanced`` (``_advance_iterator``)."""
         from dataclasses import replace
 
-        from sugar_lift_py_tests.operations.next_operation import NextOperation
-        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+        from sugar_lift_py_tests.outcome import Halted
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halt_record,
-            halts_recorded,
             reduce_block_to_exitset,
         )
 
-        # The item's ``next`` is read arm by arm (exhaustion, the NextResult):
-        # a deferred native-operation carrier here is refused by name. A halt
-        # of it halted where the items before it left (``ctx``): it carries
-        # that record (``halts_recorded``), and leaves the loop with what
-        # those items did (``_left_with``).
-        outcome = halts_recorded(
-            _require_exit_set(
-                NextOperation(owner="LoopRecurrenceSugar", blame=self.site).submit(
-                    iterator, ctx
-                ),
-                owner="LoopRecurrenceSugar.next",
-            ),
-            halt_record(ctx),
-        )
-        if outcome.exits and outcome.halts() == outcome.exits:
-            effect = outcome.exits[0].effect
-            if (
-                len(outcome.exits) == 1
-                and isinstance(effect, RaiseEffect)
-                and _is_authenticated_stop_iteration(effect)
-            ):
-                # Exhaustion is this loop's own control: the loop consumes the
-                # StopIteration and leaves beneath it, under its guard and
-                # faces, owing what the exhausting ``next`` owed.  An ``else``
-                # suite still waiting on its caller's actuals is composed
-                # beneath it too (``and_then`` hands the carrier on).
-                return outcome.and_then(
-                    ExitSet.completed,
-                    consume=lambda _stop: self._finish_iterator(
-                        runtime, ctx, entries=entries, carried=carried, items=index
-                    ),
-                )
-            # Any other halt of the item's ``next`` leaves the loop with what
-            # the items before it did (``_left_with``).
-            return outcome.and_then(
-                ExitSet.completed,
-                consume=lambda halt: self._left_with(entries, (), halt=halt),
-            )
-        next_result = outcome.completed_value()
-        # A NextResult owing something has no linear place for the debt: it
-        # is refused with every other shape, never carried on without it.
-        if not isinstance(next_result, NextResult) or outcome.owed_items():
-            raise TypeError(
-                "NextOperation must produce NextResult or a named exception"
-            )
-        from sugar_source_tree.nodes import LOOP_UNROLL_BUDGET
-
-        if index >= LOOP_UNROLL_BUDGET:
-            # An iterator whose count was not in hand before the first item
-            # (``within_unroll_budget``) yielded a member past the one unroll
-            # budget: refused by name, never cut short or guessed exhausted.
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                owner="LoopRecurrenceSugar.for",
-                blame=self.site,
-                observed=(
-                    f"a live for yielded item {index} past the unroll budget "
-                    f"of {LOOP_UNROLL_BUDGET}"
-                ),
-                requested="an iterable whose members the budget holds",
-                fix=(
-                    "run the loop as its recurrence over an iterable whose "
-                    "count is not in hand; never cut the loop short"
-                ),
-            )
-
-        from sugar_lift_py_tests.outcome import Halted
-
-        projected = self._project_iteration_target(
-            runtime.target_pattern, next_result.value, ctx
-        )
+        projected = self._project_iteration_target(runtime.target_pattern, value, ctx)
         # On a halted arm assignment has not begun: the positional-unpack
         # Floor owns the halt, and its record is the empty one in the exact
         # context entering this iteration (``halt_record``).  The item runs
@@ -1192,7 +1141,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         def resume(ctx, *, entries, carried, index):
             # The next item takes the iterator's next element.
             return self._advance_iterator(
-                next_result.advanced,
+                advanced,
                 runtime,
                 ctx,
                 entries=entries,

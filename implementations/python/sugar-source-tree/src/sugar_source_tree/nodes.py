@@ -16608,10 +16608,10 @@ class TypeAlias(Statement):
 # The one unroll budget of a loop's one mechanism (#7757 new 6): the
 # reduction runs a loop's or a comprehension's items one by one only where it
 # holds every member of the iterable and there are no more than this many
-# (``iterator_operation.in_hand_iterable``, ``within_unroll_budget``), and
+# (``iterator_operation.in_hand_members``, the one item runner's gate), and
 # runs it as its recurrence otherwise; a ``while`` whose test has not
-# decided false within this many items, or a ``for`` whose iterator yields a
-# member past it, is refused by name (``LoopRecurrenceSugar``).  Not a
+# decided false within this many items is refused by name
+# (``LoopRecurrenceSugar``).  Not a
 # semantic limit: no rewrite unrolls a loop.
 LOOP_UNROLL_BUDGET = 128
 

@@ -377,7 +377,7 @@ def _uninsertable(member, site, owner):
     halt there (``_display_refusal``); ``None`` when it is inserted.  A
     display inserts after every member has run (``_built_set``,
     ``_built_dict``); a comprehension inserts each member as it runs, so it
-    applies this rule member by member (``ComprehensionSugar._finite_map``)
+    applies this rule member by member (``ComprehensionSugar._run_in_hand``)
     and a later member never runs past an unhashable one."""
     from sugar_lift_py_tests.floor.membership import decided_unhashable
 

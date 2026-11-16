@@ -229,7 +229,7 @@ def test_nonfinite_iterable_with_undecided_filter_owes_the_filter_read() -> None
 
 
 # A comprehension whose every member is in hand is decided whole: the
-# reduction projects its members (``ComprehensionSugar._finite_map``) and the
+# reduction projects its members (``ComprehensionSugar._run_in_hand``) and the
 # value's ``display`` is the list they build.  A read by index is that list's
 # ``__getitem__`` (``ComprehensionValue.subscript``), as its truth and its
 # operators are.  Before #8957 the rewrite dissolved it into the list itself;

@@ -1,6 +1,6 @@
 """Teeth for the closed finite-projection decision (#7347).
 
-The defect: `_finite_map` answered a bare `None` for at least four distinct
+The defect: `_finite_map` (now `_run_in_hand`) answered a bare `None` for at least four distinct
 facts, `_after_iterable` erased all four into one symbolic fallback, and the
 comprehension completed with `ComprehensionValue(finite_elements=None)`. A
 comprehension whose finite projection was lost to a STRANDED AUTHENTICATED
@@ -232,7 +232,7 @@ def test_producer_publishes_enrollment_for_a_destructuring_comprehension():
 
     assert isinstance(enrollment, TargetPatternEnrolledV1)
     # The consumer-level answer covers THIS generator slot -- the assumption
-    # `_finite_map` rests on, pinned rather than argued.
+    # `_run_in_hand` rests on, pinned rather than argued.
     assert enrollment.covers(node.generators[0].target)
 
 
@@ -269,7 +269,7 @@ def test_an_enrolled_consumer_whose_row_is_gone_stays_owed_and_refuses():
 #
 # THE JOIN. On the merged tree #7348's `_recurrence_generators` reads the row
 # STRICTLY, so a stranded comprehension now refuses at SUGAR CONSTRUCTION,
-# before `_finite_map` is ever called. The verdict-level defect is closed
+# before `_run_in_hand` is ever called. The verdict-level defect is closed
 # twice over, and these two teeth say which door bites where.
 # --------------------------------------------------------------------------
 
@@ -294,7 +294,7 @@ def test_the_projection_arm_still_refuses_an_enrolled_slot_without_its_pattern(k
 
     #7348 closed the producer path that USED to reach here. The decision arm
     stays because the invariant is a property of the projection, not of one
-    caller: any future callsite that hands `_finite_map` an enrolled slot with
+    caller: any future callsite that hands `_run_in_hand` an enrolled slot with
     no pattern must refuse, not spend a completion.
     """
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
@@ -309,7 +309,7 @@ def test_the_projection_arm_still_refuses_an_enrolled_slot_without_its_pattern(k
     assert stranded.target.coordinates is not None
     assert isinstance(stranded.target_pattern_enrollment, TargetPatternEnrolledV1)
 
-    decision = sugar._finite_map(stranded, TupleValue(()), None)
+    decision = sugar._run_in_hand(stranded, (), None)
 
     assert decision == NotProjected(
         FiniteProjectionNonSuccessV1.AUTHENTICATED_LOOKUP_FAILED
@@ -374,21 +374,13 @@ def test_the_listcomp_retention_control_still_projects_finite_elements():
 
 
 def test_a_lawful_reason_is_not_spent_as_a_refusal():
-    """`_finite_map` answers a typed non-success, not a bare sentinel."""
-    source = "def build(items):\n    return {a for a in items}\n"
-    node = next(
-        candidate for candidate in _source_file(source).nodes()
-        if candidate.kind == "SetComp"
-    )
-    sugar = node.sugar()
-    generator = sugar.generators[0]
+    """An iterable whose members are not in hand is the one gate's lawful
+    answer (``in_hand_members`` is ``None``): the members do not run in hand
+    and the comprehension stays its symbolic fold. Nothing is refused, and
+    ``_run_in_hand`` is never handed it."""
+    from sugar_lift_py_tests.operations.iterator_operation import in_hand_members
 
-    decision = sugar._finite_map(generator, object(), None)
-
-    require_finite_projection_decision(decision, owner="tooth")
-    assert decision == NotProjected(
-        FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE
-    )
+    assert in_hand_members(object()) is None
 
 
 def test_projection_unavailable_in_context_is_its_own_reason():
@@ -402,7 +394,7 @@ def test_projection_unavailable_in_context_is_its_own_reason():
     )
     sugar = node.sugar()
 
-    decision = sugar._finite_map(sugar.generators[0], TupleValue(()), None)
+    decision = sugar._run_in_hand(sugar.generators[0], (), None)
 
     assert decision == NotProjected(
         FiniteProjectionNonSuccessV1.PROJECTION_UNAVAILABLE_IN_CONTEXT
@@ -423,8 +415,8 @@ def test_replacement_failure_is_its_own_reason_and_never_a_finite_verdict():
     )
     sugar = node.sugar()
 
-    decision = sugar._finite_map(
-        sugar.generators[0], TupleValue(()), _UnreplaceableContext()
+    decision = sugar._run_in_hand(
+        sugar.generators[0], (), _UnreplaceableContext()
     )
 
     assert decision == NotProjected(FiniteProjectionNonSuccessV1.REPLACEMENT_FAILED)
