@@ -739,16 +739,19 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         each item is what follows the faces its ``next`` of ``iterator``
         goes on by (``iterator_operation.stepped``).
 
-        A ``while`` whose test reads no binding has the symbolic item
-        evaluate it first (``_symbolic_test``, ``_tested``), as a live item
-        does: a halt of the test leaves the loop; a truth decided false
-        leaves by exhaustion and runs no item; a truth decided true runs the
-        item with no exhaustion arm at all (an arm that falls through goes
-        round again); each decided path publishes the exit it left by
+        A ``while`` has the symbolic item evaluate its test first
+        (``_symbolic_test``, ``_tested``), as a live item does: a halt of
+        the test leaves the loop, and the body runs after what the test
+        stored.  Where the test reads no binding (its truth decides,
+        ``LiveSymbolicItemV1.test_decides``) a truth decided false leaves by
+        exhaustion and runs no item; a truth decided true runs the item with
+        no exhaustion arm at all (an arm that falls through goes round
+        again); each decided path publishes the exit it left by
         (``_exit_decision``), which a read after the loop selects by
         (``guarded_binding_read_sugar.decided_loop_exit``).  An undecided
-        truth, and every other ``while``, runs the item under the test's
-        slot guard."""
+        truth, and the truth of a test that reads a binding (its value at
+        the symbolic item is not its value at every item), runs the item
+        under the test's slot guard."""
         runtime = self.construction.loop_runtime
 
         from sugar_lift_py_tests.floor import InvValue
@@ -910,7 +913,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # statement, which ran ahead of it.  The loop's exits are the arms of
         # that one run (``_leave_symbolic_item``).
         body_sugars, item_guard = self._symbolic_item()
-        test_sugar = self._symbolic_test()
+        test_sugar, test_decides = self._symbolic_test()
 
         def run_body(item_ctx, target_bindings, guard, left, left_exhausted):
             from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -936,7 +939,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             from sugar_lift_py_tests.outcome.exit_set import _is_false, _is_true
 
             ahead = tuple(face.entries)
-            truth = face.formula
+            # A test that reads a binding decides nothing at every item from
+            # its truth here (``LiveSymbolicItemV1.test_decides``): the item
+            # runs under its slot guard, after what it stored.
+            truth = face.formula if test_decides else None
             if truth is not None and _is_false(truth):
                 # Decided false at every item: no item runs.  The loop leaves
                 # by exhaustion, decided on this path.
@@ -974,13 +980,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 return run_body(
                     item_ctx, target_bindings, item_guard, recurrence, exhausted
                 )
-            # A ``while`` whose test the symbolic item evaluates
-            # (``LiveSymbolicItemV1.test_sugar``): the test runs first, in
-            # the item, through the one rule a live item's test runs by
-            # (``_tested``).  Each halt of it leaves the loop with what the
-            # items before it did (``recurrence``), as a live item's test
-            # halt does (``_test_item``); each completed face decides, or
-            # not, whether the item runs.
+            # A ``while`` (``LiveSymbolicItemV1.test_sugar``): the test runs
+            # first, in the item, through the one rule a live item's test
+            # runs by (``_tested``).  Each halt of it leaves the loop with
+            # what the items before it did (``recurrence``), as a live
+            # item's test halt does (``_test_item``); each completed face
+            # decides, or not, whether the item runs.
             if item_ctx is None:
                 from sugar_lift_py_tests.context import ReduceContext
 
@@ -1055,14 +1060,21 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         return symbolic_item.body_sugars, symbolic_item.guard
 
     def _symbolic_test(self):
-        """The ``while`` test the recurrence's symbolic item evaluates before
-        its body (``live_loop_construction.LiveSymbolicItemV1.test_sugar``),
-        or None: a ``for``, or a test that reads a binding, whose value at
-        the symbolic item is not its value at every item.  The construction
-        hands it undecided; its truth is decided here, by the one rule a live
-        item's test takes (``_tested``), never by the rewrite."""
+        """``(test_sugar, decides)``: the ``while`` test the recurrence's
+        symbolic item evaluates before its body
+        (``live_loop_construction.LiveSymbolicItemV1.test_sugar``), None for
+        a ``for``; and whether its truth there decides the item
+        (``LiveSymbolicItemV1.test_decides``): False for a test that reads a
+        binding, whose value at the symbolic item is not its value at every
+        item -- it is evaluated all the same, and its halts leave the loop.
+        The construction hands it undecided; its truth is decided here, by
+        the one rule a live item's test takes (``_tested``), never by the
+        rewrite."""
         symbolic_item = getattr(self.construction, "symbolic_item", None)
-        return getattr(symbolic_item, "test_sugar", None)
+        return (
+            getattr(symbolic_item, "test_sugar", None),
+            getattr(symbolic_item, "test_decides", False) is True,
+        )
 
     def _recurrence_starts(self, runtime, heads):
         """The value each carried name (``runtime.carried_names`` order) has
