@@ -3607,8 +3607,9 @@ pub enum DroppedAmbientPostReason {
     /// what remains.
     RecursiveContract,
     /// Nothing answers the call or operation at this site: no bridge states
-    /// the member's symbol, the answering contract states no post, or the
-    /// member has no symbol at all (an owed operation such as `==`). A row
+    /// the member's symbol, the answering contract states no post, the
+    /// member has no symbol at all (an owed operation such as `==`), or the
+    /// site holds no member at all (`unmembered_read`). A row
     /// that reads it through a joined contract reads a free value, so it is
     /// not decided on what remains. Not a wrong answer.
     Unanswered,
@@ -4939,13 +4940,13 @@ fn claim_holds_for_every_value(
     }
     let counter = canonicalize_formula_json(&IrFormula::And(operands).to_value());
     let mut conjuncts = Vec::new();
-    if !ambient.is_empty() {
-        let partition = linked_ambient_post_instances_for_inv(&counter, ambient);
-        if !partition.dropped.is_empty() {
-            return false;
-        }
-        conjuncts.extend(partition.kept.iter().map(|post| post.instantiated_post.clone()));
+    // Read with an empty ambient too: a call result at a site with no
+    // member is a named drop (`unmembered_read`).
+    let partition = linked_ambient_post_instances_for_inv(&counter, ambient);
+    if !partition.dropped.is_empty() {
+        return false;
     }
+    conjuncts.extend(partition.kept.iter().map(|post| post.instantiated_post.clone()));
     let mut operands = Vec::with_capacity(conjuncts.len() + 1);
     operands.push(counter);
     operands.extend(conjuncts);
@@ -8446,25 +8447,73 @@ fn instantiate_ambient_posts_for_inv(inv: &Json, ambient: &[AmbientPost]) -> Vec
         .collect()
 }
 
+/// A read of a call result at a site that holds no member (step 9): no edge
+/// the lift minted stands there, so no proof answers it and no row owes it.
+/// Its value is free, so a lie over it could be satisfied: the read is
+/// dropped by name (`Unanswered`, no member), and a satisfiable remainder
+/// is never decided on it (`refuse_dropped_answers`).
+fn unmembered_read(call: &Json, result_term: &Json) -> DroppedAmbientPost {
+    DroppedAmbientPost {
+        source_symbol: call
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<unknown-call>")
+            .to_string(),
+        target_cid: String::new(),
+        member_cid: String::new(),
+        reason: DroppedAmbientPostReason::Unanswered,
+        spelling: compact_json(result_term),
+    }
+}
+
 fn linked_ambient_post_instances_for_inv(
     inv: &Json,
     ambient: &[AmbientPost],
 ) -> AmbientPostInstances {
-    // Owed entries answer nothing: they matter only to a read reached through
-    // a contract something answers.
+    // Owed entries answer nothing: the claim's own read of one is that
+    // member's row, and a read of one reached through a joined contract is
+    // dropped.
     let is_owed = |post: &AmbientPost| post.refusal.as_ref().is_some_and(|r| r.is_owed());
+    let mut callsites = Vec::new();
+    collect_unquantified_ctor_terms(inv, &mut callsites);
+    callsites.retain(is_call_result_term);
+    if callsites.is_empty() {
+        return AmbientPostInstances::default();
+    }
     // A dispatched member is owed as it stands and answered where a read
-    // binds its receiver's class (step 8).
+    // binds its receiver's class (step 8). Where every entry is owed, no
+    // contract answers anything: the claim's own read of an owed site is
+    // that member's row, and a read at a site with no member is a named
+    // drop (`unmembered_read`), as in the join below.
     if ambient
         .iter()
         .all(|post| is_owed(post) && post.dispatch.is_none())
     {
-        return AmbientPostInstances::default();
-    }
-    let mut callsites = Vec::new();
-    collect_unquantified_ctor_terms(inv, &mut callsites);
-    if callsites.is_empty() {
-        return AmbientPostInstances::default();
+        let mut dropped = Vec::new();
+        for term in &callsites {
+            let entry = match call_result_parts(term) {
+                Some((call, site_cid)) => {
+                    if !answers_at(ambient, site_cid, Some(call)).is_empty() {
+                        continue;
+                    }
+                    unmembered_read(call, term)
+                }
+                None => DroppedAmbientPost {
+                    source_symbol: "<unknown-call>".to_string(),
+                    target_cid: String::new(),
+                    member_cid: String::new(),
+                    reason: DroppedAmbientPostReason::CallTermDecodeFailed,
+                    spelling: compact_json(term),
+                },
+            };
+            if !dropped.contains(&entry) {
+                dropped.push(entry);
+            }
+        }
+        return AmbientPostInstances {
+            dropped,
+            ..AmbientPostInstances::default()
+        };
     }
 
     let mut kept = Vec::new();
@@ -8491,7 +8540,6 @@ fn linked_ambient_post_instances_for_inv(
     // it are joined; settled, it is read as it stands).
     let mut pending: std::collections::VecDeque<(Json, Vec<String>, bool)> = callsites
         .into_iter()
-        .filter(is_call_result_term)
         .map(|term| (term, Vec::new(), false))
         .collect();
     let mut read: std::collections::BTreeSet<String> =
@@ -8578,10 +8626,18 @@ fn linked_ambient_post_instances_for_inv(
             .chain(valued.iter())
             .collect();
         if answering.is_empty() {
-            // A site with no member at all is not a call another proof
-            // answers: a body the lift reduced states its result in the same
-            // post (`derived_equality_residue`), so nothing is owed there.
-            if !through.is_empty() {
+            // Nothing answers the read. A site with no member at all is owed
+            // by no row and answered by no proof, so its value is free
+            // wherever it is read: a named drop, never silence
+            // (`unmembered_read`). The claim's own read of an owed site is
+            // that member's row; a read of one reached through a joined
+            // contract is dropped.
+            if at_site.is_empty() {
+                let entry = unmembered_read(call, result_term);
+                if !dropped.contains(&entry) {
+                    dropped.push(entry);
+                }
+            } else if !through.is_empty() {
                 for post in at_site {
                     dropped.push(DroppedAmbientPost {
                         source_symbol: post.binding.source_symbol.clone(),
@@ -9019,9 +9075,8 @@ fn with_ambient_posts_with_instances(
     inv: Json,
     ambient: &[AmbientPost],
 ) -> (Json, AmbientPostInstances) {
-    if ambient.is_empty() {
-        return (inv, AmbientPostInstances::default());
-    }
+    // No early return on an empty ambient: a read at a site with no member
+    // is a named drop there too (`unmembered_read`).
     let partition = linked_ambient_post_instances_for_inv(&inv, ambient);
     debug!(
         ambient_posts = ambient.len(),
@@ -15687,13 +15742,57 @@ mod tests {
 
     #[test]
     fn the_join_reads_the_site_never_the_call_spelling() {
-        // Same call spelling, another occurrence: nothing joins there.
+        // Same call spelling, another occurrence: nothing joins there. The
+        // site holds no member, so the read is a named drop, never a free
+        // value (`unmembered_read`).
         let partition = linked_ambient_post_instances_for_inv(
             &ident_claim(4, "blake3-512:another-site"),
             &[ident_vendor_post()],
         );
         assert!(partition.kept.is_empty(), "{partition:?}");
-        assert!(partition.dropped.is_empty(), "{partition:?}");
+        assert_eq!(partition.dropped.len(), 1, "{partition:?}");
+        assert_eq!(partition.dropped[0].reason, DroppedAmbientPostReason::Unanswered);
+        assert!(partition.dropped[0].member_cid.is_empty(), "{partition:?}");
+    }
+
+    /// #7757 (audit H5): a call result at a site that holds no member is
+    /// answered by no proof and owed by no row. Its value is free, so a claim
+    /// over it never discharges: not beside a contract answering another
+    /// site, not beside owed members only, not with no member anywhere.
+    /// Neither the lie (`== 4`) nor `== 3` discharges.
+    #[test]
+    fn a_claim_over_a_call_result_with_no_member_never_discharges() {
+        let elsewhere = "blake3-512:no-member-site";
+        let answered_elsewhere = vec![ident_vendor_post()];
+        let owed_only = vec![owed_post(
+            "python:m.g",
+            "g-member-cid",
+            JOIN_SITE,
+            DroppedAmbientPostReason::Unanswered,
+        )];
+        let nothing: Vec<AmbientPost> = Vec::new();
+        let ambients: [&[AmbientPost]; 3] = [
+            answered_elsewhere.as_slice(),
+            owed_only.as_slice(),
+            nothing.as_slice(),
+        ];
+        for ambient in ambients {
+            let partition =
+                linked_ambient_post_instances_for_inv(&ident_claim(4, elsewhere), ambient);
+            assert!(partition.kept.is_empty(), "{partition:?}");
+            assert_eq!(partition.dropped.len(), 1, "{partition:?}");
+            assert_eq!(partition.dropped[0].reason, DroppedAmbientPostReason::Unanswered);
+            assert_eq!(partition.dropped[0].source_symbol, "call:ident");
+            for rhs in [3, 4] {
+                let result = prove_joined(ident_claim(rhs, elsewhere), ambient);
+                assert_ne!(
+                    result.verdict,
+                    ObligationVerdict::Discharged,
+                    "ident(3) == {rhs} at a site with no member: {}",
+                    result.reason
+                );
+            }
+        }
     }
 
     #[test]
