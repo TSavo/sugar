@@ -5,7 +5,7 @@
 and ``super().__new__`` in a ``type`` subclass reaches ``type.__new__``: in
 each the order after ``__class__`` holds only builtins.  The lift used to
 answer both by the floor (dict's mutation of the receiver, with ``None`` kept
-apart; a ``RuntimeClassValue`` over the namespace), beside the dispatched
+apart; a class value over the namespace), beside the dispatched
 call the same lookup takes through any source class.  Now each is the one
 dispatched call after ``__class__``; with no workspace root it is the one
 unanswered call (``super.<name>``), owed, both faces standing.  What the
@@ -22,7 +22,6 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ObjectValue,
     ReceiverOwnedMutationResult,
-    RuntimeClassValue,
     StringValue,
     TermValue,
     TupleValue,
@@ -130,5 +129,4 @@ def test_super_new_into_type_builds_no_class_here() -> None:
         blame="type-new-site",
     )
 
-    call = _the_one_call(outcome, "__new__")
-    assert not isinstance(call, RuntimeClassValue)
+    _the_one_call(outcome, "__new__")

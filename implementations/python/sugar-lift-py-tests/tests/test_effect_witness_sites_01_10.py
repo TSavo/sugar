@@ -53,14 +53,14 @@ def test_first_ten_effect_sites_have_explicit_witnesses() -> None:
 def test_the_recognizer_catches_an_effect_built_without_a_witness() -> None:
     """Lying twin: an effect with no witness, or one spreading something that
     is not the evidence bundle, is named."""
-    bare = "AppendRuntimeEffect('reason', runtime_operand=operand)\n"
+    bare = "KeyErrorRuntimeEffect('reason', runtime_operand=operand)\n"
     assert _missing(bare, "bare.py") == ["bare.py:1"]
-    other_spread = "AppendRuntimeEffect('reason', **fields(operand))\n"
+    other_spread = "KeyErrorRuntimeEffect('reason', **fields(operand))\n"
     assert _missing(other_spread, "spread.py") == ["spread.py:1"]
-    explicit = "AppendRuntimeEffect('reason', operand, witness=w)\n"
+    explicit = "KeyErrorRuntimeEffect('reason', operand, witness=w)\n"
     assert _missing(explicit, "explicit.py") == []
     bundle = (
-        "AppendRuntimeEffect('reason', "
-        "**runtime_effect_evidence('py.append', index, site))\n"
+        "KeyErrorRuntimeEffect('reason', "
+        "**runtime_effect_evidence('py.subscript', index, site))\n"
     )
     assert _missing(bundle, "bundle.py") == []

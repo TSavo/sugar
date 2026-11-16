@@ -3,10 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 
-from .closed_operation_witness import (
-    ClosedSemanticOperationWitness,
-    PythonRuntimeIdentity,
-)
+from .closed_operation_witness import PythonRuntimeIdentity
 from .floor_value import FloorValue
 
 
@@ -564,14 +561,6 @@ class BuiltinSemanticCallable(FloorValue):
             type_name,
             ctor("python:type", [str_const(type_name)]),
             site,
-        )
-
-    def witness_for(self, operands, result) -> ClosedSemanticOperationWitness:
-        return ClosedSemanticOperationWitness.mint(
-            self.runtime_identity,
-            self.operation,
-            tuple(value.to_term(owner=self.operation) for value in operands),
-            result.to_term(owner=self.operation),
         )
 
 
