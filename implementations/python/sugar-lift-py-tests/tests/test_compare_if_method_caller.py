@@ -40,10 +40,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect import ExpectationNotMetEffect
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
-    GuardedReturn,
     ObjectValue,
-    ReturnValue,
-    TermValue,
 )
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -156,56 +153,6 @@ def _assert_completed_call(outcome) -> CallSiteValue:
         outcome.completed_value(), CallSiteValue
     ), outcome.completed_value()
     return outcome.completed_value()
-
-
-def _returned_term(completed: Completed) -> TermValue:
-    value = completed.value
-    if isinstance(value, CallSiteValue):
-        value = value._dig_floor_or_none(None, owner="test_compare_if_method_caller")
-        assert value is not None
-        returns = tuple(
-            entry
-            for entry in getattr(value, "statements", ())
-            if isinstance(entry, (ReturnValue, GuardedReturn))
-        )
-        if returns:
-            assert len(returns) == 1
-            value = returns[0]
-    if isinstance(value, GuardedReturn):
-        value = value.value
-    if isinstance(value, ReturnValue):
-        value = value.value
-    # Method producer_outcome may wrap the body in CallSiteValue again.
-    if isinstance(value, CallSiteValue):
-        value = value._dig_floor_or_none(None, owner="test_compare_if_method_caller")
-        assert value is not None
-        returns = tuple(
-            entry
-            for entry in getattr(value, "statements", ())
-            if isinstance(entry, (ReturnValue, GuardedReturn))
-        )
-        if returns:
-            value = returns[0]
-            if isinstance(value, GuardedReturn):
-                value = value.value
-            if isinstance(value, ReturnValue):
-                value = value.value
-    # UniverseValue / BlockValue from formal discharge.
-    record = getattr(value, "record", None)
-    if record is not None:
-        returns = tuple(
-            entry
-            for entry in record.statements
-            if isinstance(entry, (ReturnValue, GuardedReturn))
-        )
-        assert len(returns) == 1, record.statements
-        value = returns[0]
-        if isinstance(value, GuardedReturn):
-            value = value.value
-        if isinstance(value, ReturnValue):
-            value = value.value
-    assert isinstance(value, TermValue), value
-    return value
 
 
 def _ordering_halts(outcome: ExitSet) -> tuple[Halted, ...]:

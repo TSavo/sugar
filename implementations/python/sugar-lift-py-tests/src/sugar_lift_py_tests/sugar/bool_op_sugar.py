@@ -30,9 +30,8 @@ def truth_of(value, site, *, owner: str):
     Every truth question takes the operand's truth through here: ``a and b``
     / ``a or b`` (on each non-final operand), ``not x``, the negation in
     ``a != b`` and ``a not in b``, an ``if`` / ``while`` / ``assert`` /
-    conditional-expression test, each arm of a guarded value
-    (``GuardedValue.truth``), and a ground call
-    result's dug body (``CallSiteValue._construct_decidable_truth``).
+    conditional-expression test, and each arm of a guarded value
+    (``GuardedValue.truth``).
 
     The value is consumed through the one operand door (``consume_operands``):
     a walrus or a callee's store it carries rides the truth, and the rule

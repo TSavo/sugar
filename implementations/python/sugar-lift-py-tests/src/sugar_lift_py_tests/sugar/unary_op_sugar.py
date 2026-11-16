@@ -113,22 +113,12 @@ class UnaryOpSugar(ConstructedTermSugar):
             # `not x` = not bool(x): only a completed truthiness may be negated.
             def project_not(value):
                 from sugar_lift_py_tests.floor.block_value import BlockValue
-                from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
                 from sugar_lift_py_tests.floor.return_value import ReturnValue
 
-                # Method calls with authenticated bodies
-                # (``not self._check_type(e)`` / ``not self.matches(e)``) dig
-                # the body before truth refusal. Opaque CallSiteValue is neither
-                # bool nor TypeError — dig is the sole door for source-visible
-                # method returns on returned-manager exit faces.
-                if isinstance(value, CallSiteValue) and value.body is not None:
-                    dug = value._dig_floor_or_none(
-                        ctx, owner="UnaryOpSugar.not method body"
-                    )
-                    if dug is not None:
-                        value = dug
-                # Method bodies dig to BlockValue; truth rides the returned floor
-                # (side-effect assigns precede the return).
+                # A call's result is its coordinate: no callee body is applied
+                # at lift (#7757 step 6), so ``not f()`` takes the call's own
+                # truth below.  A block value's truth rides its one returned
+                # floor (side-effect assigns precede the return).
                 if isinstance(value, BlockValue) and not value.fall_through:
                     returns = [
                         statement.value

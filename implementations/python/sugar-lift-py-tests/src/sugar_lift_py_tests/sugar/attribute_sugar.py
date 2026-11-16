@@ -66,21 +66,19 @@ class AttributeSugar(ConstructedTermSugar):
 
         1. Formal receiver → its ``field:`` input where the field is one
            (``receiver_dispatch.receiver_field_read``), else the one
-           undecided read of arm 3: a read is ``__getattribute__`` then
+           undecided read of arm 2: a read is ``__getattribute__`` then
            ``__getattr__`` and the descriptors they find, a protocol no one
            dispatched method states, so it waits on no caller's actual and
            is no dispatched call, its value keyed per evaluation
            (``floor_value.undecided_attribute_result``, #7757)
-        2. Authenticated CallSiteValue body → ``force_floor`` then attribute
-        3. Else Floor ``receiver.attribute(name, site, ctx)`` (a property
+        2. Else Floor ``receiver.attribute(name, site, ctx)`` (a property
            getter applies under the reading caller's ``ctx``; a symbolic
            receiver is the same two-faced undecided read,
-           ``floor_value.undecided_attribute_result``)
+           ``floor_value.undecided_attribute_result``; a call's result is its
+           coordinate, never its callee's body, #7757 step 6)
         Callers that already hold a reduced receiver (AugAssign) enter here
         without re-evaluating the receiver expression.
         """
-        from sugar_lift_py_tests.floor import CallSiteValue
-
         formal_coordinate = getattr(receiver, "formal_coordinate", None)
         if formal_coordinate is not None:
             # A field of a parameter whose class and fields are inputs of
@@ -92,22 +90,11 @@ class AttributeSugar(ConstructedTermSugar):
             field_read = receiver_field_read(receiver, name, site)
             if field_read is not None:
                 return field_read
-            # The formal's own read, arm 3: no import receipt or call frame
+            # The formal's own read, arm 2: no import receipt or call frame
             # names a parameter.
             from sugar_lift_py_tests.floor.object_identity import arrived_outcome
 
             return arrived_outcome(receiver.attribute(name, site, ctx), site)
-
-        if (
-            isinstance(receiver, CallSiteValue)
-            and receiver.body is not None
-            and receiver.source_call_frame_cid is not None
-        ):
-            receiver = receiver.force_floor(
-                ctx,
-                owner="authenticated attribute receiver",
-                project_callsite=False,
-            )
 
         # Class-definition construction can cache this sugar before its
         # receipt-backed import member is seated.  At reduction, consume only

@@ -62,16 +62,3 @@ def test_one_evaluation_reads_the_same_result_twice(tmp_path):
     first, second = _terms(value)
     assert first.name == "python:call_result"
     assert first == second
-
-
-def test_the_callee_post_is_applied_at_the_result_term(tmp_path):
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-
-    source = "def g():\n    return (1, 2)\ndef f():\n    return [g()]\n"
-    (value,), _halts = _split(tmp_path, source)
-    (element,) = value.elements
-    assert type(element) is CallSiteValue
-    residue = element.derived_equality_residue(None)
-    assert residue is not None
-    assert residue.args[0] == element.to_term(owner="test")
-    assert residue.args[0].name == "python:call_result"
