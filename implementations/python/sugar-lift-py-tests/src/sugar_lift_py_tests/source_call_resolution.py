@@ -1127,17 +1127,25 @@ def iterates_without_raising(value) -> bool:
 
 
 def _hashable_members(value) -> bool:
-    """Iterating ``value`` yields only hashable members (``set(value)``)."""
+    """Iterating ``value`` yields only hashable members (``set(value)``).
+
+    A ``str``/``bytes``/``set``/``dict`` answers by its own type, reading no
+    member: what a set or a dict's keys hold is hashable whatever it holds
+    now.  A list or tuple answers only by its members, so a list whose
+    contents are not current (``object_identity.contents_stale``) answers
+    nothing: the members it arrived with are not its contents now (#7757
+    H9)."""
     from .floor.bytes_value import BytesValue
     from .floor.dict_value import DictValue
     from .floor.list_value import ListValue
+    from .floor.object_identity import contents_stale
     from .floor.set_value import SetValue
     from .floor.string_value import StringValue
     from .floor.tuple_value import TupleValue
 
     if type(value) in (StringValue, BytesValue, SetValue, DictValue):
         return True
-    if type(value) in (ListValue, TupleValue):
+    if type(value) in (ListValue, TupleValue) and not contents_stale(value):
         return all(_scalar(element) for element in value.elements)
     return False
 
@@ -1154,6 +1162,13 @@ def _finite_members(value):
     if type(value) in (ListValue, TupleValue, SetValue) and not contents_stale(value):
         return tuple(value.elements)
     return None
+
+
+def _all_builtin_typed(values) -> bool:
+    """Every value is a decided builtin all the way down
+    (``builtin_typed_value``): each dunder a builtin runs on it is
+    CPython's own."""
+    return all(builtin_typed_value(value) for value in values)
 
 
 def _comparable(members) -> bool:
@@ -1173,7 +1188,16 @@ def builtin_call_total(language_callee, arg_values, keyword_names=()) -> bool:
     operands, or, for the builtins that run no code of their operands
     (``object()``, ``id``, ``callable``, one-operand ``type``), over any.
     Anything not listed may raise; a builtin that runs an operand's dunder
-    (``hash``, ``len``, ``iter``) is listed only over decided operands."""
+    (``hash``, ``len``, ``iter``) is listed only over decided operands.
+
+    Each line states its own operand condition, so every reader asks the
+    same question (``builtin_dunder_call``, ``_unhandled_construct``,
+    ``call_site_sugar._builtin_law_answers``): ``print``, ``str``,
+    ``bool`` and ``repr`` run each operand's ``__str__``/``__repr__``/
+    ``__bool__``/``__len__``, and ``all``/``any`` each member's
+    ``__bool__``, so they are listed only over an operand that is a decided
+    builtin all the way down (``builtin_typed_value``), never "over any
+    operand" (#7757 L2)."""
     from sugar_source_tree.nodes import LanguageCallee as L
 
     from .floor.dict_value import DictValue
@@ -1183,22 +1207,19 @@ def builtin_call_total(language_callee, arg_values, keyword_names=()) -> bool:
     args = tuple(arg_values)
     n = len(args)
     if language_callee is L.BUILTIN_PRINT:
-        return True
+        return _all_builtin_typed(args)
     if language_callee in (L.BUILTIN_STR, L.BUILTIN_BOOL):
-        return n <= 1
+        return n <= 1 and _all_builtin_typed(args)
     if language_callee is L.BUILTIN_REPR:
-        return n == 1
+        return n == 1 and _all_builtin_typed(args)
     if language_callee is L.BUILTIN_LEN:
         return n == 1 and _iterable(args[0])
     if language_callee in (L.BUILTIN_LIST, L.BUILTIN_TUPLE):
         return n == 0 or (n == 1 and _iterable(args[0]))
-    if language_callee in (
-        L.BUILTIN_ITER,
-        L.BUILTIN_ENUMERATE,
-        L.BUILTIN_ALL,
-        L.BUILTIN_ANY,
-    ):
+    if language_callee in (L.BUILTIN_ITER, L.BUILTIN_ENUMERATE):
         return n == 1 and _iterable(args[0])
+    if language_callee in (L.BUILTIN_ALL, L.BUILTIN_ANY):
+        return n == 1 and _iterable(args[0]) and _all_builtin_typed(args)
     if language_callee is L.BUILTIN_ZIP:
         return all(_iterable(value) for value in args)
     if language_callee in (L.BUILTIN_SET, L.BUILTIN_FROZENSET):
@@ -1372,11 +1393,19 @@ def _builtin_container(value) -> bool:
 def builtin_typed_value(value, depth=0, *, shallow=False) -> bool:
     """Whether a floor value is a decided builtin all the way down (or, with
     ``shallow``, whose own type is), so every dunder a builtin invokes on it
-    is CPython's own."""
+    is CPython's own.
+
+    ``shallow`` reads only the value's own type, which a container keeps
+    whatever it holds.  "All the way down" reads its members, so a
+    ``list``/``dict``/``set`` whose contents are not current
+    (``object_identity.contents_stale``) is not decided: the members it
+    arrived with are not its contents now, and ``str(xs)`` over it runs the
+    ``__repr__`` of whatever it holds (#7757 H9)."""
     from .floor.bytes_value import BytesValue
     from .floor.dict_value import DictValue
     from .floor.list_value import ListValue
     from .floor.none_value import NoneValue
+    from .floor.object_identity import contents_stale
     from .floor.set_value import SetValue
     from .floor.string_value import StringValue
     from .floor.term_value import TermValue
@@ -1397,6 +1426,8 @@ def builtin_typed_value(value, depth=0, *, shallow=False) -> bool:
         return True
     if shallow and type(value) in (ListValue, TupleValue, SetValue, DictValue):
         return True
+    if contents_stale(value):
+        return False
     if type(value) in (ListValue, TupleValue, SetValue):
         return all(builtin_typed_value(e, depth + 1) for e in value.elements)
     if type(value) is DictValue:
