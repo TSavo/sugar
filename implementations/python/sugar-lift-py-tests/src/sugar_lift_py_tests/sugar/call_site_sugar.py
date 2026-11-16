@@ -1873,7 +1873,7 @@ def global_read_at_call(callee, name: str, ctx, *, module_site):
     (``global_input_keys``) holds a value in the caller's ``ctx``, and all of
     them state one term.  None otherwise.  What ``global_value_at_call``
     states as the input's term, and what the alias rule asks of the call
-    with its actuals (``object_identity.actuals_share_an_object``,
+    with its actuals (``object_identity.shared_pairs``,
     ``lambda_callable.definition_edge_call``): an actual that is, or holds,
     the object the callee reads as the global binds that input's object
     too."""

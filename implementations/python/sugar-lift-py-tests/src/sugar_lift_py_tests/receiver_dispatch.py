@@ -40,15 +40,38 @@ DISPATCH_TARGET_PREFIX = "dispatch:"
 #: (``consistency::DISPATCH_READ_MARK``).  No Python name starts with ``.``.
 DISPATCH_READ_MARK = "."
 
-#: The mark after which a dispatched call's member symbol names the operands
-#: that may share an object (``object_identity.shared_pairs``):
-#: ``python:dispatch:<m>#0~1,0~k`` -- each pair by its argument keys (a
-#: position, or a keyword), joined by ``DISPATCH_SHARED_PAIR``.  Which
-#: function runs is decided at prove, so it is prove that asks whether that
-#: function may change the shared object through either
+#: The mark after which a call's member symbol names the operands that may
+#: share an object (``object_identity.shared_pairs``, ``shares_mark``):
+#: ``python:dispatch:<m>#0~1,0~k`` for a dispatched call,
+#: ``python:<mod>.<f>#0~1,0~global:G`` for a same-file definition's
+#: (``lambda_callable.definition_edge_call``) -- each pair by its keys (a
+#: position, a keyword, or a ``cell:``/``global:`` input), joined by
+#: ``DISPATCH_SHARED_PAIR``.  Whether the callee changes the shared object
+#: through either is its contract's to state (``python:leaves``), so it is
+#: prove that asks, for every call alike
 #: (``consistency::DISPATCH_SHARES_MARK``).  No Python name holds ``#``.
 DISPATCH_SHARES_MARK = "#"
 DISPATCH_SHARED_PAIR = "~"
+
+
+def shares_mark(keyed) -> str:
+    """The suffix of a call's member symbol naming each pair of its operands
+    that may share an object (``DISPATCH_SHARES_MARK``), or ``""`` where none
+    may.  ``keyed`` is ``((key, value), ...)``: every value the call binds a
+    formal or an input of the callee's contract to, each under the key prove
+    reads it by.  The one place the pairs are spelled, for a dispatched call
+    and a same-file definition's call alike (#7757 step 9: the alias risk is
+    decided at prove, from the callee's contract)."""
+    from sugar_lift_py_tests.floor.object_identity import shared_pairs
+
+    keyed = tuple(keyed)
+    pairs = shared_pairs(tuple(value for _key, value in keyed))
+    if not pairs:
+        return ""
+    return DISPATCH_SHARES_MARK + ",".join(
+        keyed[left][0] + DISPATCH_SHARED_PAIR + keyed[right][0]
+        for left, right in pairs
+    )
 
 #: ``python:instance(<class symbol>, <field>...)``: a decided instance's
 #: class, as a caller binds a class input to it; the fields are every name
@@ -818,19 +841,16 @@ def dispatch_edge_call(
     function changes the shared object through neither formal: a store
     through one would leave the other's entry value standing at prove, a
     lie.  That is the alias rule's own test (``object_identity.
-    shared_pairs``), the one a same-file definition's edge asks
-    (``lambda_callable.definition_edge_call``), with the callee's half
-    decided where the callee is known: which function runs is decided at
-    prove, on the class a caller binds, so the member's symbol names every
-    pair that may share (``DISPATCH_SHARES_MARK``) and prove joins the
-    function it resolves only where its contract states it leaves both
-    formals unchanged (``python:leaves``, ``tree_enumerate.
-    parameters_left_unchanged``) or the operand's class holds nothing a
-    call could change; anything else stays owed
-    (``consistency::dispatch_answer``)."""
+    shared_pairs``), spelled on the member by the one ``shares_mark`` a
+    same-file definition's edge spells it with
+    (``lambda_callable.definition_edge_call``): the member's symbol names
+    every pair that may share and prove joins the function it resolves only
+    where its contract states it leaves both formals unchanged
+    (``python:leaves``, ``tree_enumerate.parameters_left_unchanged``) or the
+    operand's class holds nothing a call could change; anything else stays
+    owed (``consistency::dispatch_answer``)."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.floor.object_identity import shared_pairs
     from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
@@ -839,19 +859,13 @@ def dispatch_edge_call(
     # Each operand by its argument key: the receiver ``0``, each positional
     # actual by its position, each keyword actual by its keyword (the keys
     # its ``py.class`` rides under, ``class_arguments``).
-    keys = (
-        "0",
-        *(str(index + 1) for index in range(len(positional))),
-        *(keyword for keyword, _value in kw_values),
-    )
-    pairs = shared_pairs(
-        (receiver, *positional, *(value for _name, value in kw_values))
-    )
-    symbol = "python:" + target
-    if pairs:
-        symbol += DISPATCH_SHARES_MARK + ",".join(
-            keys[left] + DISPATCH_SHARED_PAIR + keys[right] for left, right in pairs
+    symbol = "python:" + target + shares_mark(
+        (
+            ("0", receiver),
+            *((str(index + 1), value) for index, value in enumerate(positional)),
+            *kw_values,
         )
+    )
     arguments = (
         [receiver.to_term(owner=owner)]
         + [value.to_term(owner=owner) for value in positional]

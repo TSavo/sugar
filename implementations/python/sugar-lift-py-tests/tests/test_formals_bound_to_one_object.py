@@ -55,30 +55,49 @@ def test_two_objects_keep_the_callers_currency():
 
 
 def test_a_call_joined_at_prove_asks_the_alias_rule_s_own_test():
-    """``definition_edge_call`` joins no contract to a call that binds one
-    object to two formals: the same test as ``as_bound_formals``."""
-    from sugar_lift_py_tests.floor.object_identity import actuals_share_an_object
+    """Every call names on its member the pairs of operands that may share
+    an object (``shared_pairs``): the same test as ``as_bound_formals``."""
+    from sugar_lift_py_tests.floor.object_identity import shared_pairs
 
     xs = ListValue((TermValue(1),), allocation="xs-site")
     ys = ListValue((), allocation="ys-site")
-    assert actuals_share_an_object((xs, xs))
-    assert actuals_share_an_object((xs, TupleValue((xs,))))
-    assert not actuals_share_an_object((xs, ys))
-    assert not actuals_share_an_object((TermValue(3), TermValue(3)))
-    assert not actuals_share_an_object((xs,))
+    assert shared_pairs((xs, xs)) == ((0, 1),)
+    assert shared_pairs((xs, TupleValue((xs,)))) == ((0, 1),)
+    assert shared_pairs((xs, ys)) == ()
+    assert shared_pairs((TermValue(3), TermValue(3))) == ()
+    assert shared_pairs((xs,)) == ()
 
 
-def test_a_shared_object_the_callee_changes_through_neither_formal_is_no_alias():
-    """The test asks only of a pair the callee may change one of
-    (``changes``): one object read twice is one value."""
-    from sugar_lift_py_tests.floor.object_identity import actuals_share_an_object
+def test_the_pairs_ride_on_the_member_under_the_keys_prove_reads():
+    """``receiver_dispatch.shares_mark``: the one speller of the pairs a
+    member names, for a dispatched call and a same-file definition's call
+    alike; whether the callee changes either is decided at prove from its
+    contract's ``python:leaves`` (``consistency::shared_operands_left_
+    unchanged``), never at lift."""
+    from sugar_lift_py_tests.receiver_dispatch import shares_mark
 
     xs = ListValue((TermValue(1),), allocation="xs-site")
-    assert not actuals_share_an_object((xs, xs), (False, False))
-    assert actuals_share_an_object((xs, xs), (True, False))
-    assert actuals_share_an_object((xs, xs), (False, True))
-    assert not actuals_share_an_object((xs, TupleValue((xs,))), (False, False))
-    assert actuals_share_an_object((xs, TupleValue((xs,))), (False, True))
+    ys = ListValue((), allocation="ys-site")
+    assert shares_mark((("0", xs), ("1", xs))) == "#0~1"
+    assert shares_mark((("0", xs), ("b", ys), ("global:G", xs))) == "#0~global:G"
+    assert shares_mark((("0", xs), ("1", ys))) == ""
+
+
+def test_the_contract_states_each_formal_and_input_it_leaves():
+    """``tree_enumerate.parameters_left_unchanged``: the callee's contract
+    states each parameter its body never changes nor rebinds, and each
+    ``cell:``/``global:`` input it never changes where it runs no code this
+    body does not see -- what prove asks of a call on shared operands."""
+    from sugar_lift_py_tests.tree_enumerate import parameters_left_unchanged
+
+    mul = _definition("def mul(a, b):\n    return a * b\n", "mul")
+    assert parameters_left_unchanged(mul, ("a", "b", "global:G")) == (
+        "a",
+        "b",
+        "global:G",
+    )
+    grow = _definition("def grow(a, b):\n    a.append(1)\n    return len(b)\n", "grow")
+    assert parameters_left_unchanged(grow, ("a", "b", "global:G")) == ()
 
 
 def _definition(source: str, name: str):
@@ -214,8 +233,9 @@ def test_a_post_relating_two_formals_is_never_applied_to_one_object(
 ):
     """``diff(xs, xs)`` is 0.  The callee's contract states ``len(a) + 1 -
     len(b)`` over two objects' entry values; read with both standing as one
-    opaque object it would say 1.  The call is joined to no contract
-    (``actuals_share_an_object``), so the lie is never decided."""
+    opaque object it would say 1.  ``diff``'s contract states no
+    ``python:leaves("a")``, so prove joins it to nothing (the pair on the
+    member, ``shares_mark``), and the lie is never decided."""
     _never_lies(
         tmp_path, "related", _TWO_FORMALS_RELATED_AFTER_A_STORE, true="0", false="1"
     )
@@ -240,8 +260,8 @@ def test_grow():
 
 def test_an_append_a_formal_is_handed_to_is_seen_through_the_other(tmp_path: Path):
     """``grow(xs, xs)`` where ``grow`` hands ``a`` to a call that appends:
-    the callee changes the object through ``a`` (``_names_a_call_may_change``),
-    so ``len(b)`` is never the 0 the contents before the call would say."""
+    the callee's contract states no ``python:leaves("a")``, so ``len(b)`` is
+    never the 0 the contents before the call would say."""
     _never_lies(
         tmp_path,
         "handed",
@@ -269,8 +289,9 @@ def test_one_value_bound_to_two_formals_the_callee_never_changes_is_decided(
     tmp_path: Path,
 ):
     """``mul(n, n)`` in ``square``'s own proof binds one parameter to both
-    formals, and ``mul`` changes neither: the call is ``mul``'s contract's,
-    so ``square(3) == 9`` is decided both ways.
+    formals, and ``mul``'s contract states it leaves both
+    (``python:leaves``): prove joins the call to it, so ``square(3) == 9``
+    is decided both ways.
 
     ``mul``'s own row still owes its ``a * b``: with no caller in its own
     proof, nothing binds ``a`` and ``b``, so the whole source reads ``open``
@@ -322,7 +343,7 @@ def test_a_global_the_callee_reads_is_asked_with_the_actuals():
     it shares an object with the global the callee reads; two inputs, or an
     input and a fresh list, do not."""
     from sugar_lift_py_tests.contract_input import ContractInputV1
-    from sugar_lift_py_tests.floor.object_identity import actuals_share_an_object
+    from sugar_lift_py_tests.floor.object_identity import shared_pairs
 
     g = ContractInputV1.mint(
         owner_definition_cid="test", input_kind="global", name="G"
@@ -334,12 +355,12 @@ def test_a_global_the_callee_reads_is_asked_with_the_actuals():
         owner_definition_cid="test", input_kind="cell", name="G"
     ).value()
     xs = ListValue((), allocation="xs-site")
-    assert actuals_share_an_object((g, g))
-    assert actuals_share_an_object((TupleValue((g,)), g))
-    assert actuals_share_an_object((cell, cell))
-    assert not actuals_share_an_object((g, h))
-    assert not actuals_share_an_object((g, cell))
-    assert not actuals_share_an_object((xs, g))
+    assert shared_pairs((g, g))
+    assert shared_pairs((TupleValue((g,)), g))
+    assert shared_pairs((cell, cell))
+    assert not shared_pairs((g, h))
+    assert not shared_pairs((g, cell))
+    assert not shared_pairs((xs, g))
 
 
 _LIST_THROUGH_A_FORMAL_AND_A_GLOBAL = """\
@@ -400,24 +421,21 @@ def test_a_dispatched_call_asks_the_alias_rule_of_its_receiver():
     of ``p``: it is held by ``p``, never by another field of ``p``.  A value
     that arrived names its object by its arrival."""
     from sugar_lift_py_tests.contract_input import ContractInputV1
-    from sugar_lift_py_tests.floor.object_identity import (
-        _reaches,
-        actuals_share_an_object,
-    )
+    from sugar_lift_py_tests.floor.object_identity import _reaches, shared_pairs
 
     def field(name):
         return ContractInputV1.mint(
             owner_definition_cid="m", input_kind="field", name=name
         ).value()
 
-    assert actuals_share_an_object((field("self.items"), field("self.items")))
-    assert not actuals_share_an_object((field("self.items"), field("self.other")))
+    assert shared_pairs((field("self.items"), field("self.items")))
+    assert not shared_pairs((field("self.items"), field("self.other")))
     assert _reaches({(("formal", "self"),)}, {(("formal", "self"), "items")})
     assert not _reaches({(("formal", "self"),)}, {(("formal", "other"), "items")})
     xs = ListValue((), allocation=None, arrival="read-xs")
     ys = ListValue((), allocation=None, arrival="read-ys")
-    assert actuals_share_an_object((xs, TupleValue((xs,))))
-    assert not actuals_share_an_object((xs, ys))
+    assert shared_pairs((xs, TupleValue((xs,))))
+    assert not shared_pairs((xs, ys))
 
 
 _RECEIVER_PASSED_TO_ITS_OWN_METHOD = """\

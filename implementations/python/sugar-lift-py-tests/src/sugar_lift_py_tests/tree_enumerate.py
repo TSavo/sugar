@@ -1453,18 +1453,23 @@ def reduction_rows(outcome, *, owner, blame, def_memento, definition):
 
 
 def parameters_left_unchanged(definition, formals) -> tuple:
-    """The parameters among ``formals`` whose object a call of
-    ``definition`` never changes and whose binding it never rebinds: read
-    off its body by the alias rule's one question of a callee
-    (``nodes._names_a_call_may_change``, #7757 step 7).  The contract states
-    each (``python:leaves``, ``exit_arms_payload_rows``), so prove can ask
-    it of the function a dispatched call resolves to: a call binding one
-    object to two formals neither of which the function changes is that
-    contract's call (``consistency::dispatch_answer``, step 8).  None for a
-    contract that is no function's (a class's: ``definition`` None), a
-    generator or ``async def``, or anything the body is not read for
-    (``EVERY_NAME``); a contract input (``class:``, ``global:``, ...) is no
-    parameter."""
+    """The formals among ``formals`` whose object a call of ``definition``
+    never changes and whose binding it never rebinds, read off its own body
+    (``nodes._names_a_call_may_change``, #7757 step 7): each parameter it
+    never changes, and each captured cell or module global input
+    (``cell:<n>``, ``global:<n>``) it never changes where it runs no code
+    this body does not see (``runs_unseen_code``: such code may change a
+    cell or global).  The contract states each (``python:leaves``,
+    ``exit_arms_payload_rows``): the one fact prove asks of the contract it
+    joins to a call whose operands may share an object, a dispatched call
+    and a same-file definition's alike (``consistency::shared_operands_
+    left_unchanged``, step 9; the owner's ruling of 2026-11-15: what the
+    caller needs from the callee is stated by the callee's contract).  None
+    for a contract that is no function's (a class's: ``definition`` None),
+    a generator or ``async def``, or anything the body is not read for
+    (``EVERY_NAME``); no other contract input (``class:``, ``field:``,
+    ``default:``) is stated."""
+    from sugar_lift_py_tests.contract_input import CELL_INPUT, GLOBAL_INPUT
     from sugar_source_tree.nodes import EVERY_NAME, _names_a_call_may_change
 
     if definition is None:
@@ -1472,10 +1477,20 @@ def parameters_left_unchanged(definition, formals) -> tuple:
     changed = _names_a_call_may_change(definition)
     if changed is EVERY_NAME:
         return ()
-    names, _runs_unseen_code = changed
-    return tuple(
-        formal for formal in formals if ":" not in formal and formal not in names
-    )
+    names, runs_unseen_code = changed
+    left = []
+    for formal in formals:
+        kind, colon, name = formal.partition(":")
+        if not colon:
+            if formal not in names:
+                left.append(formal)
+        elif (
+            kind in (CELL_INPUT, GLOBAL_INPUT)
+            and not runs_unseen_code
+            and name not in names
+        ):
+            left.append(formal)
+    return tuple(left)
 
 
 def function_contract_rows(fn, file_rel: str):

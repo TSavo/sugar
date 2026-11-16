@@ -27688,12 +27688,14 @@ def _names_a_call_may_change(definition):
     """``(names, runs_unseen_code)``: what a call of ``definition`` (a
     ``def`` or a lambda) may change, read off its body, or ``EVERY_NAME``
     (None) for a generator function or an ``async def`` (its body runs after
-    its call returned, ``_receiver_uses``) and for anything else.  The one
-    decision the alias rule asks of a callee
-    (``lambda_callable.definition_edge_call``, #7757 step 7): a call that
-    binds one object to two of the contract's formals or inputs lies only
-    where the contract states a change of that object through one of them
-    while it reads it through another.
+    its call returned, ``_receiver_uses``) and for anything else.  Read by
+    the definition's own contract only (``tree_enumerate.
+    parameters_left_unchanged``, stated as ``python:leaves``), never by a
+    caller: a call that binds one object to two of the contract's formals or
+    inputs lies only where the contract states a change of that object
+    through one of them while it reads it through another, and prove asks
+    that of the contract it joins (``consistency::shared_operands_left_
+    unchanged``, #7757 step 9).
 
     ``names`` are the parameters, captured cells and module globals whose
     object the body may change or whose binding it may rebind:
