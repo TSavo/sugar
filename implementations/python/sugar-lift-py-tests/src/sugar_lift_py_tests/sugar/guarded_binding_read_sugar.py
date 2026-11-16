@@ -97,9 +97,11 @@ def decided_loop_exit(state: LoopGuardedProjection, ctx):
     slot decided (``_decided_arm``): the other face is not taken here, and
     the guard the recurrence states the face by (``python.loop.exhausted``,
     the ``break``'s branch guard), which no input decides, is not stated on
-    a path that ran.  Undecided -- the recurrence, a context the loop's
-    publication did not reach -- the projection is read face by face under
-    each face's guard, as before."""
+    a path that ran.  A ``while`` run as its recurrence decides it too where
+    its symbolic item decided the test (``LoopRecurrenceSugar._recurrence``).
+    Undecided -- any other recurrence, a context the loop's publication did
+    not reach -- the projection is read face by face under each face's
+    guard, as before."""
     if state.target_cid is None:
         return None
     table = getattr(ctx, "ground_branch_results", None)

@@ -55,10 +55,44 @@ class LiveSymbolicItemV1:
     (``LoopRecurrenceSugar._leave_symbolic_item``), and ``guard``, the loop's
     ``BodyFallthrough`` guard -- an item is reached (a ``for``), or the
     test holds (a ``while``) -- under which the body's arms are the loop's
-    exits.  Under its negation the loop leaves as its recurrence."""
+    exits.  Under its negation the loop leaves as its recurrence.
+
+    ``test_sugar``: a ``while`` test the symbolic item evaluates before its
+    body, through the one truth rule a live item's test takes
+    (``LoopRecurrenceSugar._tested``), or None.  It is handed only where
+    the test reads no binding (``_symbolic_test_sugar``): there it has one
+    value at every item, so a truth the reduction decides for the symbolic
+    item is the truth at every item, and the item runs under that decided
+    truth in place of ``guard``.  The construction never decides it."""
 
     body_sugars: tuple[object, ...]
     guard: object
+    test_sugar: object = None
+
+
+def _reads_a_binding(expression) -> bool:
+    """Whether ``expression`` reads any binding: a name, or a reference the
+    temporal rewrite put in a name's place (an ``EvaluationRef``, a
+    ``FormalRef``, any ``*Ref``).  What it reads may differ from one item to
+    the next (a carried name, a name a call in the body may rebind), so its
+    value at the symbolic item is not its value at every item."""
+    return any(
+        node.kind == "Name" or node.kind.endswith("Ref") for node in expression.walk()
+    )
+
+
+def _symbolic_test_sugar(loop):
+    """The test the recurrence's symbolic item of ``loop`` evaluates
+    (``LiveSymbolicItemV1.test_sugar``): a ``while`` test that reads no
+    binding (``_reads_a_binding``: ``while True:``, ``while 1:``), whose
+    value is the same at every item; else None, and the item runs under the
+    test's slot guard, undecided.  Nothing about its truth is read here: the
+    reduction evaluates it (``LoopRecurrenceSugar._recurrence``)."""
+    from .nodes import While
+
+    if not isinstance(loop, While) or _reads_a_binding(loop.test):
+        return None
+    return loop.test.sugar()
 
 
 from .nodes import TargetPatternV1 as LiveForTargetPatternV1
@@ -748,10 +782,14 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         exhaustion_guard = atomic("python.loop.exhausted", [str_const(target_cid)])
         operation_kind = "ForNext"
     else:
-        test_guard = (
-            and_([])
-            if loop._ground_truth(loop.test) is True
-            else branch_result_guard(branch_result_slot(loop.test), loop.test.fragment)
+        # Every ``while`` test is spelled by its slot: the construction never
+        # decides it, ``while True:`` included.  The reduction decides it where
+        # it runs the loop: a live item per item (``_test_item``), the
+        # recurrence's symbolic item for a test that reads no binding
+        # (``LiveSymbolicItemV1.test_sugar``), each publishing the exit it
+        # decided (``_exit_decision``) for a read after the loop to select by.
+        test_guard = branch_result_guard(
+            branch_result_slot(loop.test), loop.test.fragment
         )
         exhaustion_guard = not_(test_guard)
         true_guard = test_guard
@@ -1153,7 +1191,10 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         return tuple(_body_statement_sugar(statement) for statement in loop.orelse)
 
     construction = replace(
-        construction, symbolic_item=LiveSymbolicItemV1(body_sugars, true_guard)
+        construction,
+        symbolic_item=LiveSymbolicItemV1(
+            body_sugars, true_guard, _symbolic_test_sugar(loop)
+        ),
     )
 
     writes = _carried_writes(items, carried_names)
