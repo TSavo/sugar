@@ -180,6 +180,70 @@ _SHAPES = {
         "m is not None",
         "m is None",
     ),
+    # The call's rebinding inside a nested statement that also writes the
+    # name: the ``if``'s join holds it, not the item's own exposure record.
+    "for-cell-call-rebind-nested": (
+        _CELL + "    for i in [1, 2]:\n"
+        "        seen.append(token)\n"
+        "        if i > 0:\n"
+        "            token = i\n"
+        "            bump()\n"
+        "    assert {claim}\n",
+        "seen[1] == 11",
+        "seen[1] == 1",
+    ),
+    "while-cell-call-rebind-nested": (
+        _CELL + "    i = 0\n"
+        "    while i < 2:\n"
+        "        seen.append(token)\n"
+        "        i += 1\n"
+        "        if i > 0:\n"
+        "            token = i\n"
+        "            bump()\n"
+        "    assert {claim}\n",
+        "seen[1] == 11",
+        "seen[1] == 1",
+    ),
+    # A call before the nested write: the write is the last change, and the
+    # latch hands it on.
+    "for-cell-call-then-write-nested": (
+        _CELL + "    for i in [1, 2]:\n"
+        "        seen.append(token)\n"
+        "        if i > 0:\n"
+        "            bump()\n"
+        "            token = i\n"
+        "    assert {claim}\n",
+        "seen[1] == 1",
+        "seen[1] == 11",
+    ),
+    # A carried name whose last change in the item is an unkeyed binding
+    # after its keyed write.
+    "for-import-after-keyed-write": (
+        "def test_after():\n"
+        "    seen = []\n"
+        "    m = 0\n"
+        "    for i in [1, 2]:\n"
+        "        seen.append(m)\n"
+        "        m = None\n"
+        "        import os as m\n"
+        "    assert {claim}\n",
+        "seen[1] is not None",
+        "seen[1] is None",
+    ),
+    "for-match-capture-after-keyed-write": (
+        "def test_after():\n"
+        "    seen = []\n"
+        "    n = 0\n"
+        "    for i in [1, 2]:\n"
+        "        seen.append(n)\n"
+        "        n = 0\n"
+        "        match i:\n"
+        "            case n:\n"
+        "                pass\n"
+        "    assert {claim}\n",
+        "seen[1] == 1",
+        "seen[1] == 0",
+    ),
 }
 
 
@@ -278,3 +342,39 @@ def test_an_import_in_an_item_is_published_after_the_loop() -> None:
     assign = next(node for node in rewritten.body if isinstance(node, Assign))
     returned = next(node for node in rewritten.body if isinstance(node, Return))
     assert returned.value not in _stale_reads(returned, assign), returned.value
+
+
+# -- what the threading left a carried name, read through a join ---------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # A call's rebinding in a nested statement that also writes the name.
+        "        if i > 0:\n            token = i\n            bump()\n",
+        # An unkeyed binding after a keyed write, at the item's own level.
+        "        token = i\n        import os as token\n",
+        # A ``match`` capture after a keyed write.
+        "        token = i\n        match i:\n            case token:\n"
+        "                pass\n",
+    ],
+    ids=["nested-call-rebind", "import-after-write", "capture-after-write"],
+)
+def test_a_carried_name_left_unkeyed_runs_the_recurrence(body: str) -> None:
+    # The latch reads the latest keyed write; on some path the item's
+    # threading left the name in a binding no such key holds, so the loop
+    # never runs its items in hand (``uncarried_item_changes``).
+    from sugar_source_tree.nodes import For
+
+    rewritten = _rewritten(
+        "def f():\n"
+        "    token = 0\n"
+        "\n"
+        "    def bump():\n"
+        "        nonlocal token\n"
+        "        token = token + 10\n"
+        "\n"
+        "    for i in [1, 2]:\n" + body + "    return token\n"
+    )
+    loop = next(node for node in rewritten.walk() if isinstance(node, For))
+    assert "token" in (getattr(loop, "uncarried_item_changes", None) or ())
