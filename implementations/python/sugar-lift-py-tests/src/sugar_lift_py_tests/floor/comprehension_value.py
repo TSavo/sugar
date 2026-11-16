@@ -315,6 +315,15 @@ class ComprehensionValue(GuardStableValue):
         return super().multiply(other, site, ctx)
 
     def subscript(self, index, site):
+        # A list or set decided whole (``display``, every member in hand,
+        # ``ComprehensionSugar._finite_map``) is read as that display, as its
+        # truth and its operators are: a list's ``__getitem__`` over its
+        # members (an out-of-range index its ``IndexError``), a set's
+        # ``TypeError``.  Before #8957 the rewrite dissolved such a
+        # comprehension into the display itself; the one way projects it in
+        # the reduction, and its readers read what it projected (#7757).
+        if self.display is not None:
+            return self.display.subscript(index, site)
         # A runtime comprehension still has Python collection semantics, but
         # neither its members nor its cardinality are available at lift time.
         # Preserve the real lookup as a proof-bearing coordinate; do not invent

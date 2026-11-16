@@ -226,3 +226,31 @@ def test_nonfinite_iterable_with_undecided_filter_owes_the_filter_read() -> None
     owed = owed_calls(outcome)
     assert owed and all(item.symbol is None for item in owed), owed
     assert all(arm.owed for arm in outcome.exits), outcome
+
+
+# A comprehension whose every member is in hand is decided whole: the
+# reduction projects its members (``ComprehensionSugar._finite_map``) and the
+# value's ``display`` is the list they build.  A read by index is that list's
+# ``__getitem__`` (``ComprehensionValue.subscript``), as its truth and its
+# operators are.  Before #8957 the rewrite dissolved it into the list itself;
+# after it, the index read was the undecided ``py.subscript`` coordinate, so
+# ``xs[0] + xs[1]`` was not decided (#7757).
+_READ_BY_INDEX = """\
+def test_index():
+    xs = [j + 1 for j in (10, 20)]
+    assert xs[0] + xs[1] == {claim}
+"""
+
+
+def test_a_comprehension_in_hand_is_read_by_index_as_its_display(tmp_path) -> None:
+    from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "t", _READ_BY_INDEX.format(claim=32)
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "l", _READ_BY_INDEX.format(claim=33)
+    )
+
+    assert truthful.verdict == "sat", truthful.prove_doc
+    assert lying.verdict == "unsat", lying.prove_doc
