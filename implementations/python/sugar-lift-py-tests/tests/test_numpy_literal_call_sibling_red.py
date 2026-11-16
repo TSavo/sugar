@@ -501,41 +501,26 @@ def _assertion_site():
     return statement.fragment
 
 
-def test_computed_sibling_is_structurally_derived() -> None:
-    from sugar_lift_py_tests.floor import InvValue
-    from sugar_lift_py_tests.ir import eq, num
+def test_the_one_derived_row_is_the_promotion_bridge() -> None:
+    """#7789: the "computed sibling" (``OpaqueOpCallsite.computed``, a
+    call's result folded inside the lifter beside its coordinate) is
+    deleted with ``OpaqueOpCallsite``.  The one derived formula an inv
+    carries is the Int/Real promotion bridge its equality resolves
+    (``equality_atom.resolve_equality_atom``), minted as its own row."""
+    from sugar_lift_py_tests.floor import InvValue, TermValue
+    from sugar_lift_py_tests.floor.equality_atom import resolve_equality_atom
 
-    site = _assertion_site()
-    inv = InvValue(
-        eq(num(2), num(2)),
-        site,
-        derived_formulas=(eq(num(1), num(1)),),
-    )
+    formula, bridges = resolve_equality_atom(TermValue(1), TermValue(1.0), owner="t")
+    assert bridges
+    inv = InvValue(formula, _assertion_site(), derived_formulas=bridges)
 
-    stated, derived = inv.mint_contribution("f", ())
-    assert stated.provenance().warrants[0].to_rpc()["kind"] == "Stated"
-    assert derived.provenance().warrants[0].to_rpc() == {
-        "kind": "Derived",
-        "floorChain": ["OpaqueOpCallsite.computed"],
-    }
-
-
-def test_identical_stated_and_computed_equality_retains_both_warrants() -> None:
-    from sugar_lift_py_tests.floor import InvValue
-    from sugar_lift_py_tests.ir import eq, num
-
-    site = _assertion_site()
-    formula = eq(num(2), num(2))
-    inv = InvValue(formula, site, derived_formulas=(formula,))
-
-    (mint,) = inv.mint_contribution("f", ())
-    declaration = mint.to_declaration()
-
-    assert declaration["inv"]["kind"] == "and"
-    assert [atom["name"] for atom in declaration["inv"]["operands"]] == ["=", "="]
-    assert [
-        warrant["kind"] for warrant in declaration["proofirProvenance"]["warrants"]
-    ] == ["Stated", "Derived"]
+    stated, *derived = inv.mint_contribution("f", ())
+    assert [warrant.to_rpc()["kind"] for warrant in stated.provenance().warrants] == [
+        "Stated"
+    ]
+    assert [row.provenance().warrants[0].to_rpc() for row in derived] == [
+        {"kind": "Derived", "floorChain": ["PythonEqualityPromotionBridge"]}
+    ] * len(bridges)
 
 
 @dataclass(frozen=True)

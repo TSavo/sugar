@@ -196,28 +196,27 @@ def test_an_opaque_join_iterable_still_only_coordinates() -> None:
     call's source site (``test_str_join_states_its_iteration``), which this
     operation's prose blame cannot address.  The iterable here is the one
     whose iteration cannot raise and whose member is known to be a ``str``
-    but is not ground -- an earlier join's coordinate in a tuple -- so the
-    fold still answers only the ``STR_JOIN`` coordinate, never a computed
+    but is not ground -- an earlier join's result in a tuple -- so the fold
+    answers only the call's one result (``str_join_result``, a
+    ``CallSiteValue`` marked ``STR_JOIN``, #7757 S8), never a computed
     string."""
-    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-    from sugar_lift_py_tests.floor.string_value import _fold_string_method
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.string_value import (
+        _fold_string_method,
+        str_join_result,
+    )
     from sugar_source_tree.nodes import LanguageCallee
 
-    inner = OpaqueOpCallsite(
-        callee="join",
-        arg=StringValue(","),
-        computed=None,
-        extra_args=(SymbolicValue(make_var("xs")),),
-        language_callee=LanguageCallee.STR_JOIN,
-    )
+    inner = str_join_result(StringValue(","), SymbolicValue(make_var("xs")), "inner")
     outcome = _fold_string_method(
         StringValue(","),
         _MethodCallOperation("join", (TupleValue((inner,)),)),
     )
 
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), OpaqueOpCallsite)
-    assert outcome.completed_value().computed is None
+    joined = outcome.completed_value()
+    assert type(joined) is CallSiteValue
+    assert joined.language_callee is LanguageCallee.STR_JOIN
+    assert joined.body is None
 
 
 def test_the_deleted_cap_module_is_not_quietly_back() -> None:

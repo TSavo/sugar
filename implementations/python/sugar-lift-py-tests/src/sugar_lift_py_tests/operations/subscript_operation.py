@@ -59,7 +59,7 @@ class SubscriptOperation:
         index = force_floor(self.index, ctx, owner=f"{self.owner} tuple index")
         return _subscript_sequence(
             receiver.items,
-            _unwrap_index(index),
+            index,
             owner=self.owner,
             blame=self.blame,
             observed_name="TupleLiteralValue",
@@ -118,15 +118,6 @@ def discharge_subscript(
     return receiver.subscript_with_occurrence(index, site, use_occurrence)
 
 
-def _unwrap_index(index: Any) -> Any:
-    """Sequence indices consume the downstream value of an opaque-op coordinate."""
-    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-
-    if isinstance(index, OpaqueOpCallsite):
-        return index._downstream()
-    return index
-
-
 def _subscript_sequence(
     items: tuple[Any, ...],
     index: Any,
@@ -143,7 +134,6 @@ def _subscript_sequence(
         TrueBoolLiteralSugar,
     )
 
-    index = _unwrap_index(index)
     # ``bool`` is an ``int``: ``t[True]`` is ``t[1]`` and ``t[False]`` is
     # ``t[0]``. A decided boolean is one of the two literal values.
     if type(index) in (TrueBoolLiteralSugar, FalseBoolLiteralSugar):

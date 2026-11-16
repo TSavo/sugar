@@ -45,21 +45,14 @@ def _term_cycle_key(term: Term) -> str:
 
 def names_a_string(value) -> bool:
     """Whether ``value`` is known to be a ``str`` (if it is a call, when it
-    completes): a ground string, a call coordinate whose mint names a string
-    (``CallSiteValue.names_a_string``), or the opaque ``str.join`` coordinate
-    (``LanguageCallee.STR_JOIN``, its binding, never its spelling)."""
-    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+    completes): a ground string, or a call result whose mint names a string
+    (``CallSiteValue.names_a_string``: a ``str.join`` result among them,
+    by its binding ``LanguageCallee.STR_JOIN``, never its spelling)."""
     from sugar_lift_py_tests.floor.string_value import StringValue
-    from sugar_source_tree.nodes import LanguageCallee
 
     if type(value) is StringValue:
         return True
-    if type(value) is CallSiteValue:
-        return value.names_a_string()
-    return (
-        type(value) is OpaqueOpCallsite
-        and value.language_callee is LanguageCallee.STR_JOIN
-    )
+    return type(value) is CallSiteValue and value.names_a_string()
 
 
 @dataclass(frozen=True)
@@ -688,9 +681,17 @@ class CallSiteValue(FloorValue):
         of ``target_name``.  The concatenation is known by the marker its mint
         sets (``string_concatenation``), never by the term's name: a user
         function named ``__add__`` is spelled ``call:__add__`` too, and is not
-        one.
+        one.  A ``str.join`` result is known by the callee its mint decided
+        (``LanguageCallee.STR_JOIN``, ``string_value.str_join_result``): no
+        name binds that callee, so no source call carries it.
         """
-        return self.type_name_attribute or self.string_concatenation
+        from sugar_source_tree.nodes import LanguageCallee
+
+        return (
+            self.type_name_attribute
+            or self.string_concatenation
+            or self.language_callee is LanguageCallee.STR_JOIN
+        )
 
     @staticmethod
     def named_string_concat(left, right, site):
