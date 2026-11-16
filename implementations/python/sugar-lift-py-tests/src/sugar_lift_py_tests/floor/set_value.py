@@ -268,12 +268,6 @@ def _closed_member_equal(left, right):
     return member_equal(left, right)
 
 
-def _closed_sequence_equal(left_elements, right_elements):
-    from sugar_lift_py_tests.floor.membership import sequence_equal
-
-    return sequence_equal(left_elements, right_elements)
-
-
 def _denotes_a_value(value, supported: tuple) -> bool:
     """Whether one side of a membership test denotes a value at all.
 

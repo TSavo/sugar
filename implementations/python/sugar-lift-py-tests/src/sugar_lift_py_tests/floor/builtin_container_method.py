@@ -142,17 +142,6 @@ def _ground_int(value):
     return None
 
 
-def _equal(left, right):
-    """Closed ``x is e or x == e`` of two members: True, False, or None
-    (undecided). One law with membership (``floor/membership.py``)."""
-    from .membership import member_equal
-
-    decision = member_equal(left, right)
-    if decision is NotImplemented:
-        return None
-    return decision
-
-
 def _unhashable(value) -> bool:
     """A decided unhashable key/member: a list/dict/set, or a tuple holding one."""
     from .membership import decided_unhashable

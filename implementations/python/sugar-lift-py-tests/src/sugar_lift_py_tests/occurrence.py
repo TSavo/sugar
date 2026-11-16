@@ -82,9 +82,8 @@ def entered(segment: str):
 
 
 # A live loop iteration's segment (``LoopRecurrenceSugar`` enters one per
-# item).  An unrolled copy's segment is spelled ``loop[start,end)#i``
-# (``shadow.iteration_segment``) and a callee frame's ``call:...``, so this
-# prefix names live iterations alone.
+# item); a callee frame's segment is ``call:...``, so this prefix names live
+# iterations alone.
 _LIVE_ITERATION = "loop:"
 
 

@@ -133,15 +133,6 @@ class EffectBinding:
 
 
 @dataclass(frozen=True)
-class RoutedOutcome:
-    """Router result: surviving entries, stated obligation facts, slot bindings."""
-
-    entries: tuple
-    stated_facts: tuple = ()
-    bindings: tuple = ()  # EffectBinding, ...
-
-
-@dataclass(frozen=True)
 class GroupedRoutedOutcome:
     matched: object
     residual: object
@@ -360,55 +351,3 @@ def _matching_effect(entries: tuple, matcher: EffectMatcher):
             if _warning_matches_matcher(effect, matcher):
                 return index, entry, observed
     return None
-
-
-def _first_effect_of_kind(entries: tuple, kind: str):
-    for index, entry in enumerate(entries):
-        observed = _observed_effect(entry)
-        if observed is not None and observed[0] == kind:
-            return index, entry, observed
-    return None
-
-
-def _binding_for_slot(slot_id: str | None, observed) -> tuple:
-    if slot_id is None or observed is None:
-        return ()
-    kind, type_name, _message, effect = observed
-    return (
-        EffectBinding(
-            slot_id=slot_id,
-            kind=kind,
-            type_name=type_name,
-            effect=effect,
-        ),
-    )
-
-
-def route_except(
-    entries: tuple,
-    matcher: EffectMatcher | None,
-    *,
-    slot_id: str | None = None,
-    site=None,
-) -> RoutedOutcome | None:
-    """Single match for one try-handler arm. None = this arm does not match.
-
-    Bare except (matcher is None) matches any raise; typed arms use exact name.
-    On match: consume halt, emit optional slot binding facts.
-    """
-    matching = (
-        _first_effect_of_kind(entries, "raise")
-        if matcher is None
-        else _matching_effect(entries, matcher)
-    )
-    if matching is None:
-        return None
-    index, _entry, observation = matching
-    remaining = entries[:index] + entries[index + 1 :]
-    bindings = _binding_for_slot(slot_id, observation)
-    binding_facts = tuple(f for b in bindings for f in b.to_facts(site=site))
-    return RoutedOutcome(
-        entries=(*remaining, *binding_facts),
-        stated_facts=binding_facts,
-        bindings=bindings,
-    )

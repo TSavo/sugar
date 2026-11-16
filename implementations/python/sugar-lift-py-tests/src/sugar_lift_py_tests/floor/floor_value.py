@@ -1134,12 +1134,6 @@ class FloorValue:
             ),
         )
 
-    def _undecided_ordering_law(self, other, site, *, owner: str, operator: str):
-        """Backward-compatible name for :meth:`_refuse_ordering_meaning`."""
-        return self._refuse_ordering_meaning(
-            other, site, owner=owner, operator=operator
-        )
-
     def less_than_from_left(self, left, site, ctx):
         """Default RHS law for ``left < self`` — never invents FOL meaning.
 

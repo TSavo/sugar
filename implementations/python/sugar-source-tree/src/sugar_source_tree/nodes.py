@@ -8499,19 +8499,6 @@ class Node(Typed):
             self.unit, ShadowNode("Attribute", self.span, slots), self.reporter
         )
 
-    def _make_none_constant(self) -> "Node":
-        """Synthesize ``None`` literal at this node's span."""
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode
-
-        slots = (
-            ("value", Leaf(None)),
-            ("literal_kind", Leaf(None)),
-        )
-        return materialize(
-            self.unit, ShadowNode("Constant", self.span, slots), self.reporter
-        )
-
     def _effect_slot_id(self) -> str:
         """Content-addressed slot identity from this binding occurrence.
 
@@ -16480,8 +16467,8 @@ class For(Statement):
 
     @staticmethod
     def _stmts_bound_names(statements) -> set:
-        """The names any statement (at any depth) binds -- the structural twin
-        of _stmts_bind, for the symbolic-loop carried-name mask."""
+        """The names any statement (at any depth) binds, for the symbolic-loop
+        carried-name mask."""
         names: set = set()
 
         def bind(target) -> None:
@@ -16519,34 +16506,6 @@ class For(Statement):
                     # a loop around it carries them like any other write.
                     bind(n.target)
         return names
-
-    @staticmethod
-    def _stmts_bind(statements) -> bool:
-        """True when any statement (at any depth) binds a name for a tail --
-        Assign/AugAssign/AnnAssign or a walrus. STRUCTURAL, not a binding read:
-        an If no longer reports its branch bindings (phis are spliced at
-        substitute time), so classification walks the source shape instead of
-        asking for bindings that are only materialized during substitution."""
-        return any(
-            n.kind in ("Assign", "AugAssign", "AnnAssign", "NamedExpr")
-            or (
-                n.kind == "ContainerMutationStatement"
-                and isinstance(getattr(n, "rebinds", None), str)
-            )
-            for stmt in statements
-            for n in stmt.walk()
-        )
-
-    def _carried_and_facts(self):
-        """Split the body into carried assignments (statements that bind a name
-        for the tail -- the fold's update) and fact statements (asserts, the rest
-        -- the universal's body). A pure-fold loop is all carried; an assert-only
-        loop is all facts; a loop with BOTH is the accumulator-referencing case
-        (point 3), left loud."""
-        carried, facts = [], []
-        for stmt in self.body:
-            (carried if For._stmts_bind((stmt,)) else facts).append(stmt)
-        return carried, facts
 
     def substitution_binding(self, scope):
         """Never synthesize a symbolic loop post-value.
@@ -21372,29 +21331,10 @@ class ListComp(Expression):
             self, rewritten, (rewritten.elt,), scope, recurrence
         )
 
-    def _contains_forbidden_shape(self, roots: tuple) -> bool:
-        """True for a nested comprehension, walrus or lambda in this
-        comprehension.  A lambda reads each comprehension cell at its call
-        (``_escaping_at_the_call``), and a call is placed by the run of the
-        comprehension it is in or after (``_simple_generator``)."""
-        return any(
-            node.kind
-            in (
-                "ListComp",
-                "SetComp",
-                "DictComp",
-                "GeneratorExp",
-                "NamedExpr",
-                "Lambda",
-            )
-            for root in roots
-            for node in root.walk()
-        )
-
     def _contains_named_expression(self, roots: tuple) -> bool:
         """True when a walrus would bind outside the comprehension coordinate.
 
-        This -- not `_contains_forbidden_shape` -- is the obstruction every
+        This is the obstruction every
         comprehension kind consults when constructing its sugar, for the one
         position whose bind no fold carries: a generator's iterable, where
         Python rejects a walrus at compile time (PEP 572: "assignment
@@ -21406,8 +21346,7 @@ class ListComp(Expression):
         (``_DEFERRED_WALRUS``). A nested comprehension is no obstruction at
         all: it is simply another sugar in that position, constructed by its
         own `_construct_sugar` when the element is lifted. All four kinds
-        share this one reader; `_contains_forbidden_shape` remains the
-        separate, stricter question ``_simple_generator`` asks.
+        share this one reader.
         """
         return any(node.kind == "NamedExpr" for root in roots for node in root.walk())
 
@@ -21853,23 +21792,6 @@ class ListComp(Expression):
                 )
             )
         return tuple(specs)
-
-    def _simple_generator(self, *, allow_nested_iterable=False):
-        if len(self.generators) != 1:
-            return None
-        gen = self.generators[0]
-        if (
-            gen.is_async
-            or gen.ifs
-            or gen.target.kind != "Name"
-            or (
-                ListComp._contains_named_expression(self, (gen.iter,))
-                if allow_nested_iterable
-                else ListComp._contains_forbidden_shape(self, (gen.iter,))
-            )
-        ):
-            return None
-        return gen
 
 
 class SetComp(Expression):
