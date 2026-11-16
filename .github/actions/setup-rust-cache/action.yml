@@ -1,6 +1,9 @@
 name: Set up Sugar Rust toolchain
 description: >
-  Install the pinned Rust toolchain only. Binary construction and reuse are
+  Use the pinned Rust toolchain (sugar-build.toml) from the runner's own
+  rustup, with no network when it is installed; only a missing rustup,
+  toolchain or component is downloaded, under a bounded retry
+  (tools/ci-rust-toolchain.sh, #8416). Binary construction and reuse are
   owned by bin/sugarbin (content-addressed filesystem shelf). There is no
   second cargo-target cache door and no github.sha keying.
 
@@ -17,10 +20,14 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Set up Rust 1.96.0
-      uses: dtolnay/rust-toolchain@1.96.0
-      with:
-        components: ${{ inputs.components }}
+    # Not dtolnay/rust-toolchain: on the self-hosted runners it re-ran the
+    # rustup installer and re-fetched the channel manifest every job, and one
+    # TLS reset there lost a whole suite shard (run 43832361876).
+    - name: Rust toolchain from the runner's rustup
+      shell: bash
+      env:
+        SUGAR_RUST_COMPONENTS: ${{ inputs.components }}
+      run: bash tools/ci-rust-toolchain.sh
 
     - name: Ensure sugarbin hash tool (b3sum)
       shell: bash
