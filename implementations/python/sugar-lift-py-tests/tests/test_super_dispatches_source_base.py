@@ -14,11 +14,21 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from frame_fresh import FRAME_FRESH
 
 
-def _constructed(source: str):
-    tree = SourceFile(
-        (source, "super_dispatch.py", blake3_512_of(source.encode())),
-        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-    )
+def _constructed(source: str, tmp_path=None):
+    """The class values of ``source``; under a workspace root (``tmp_path``)
+    each class names its join symbol, so a ``super()`` call names where it
+    is looked up (``py.lookup``)."""
+    if tmp_path is None:
+        tree = SourceFile(
+            (source, "super_dispatch.py", blake3_512_of(source.encode())),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        )
+    else:
+        from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+        path = tmp_path / "super_dispatch.py"
+        path.write_text(source)
+        tree = open_source_file_for_construction(path, root=tmp_path)
     context = ReduceContext.root(owner="test")
     values = []
     for node in tree.root.body:
@@ -119,14 +129,48 @@ _OWN_METHOD_ONLY = (
 )
 
 
-def test_super_runs_the_first_class_after_the_cell_that_binds_the_name() -> None:
+def test_super_is_looked_up_after_the_cell_at_prove(tmp_path) -> None:
     # ``Middle`` binds no ``__init__``: the first class after ``Derived``'s
-    # cell that does is ``Base``, never the one ``Middle`` inherits through.
-    # The call is ``Base.__init__``'s coordinate and edge (#7757 step 6,
-    # #8738); the store ``self.x = x`` its body makes on the receiver is
-    # joined from ``Base.__init__``'s contract at prove (step 7), so it is
-    # no longer read here (it was, while the body was applied at lift; the
-    # application was deleted by #8751).
+    # cell that does is ``Base``.  Which class that is is looked up once, at
+    # prove, on the order the receiver's class's own proof states
+    # (``consistency::dispatched_target``, #7757 entry 6): the call is the
+    # one dispatched call, naming where to look -- after ``Derived``, on the
+    # receiver's class -- and never the function.  The store ``self.x = x``
+    # the body makes on the receiver is joined from that contract at prove.
+    context, (_base, _middle, derived) = _constructed(_OWN_METHOD_ONLY, tmp_path)
+    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
+
+    call = _edge_call(
+        BuiltinSuperValue(current_class=derived, receiver=receiver).call_method_value(
+            "__init__",
+            (StringValue("v"),),
+            owner="test",
+            blame="super-init",
+            ctx=context,
+        )
+    )
+
+    assert call.target_name == "dispatch:__init__", call.target_name
+    (lookup,) = (
+        arg for arg in call.term.args if getattr(arg, "name", None) == "py.lookup"
+    )
+    assert [part.value for part in lookup.args] == [
+        "",
+        "python:super_dispatch.Derived",
+    ]
+    (receiver_class,) = (
+        arg.args[1]
+        for arg in call.term.args
+        if getattr(arg, "name", None) == "py.class" and arg.args[0].value == "0"
+    )
+    assert receiver_class.args[0].value == "python:super_dispatch.Derived"
+    assert call.arg_values[0] is receiver
+    assert call.arg_values[-1] == StringValue("v")
+
+
+def test_super_names_no_function_without_a_join_symbol() -> None:
+    # No workspace root: no class names a join symbol, so nothing can name
+    # where the method is looked up -- the one unanswered call, owed.
     context, (_base, _middle, derived) = _constructed(_OWN_METHOD_ONLY)
     receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
@@ -140,9 +184,7 @@ def test_super_runs_the_first_class_after_the_cell_that_binds_the_name() -> None
         )
     )
 
-    assert call.target_name.endswith("Base.__init__"), call.target_name
-    assert "Middle" not in call.target_name
-    assert call.arg_values[-1] == StringValue("v")
+    assert call.target_name == "super.__init__", call.target_name
 
 
 _ANNOTATED = (

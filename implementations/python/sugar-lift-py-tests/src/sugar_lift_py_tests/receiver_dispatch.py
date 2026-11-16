@@ -4,9 +4,11 @@ its coordinate plus an edge resolved at prove through that input.
 
 The owner's ruling of 2026-11-15, "Edge, join at prove": every same-file call
 is a coordinate plus an edge, joined at prove; the lifter never follows a
-body.  A method call on a receiver whose class is decided here is the edge to
-that method (``object_value.method_edge_call``).  Where the class is not
-decided here -- ``self.m()`` in a method's own proof, a method of a
+body.  Every method call is the one dispatched edge, and prove alone looks
+the method up (#7757 entry 6: one MRO lookup): on an instance whose class is
+decided here its class rides with it (``class_value``); ``Cls.m(...)`` and
+``super().m(...)`` name where to look (``lookup_term``).  Where the class is
+not decided here -- ``self.m()`` in a method's own proof, a method of a
 parameter -- it is an input of the contract, ``class:<param>``
 (``contract_input.CLASS_INPUT``, ``nodes._receiver_class_parameters``), as a
 module global is ``global:<name>``.  The call stands as:
@@ -120,6 +122,24 @@ CLASS_UNDECIDED = "python:class_undecided"
 #: The named argument that supplies a class input (``consistency::
 #: PYTHON_CLASS``).
 CLASS_ARGUMENT = "py.class"
+
+#: ``py.lookup(<on>, <after>)``: where a dispatched call looks its method up
+#: when that is not the instance its first argument is, from the first class
+#: of that instance's order (``consistency::PYTHON_LOOKUP``).  ``<on>`` is
+#: the join symbol of the class object the method is read off (``Cls.m(...)``,
+#: ``super()`` in a ``classmethod``: no receiver among the arguments), ``""``
+#: for the instance; ``<after>`` the join symbol of the class after which
+#: the lookup starts in the order (zero-argument ``super()``), ``""`` for the
+#: first class.  It is part of the call's term: two calls that look a method
+#: up from different places are never one term.
+LOOKUP_ARGUMENT = "py.lookup"
+
+
+def lookup_term(on: str | None, after: str | None):
+    """``py.lookup("<on>", "<after>")`` (``LOOKUP_ARGUMENT``)."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor(LOOKUP_ARGUMENT, [str_const(on or ""), str_const(after or "")])
 
 #: ``python:plain_store(<class>, <field>)``: a store of ``<field>`` on an
 #: instance of ``<class>`` is the plain ``__dict__`` store, and a read of the
@@ -815,6 +835,8 @@ def dispatch_edge_call(
     *,
     read=False,
     halted_at=None,
+    on_class=None,
+    after=None,
 ):
     """THE dispatched method call (#7757 step 8): the coordinate
     ``call:dispatch:<name>(<receiver>, <positional>..., py.kwarg(...)...,
@@ -832,6 +854,22 @@ def dispatch_edge_call(
     ``read``: the attribute read ``receiver.<name>`` a property's getter
     answers, ``call:dispatch:.<name>(<receiver>, py.class("0", ...))``
     (``DISPATCH_READ_MARK``), with no other actual.
+
+    Where the method is looked up is part of the term (``lookup_term``), and
+    prove's one resolution reads it (``consistency::dispatched_target``):
+
+    - ``on_class``: the join symbol of a class object the method is read off
+      (``Cls.m(...)``, ``super()`` in a ``classmethod``): there is no
+      receiver (``receiver`` and ``receiver_class`` are None), the written
+      actuals stand as written, keyed from ``"0"``, and prove binds what the
+      class's namespace row states the name holds as ``__get__(None, cls)``
+      binds it;
+    - ``after``: the join symbol of the class after which the lookup starts
+      in the order (zero-argument ``super()``, ``super_getattro``): on the
+      receiver's class's order (``receiver_class``), or on ``on_class``'s.
+
+    Nothing here selects the method: the lift names where to look, prove
+    looks (#7757 entry 6: one MRO lookup).
 
     The method's contract states its receiver and its other formals as
     distinct objects.  A call whose receiver is, or holds, an object an
@@ -855,29 +893,42 @@ def dispatch_edge_call(
 
     owner = str(site)
     target = DISPATCH_TARGET_PREFIX + (DISPATCH_READ_MARK if read else "") + name
-    # Each operand by its argument key: the receiver ``0``, each positional
-    # actual by its position, each keyword actual by its keyword (the keys
-    # its ``py.class`` rides under, ``class_arguments``).
+    # The operands: the receiver first where there is one (a lookup on a
+    # class object has none), then the written actuals.
+    received = () if on_class is not None else (receiver,)
+    # Each operand by its argument key: each positional operand by its
+    # position (the receiver ``0``), each keyword actual by its keyword (the
+    # keys its ``py.class`` rides under, ``class_arguments``).
     symbol = "python:" + target + shares_mark(
         (
-            ("0", receiver),
-            *((str(index + 1), value) for index, value in enumerate(positional)),
+            *(
+                (str(index), value)
+                for index, value in enumerate((*received, *positional))
+            ),
             *kw_values,
         )
     )
     arguments = (
-        [receiver.to_term(owner=owner)]
-        + [value.to_term(owner=owner) for value in positional]
+        [value.to_term(owner=owner) for value in (*received, *positional)]
         + [
             ctor("py.kwarg", [str_const(keyword), value.to_term(owner=owner)])
             for keyword, value in kw_values
         ]
-        + [ctor(CLASS_ARGUMENT, [str_const("0"), receiver_class])]
-        + class_arguments(tuple(positional), tuple(kw_values), shift=1)
+        + (
+            [lookup_term(on_class, after)]
+            if on_class is not None or after is not None
+            else []
+        )
+        + (
+            [ctor(CLASS_ARGUMENT, [str_const("0"), receiver_class])]
+            if received
+            else []
+        )
+        + class_arguments(tuple(positional), tuple(kw_values), shift=len(received))
     )
     callsite = CallSiteValue(
         target_name=target,
-        arg_values=(receiver, *positional, *(value for _name, value in kw_values)),
+        arg_values=(*received, *positional, *(value for _name, value in kw_values)),
         parameters=(),
         term=ctor(call_symbol(target), arguments, symbol_kind="coordinate"),
         body=None,
@@ -911,12 +962,11 @@ def receiver_after_dispatch(receiver, result):
     parameter with the key ``"0"`` the caller names it by
     (``consistency::argument_key_aliases``).
 
-    The same read for ``super().m(...)``: the call form passes the frame's
-    receiver itself as the call's first positional actual (a plain function
-    read off an instance, ``object_value.method_edge_call``), keyed ``"0"``
-    as a dispatched call's receiver is, so the caller reads it after the call
-    by that key and prove pairs it with the method's receiver parameter the
-    same way.
+    The same read for ``super().m(...)`` on an instance: it is a dispatched
+    call whose receiver is the frame's receiver, keyed ``"0"``
+    (``BuiltinSuperValue._selected_call``), so the caller reads it after the
+    call by that key and prove pairs it with the method's receiver parameter
+    the same way.
 
     ``receiver`` is a formal's or a cell's plain value (``SymbolicValue``),
     a same-file class call's result the call was dispatched on

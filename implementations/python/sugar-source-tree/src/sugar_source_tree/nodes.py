@@ -10440,7 +10440,7 @@ class FunctionDef(Statement):
         and nothing of the body.
 
         Every formal is a parameter: a ``classmethod``'s ``cls`` is bound by
-        the one method door (``object_value.implicit_arguments``), never
+        the dispatched call at prove (``consistency::dispatched_target``), never
         dropped from the frame.  Each formal and each captured cell is read
         through its own coordinate (``BindingCoordinateV1``,
         ``_captured_bindings``), and each default reads the value the ``def``
@@ -11939,8 +11939,7 @@ class ClassDef(Statement):
         substituted in the class body's own threading (``method`` is the
         threaded statement): each default bound under its per-parameter key
         (``_default_evaluation_key``, #8020), which the class value carries
-        to every call of the method (``ClassDefinitionValue.method_defaults``,
-        ``object_value.bind_method_call``), and to every call of the class
+        (``ClassDefinitionValue.method_defaults``) to every call of the class
         for its ``__init__`` and ``__new__``
         (``ClassDefinitionValue.callable_application_with``).  A decorated method
         evaluates its defaults the same way, before its decorators apply,

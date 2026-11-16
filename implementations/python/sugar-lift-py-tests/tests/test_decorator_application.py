@@ -485,10 +485,12 @@ def test_an_imported_decorator_is_undecided_never_the_plain_body() -> None:
 def test_a_staticmethod_read_off_its_class_takes_no_implicit_argument(
     tmp_path,
 ) -> None:
-    """``Box.pick(3)`` of a ``staticmethod`` is ``pick``'s edge with the one
-    written actual and nothing implicit (#7757 step 6, #8738).  The body is
-    never applied here: its ``ValueError`` is ``pick``'s contract's halt,
-    joined at prove, so neither body's raise is a face here."""
+    """``Box.pick(3)`` of a ``staticmethod`` is the one dispatched call
+    looked up on ``Box`` with the one written actual and nothing implicit
+    (#7757 entry 6: prove looks it up and binds it by the kind the class's
+    namespace row states).  The body is never applied here: its
+    ``ValueError`` is ``pick``'s contract's halt, joined at prove, so
+    neither body's raise is a face here."""
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.ir import num
 
@@ -506,7 +508,9 @@ class Box:
         outcome = box.call_method_value(
             "pick", (TermValue(3),), owner="test", blame="pick-site", ctx=ctx
         )
-        assert _positional(_edge_term(outcome, f"{module}.Box.pick")) == (num(3),)
+        term = _edge_term(outcome, "dispatch:pick")
+        assert _positional(term) == (num(3),)
+        assert _lookup(term) == (f"python:{module}.Box", "")
         assert "ValueError" not in _halt_names(outcome)
 
 
@@ -663,23 +667,14 @@ def f():
 
 
 # ---------------------------------------------------------------------------
-# The one method door binds what the lookup binds (#8011 residue).
+# Prove binds what the lookup binds (#8011 residue, #7757 entry 6).
 # ---------------------------------------------------------------------------
-
-
-def _class_value(source: str):
-    from sugar_lift_py_tests.context.reduce_context import ReduceContext
-
-    tree = _tree(source)
-    (class_def,) = tuple(node for node in tree.nodes() if isinstance(node, ClassDef))
-    ctx = ReduceContext.root(owner="test")
-    return class_def.sugar().desugar(ctx).completed_value(), ctx
 
 
 def _rooted_class_value(tmp_path, source: str, module: str = "subject"):
     """``_class_value`` of a file opened under a workspace root, so a call
-    of a method is its edge to the method's join symbol
-    (``object_value.method_edge_call``)."""
+    of a method is the one dispatched edge, naming the class it is looked up
+    on (``receiver_dispatch.dispatch_edge_call``)."""
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
 
     tree = _rooted_tree(tmp_path, source, module)
@@ -698,13 +693,23 @@ def _halt_names(outcome) -> list:
     ]
 
 
+def _lookup(term) -> tuple:
+    """``(on, after)`` of the one ``py.lookup(<on>, <after>)`` the dispatched
+    call term carries (``receiver_dispatch.lookup_term``)."""
+    (lookup,) = tuple(
+        arg for arg in term.args if getattr(arg, "name", None) == "py.lookup"
+    )
+    return tuple(part.value for part in lookup.args)
+
+
 def test_a_plain_function_read_off_its_class_takes_no_implicit_argument(
     tmp_path,
 ) -> None:
     """``Box.pick(3)`` calls ``pick(3)``: the function looked up on the class
-    is unbound.  Before, the class was bound as a first argument, so the one
-    written actual met a second formal it never had.  The call is ``pick``'s
-    edge with that one actual (#7757 step 6, #8738); the body's raise is its
+    is unbound.  The call is the one dispatched call looked up on the class
+    object ``Box`` (#7757 entry 6: one MRO lookup, at prove), with that one
+    actual as written and no receiver; which function runs and how it binds
+    is prove's (``consistency::dispatched_target``).  The body's raise is its
     contract's halt, joined at prove, never a face here."""
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.ir import num
@@ -719,15 +724,17 @@ def test_a_plain_function_read_off_its_class_takes_no_implicit_argument(
         outcome = box.call_method_value(
             "pick", (TermValue(3),), owner="test", blame="pick-site", ctx=ctx
         )
-        assert _positional(_edge_term(outcome, f"{module}.Box.pick")) == (num(3),)
+        term = _edge_term(outcome, "dispatch:pick")
+        assert _positional(term) == (num(3),)
+        assert _lookup(term) == (f"python:{module}.Box", "")
         assert "ValueError" not in _halt_names(outcome)
 
 
 def test_a_plain_function_read_off_its_class_takes_its_receiver_as_written(
     tmp_path,
 ) -> None:
-    """``Box.pick(obj, 3)`` passes ``obj`` as written: two actuals, two
-    formals, nothing implicit, on ``pick``'s edge (#7757 step 6)."""
+    """``Box.pick(obj, 3)`` passes ``obj`` as written: two actuals, nothing
+    implicit, on the dispatched call looked up on ``Box`` (#7757 entry 6)."""
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.ir import num
 
@@ -741,15 +748,20 @@ def test_a_plain_function_read_off_its_class_takes_its_receiver_as_written(
         blame="pick-site",
         ctx=ctx,
     )
-    assert _positional(_edge_term(outcome, "subject.Box.pick")) == (num(1), num(3))
+    term = _edge_term(outcome, "dispatch:pick")
+    assert _positional(term) == (num(1), num(3))
+    assert _lookup(term) == ("python:subject.Box", "")
     assert "ValueError" not in _halt_names(outcome)
 
 
 def test_a_classmethod_read_off_its_class_binds_the_class(tmp_path) -> None:
-    """``Box.make(3)`` of a ``classmethod``: the edge's first actual is the
-    class the lookup binds, then the written one (#7757 step 6)."""
+    """``Box.make(3)`` of a ``classmethod``: the dispatched call looked up on
+    ``Box`` carries the written actual alone; prove binds the class first by
+    the kind the class's namespace row states (``classmethod``, with the
+    class object it states), never the lift (#7757 entry 6)."""
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.ir import num
+    from sugar_lift_py_tests.tree_enumerate import _class_namespace_facts
 
     box, ctx = _rooted_class_value(
         tmp_path,
@@ -761,10 +773,13 @@ def test_a_classmethod_read_off_its_class_binds_the_class(tmp_path) -> None:
     outcome = box.call_method_value(
         "make", (TermValue(3),), owner="test", blame="make-site", ctx=ctx
     )
-    implicit, written = _positional(_edge_term(outcome, "subject.Box.make"))
-    assert written == num(3)
-    assert implicit != num(3)
+    term = _edge_term(outcome, "dispatch:make")
+    assert _positional(term) == (num(3),)
+    assert _lookup(term) == ("python:subject.Box", "")
     assert "ValueError" not in _halt_names(outcome)
+    _symbol, _mro, binds, class_object = _class_namespace_facts(box.class_definition)
+    assert ("make", "classmethod", "python:subject.Box.make") in binds
+    assert class_object is not None
 
 
 def test_an_instance_lookup_binds_by_descriptor_kind(tmp_path) -> None:
@@ -806,35 +821,6 @@ def test_an_instance_lookup_binds_by_descriptor_kind(tmp_path) -> None:
         )
         assert ("pick", decorator, f"python:{decorator}.Box.pick") in binds, decorator
         assert (class_object is not None) == (decorator == "classmethod")
-
-
-def test_the_implicit_arguments_of_each_lookup() -> None:
-    from types import SimpleNamespace
-
-    from sugar_lift_py_tests.floor.object_value import implicit_arguments
-
-    box, _ctx = _class_value("class Box:\n    def pick(self):\n        return 1\n")
-    receiver = box.fresh_receiver("receiver-cid", allocation=FRAME_FRESH)
-
-    def refuse(**_kw):
-        raise AssertionError("refused")
-
-    def implicit(target, kind):
-        return implicit_arguments(
-            target,
-            SimpleNamespace(descriptor_kind=kind),
-            target_name="Box.pick",
-            owner="test",
-            blame="site",
-            refuse=refuse,
-        )
-
-    assert implicit(receiver, None) == (receiver,)
-    assert implicit(box, None) == ()
-    assert implicit(receiver, "staticmethod") == ()
-    assert implicit(box, "staticmethod") == ()
-    assert implicit(box, "classmethod") == (box,)
-    assert implicit(receiver, "classmethod") == (receiver.defining_class,)
 
 
 # ---------------------------------------------------------------------------

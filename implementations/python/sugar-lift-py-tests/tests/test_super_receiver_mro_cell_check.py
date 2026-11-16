@@ -45,11 +45,21 @@ from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 
 
-def _parsed(source: str, name: str):
-    tree = SourceFile(
-        (source, name, blake3_512_of(source.encode())),
-        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-    )
+def _parsed(source: str, name: str, tmp_path=None):
+    """The tree and class values of ``source``; under a workspace root
+    (``tmp_path``) each class names its join symbol, so a ``super()`` call
+    names where it is looked up (``py.lookup``)."""
+    if tmp_path is None:
+        tree = SourceFile(
+            (source, name, blake3_512_of(source.encode())),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        )
+    else:
+        from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+        path = tmp_path / name
+        path.write_text(source)
+        tree = open_source_file_for_construction(path, root=tmp_path)
     context = ReduceContext.root(owner="test")
     classes = {}
     for node in tree.root.body:
@@ -105,11 +115,12 @@ _DIAMOND = (
 
 def _super_m(classes, context, receiver):
     """``super().m()`` in ``B.m`` on ``receiver``: on a receiver whose class
-    is decided (made in this frame), the selected method's coordinate and
-    edge (#7757 step 6, #8738), completing under its ``completes`` atom and
-    halting under the complement.  The method's body is never applied here
-    (the application was deleted by #8751), so the call names the method
-    it selected by its target, not by a frame it ran."""
+    is decided (made in this frame), the one dispatched call (#7757 entry
+    6), completing under its ``completes`` atom and halting under the
+    complement.  It names where ``m`` is looked up -- after ``B``, on the
+    receiver's class -- and prove looks it up once on the order that
+    class's own proof states (``consistency::dispatched_target``); the lift
+    names no function."""
     from sugar_lift_py_tests.outcome import Completed
 
     outcome = BuiltinSuperValue(classes["B"], receiver).call_method_value(
@@ -120,29 +131,44 @@ def _super_m(classes, context, receiver):
     return done.value
 
 
-def test_super_in_b_on_a_d_reaches_c_not_bs_own_base() -> None:
-    _tree, context, classes = _parsed(_DIAMOND, "diamond.py")
+def _looked_up(call) -> tuple:
+    """``(after, receiver class symbol)`` the dispatched ``call`` names."""
+    (lookup,) = (
+        arg for arg in call.term.args if getattr(arg, "name", None) == "py.lookup"
+    )
+    (receiver_class,) = (
+        arg.args[1]
+        for arg in call.term.args
+        if getattr(arg, "name", None) == "py.class" and arg.args[0].value == "0"
+    )
+    assert lookup.args[0].value == ""
+    return lookup.args[1].value, receiver_class.args[0].value
+
+
+def test_super_in_b_on_a_d_is_looked_up_after_b_in_ds_order(tmp_path) -> None:
+    _tree, context, classes = _parsed(_DIAMOND, "diamond.py", tmp_path)
     receiver = classes["D"].fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     call = _super_m(classes, context, receiver)
 
-    # D's MRO is D, B, C, A, object: the class after B binding ``m`` is C.
-    # The edge targets ``C.m`` (was read off the applied frame's
-    # ``lexical_defining_class``), never B's own base ``A``.
+    # D's MRO is D, B, C, A, object: the class after B binding ``m`` is C,
+    # never B's own base ``A`` -- decided at prove on D's order, which the
+    # call names: after B, on an instance of D.
     assert isinstance(call, CallSiteValue)
-    assert call.target_name.endswith("C.m"), call.target_name
+    assert call.target_name == "dispatch:m", call.target_name
+    assert _looked_up(call) == ("python:diamond.B", "python:diamond.D")
     assert call.arg_values[0] is receiver
 
 
-def test_super_in_b_on_a_b_reaches_a() -> None:
-    _tree, context, classes = _parsed(_DIAMOND, "diamond.py")
+def test_super_in_b_on_a_b_is_looked_up_after_b_in_bs_order(tmp_path) -> None:
+    _tree, context, classes = _parsed(_DIAMOND, "diamond.py", tmp_path)
     receiver = classes["B"].fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     call = _super_m(classes, context, receiver)
 
-    # B's MRO is B, A, object: the edge targets ``A.m``.
+    # B's MRO is B, A, object: prove reaches ``A.m``.
     assert isinstance(call, CallSiteValue)
-    assert call.target_name.endswith("A.m"), call.target_name
+    assert _looked_up(call) == ("python:diamond.B", "python:diamond.B")
 
 
 def test_the_one_lookup_starts_after_the_cell_in_the_receivers_order() -> None:

@@ -366,12 +366,11 @@ def definition_edge_call(
 ):
     """THE call of a same-file definition as its coordinate and edge (#7757
     steps 5 and 6, the owner's ruling of 2026-11-15, "Edge, join at prove"):
-    a function value (``LambdaCallable``), a class
-    (``ClassDefinitionValue.callable_application_with``) and a method a
-    class names explicitly (``Cls.m(...)``, ``super().m(...)``:
-    ``object_value.method_edge_call``) alike.  A method called on an
-    instance is the dispatched call instead
-    (``receiver_dispatch.dispatch_edge_call``, #7757 step 8).
+    a function value (``LambdaCallable``) and a class
+    (``ClassDefinitionValue.callable_application_with``) alike.  A method
+    call -- on an instance, ``Cls.m(...)``, ``super().m(...)`` -- is the
+    dispatched call instead, looked up once at prove
+    (``receiver_dispatch.dispatch_edge_call``, #7757 step 8, entry 6).
     The callee's body is never applied here.
 
     ``call:<target>(<actuals>, py.kwarg(...), py.default(...),

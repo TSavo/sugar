@@ -85,9 +85,9 @@ class ClassDefinitionValue(GuardStableValue):
     # class body's block bound it (``ClassDefinitionSugar._namespace``), under
     # its per-parameter key (``nodes._default_evaluation_key``).  Python
     # stores the values on the function; every call that omits the formal
-    # binds that one object (``object_value.bind_method_call`` passes them
-    # to ``bind_call``'s ``defaults``, as a lambda value's are, and a class
-    # call its constructor's, ``constructor_defaults``).
+    # binds that one object (a class call passes its constructor's to
+    # ``bind_call``'s ``defaults``, ``constructor_defaults``, as a lambda
+    # value's are; a method call is the dispatched call, bound at prove).
     method_defaults: tuple = field(default=(), compare=False)
     # What the class body's callees stored is no part of the class: the
     # body ran once, at the class statement, whose record lays those stores
@@ -261,6 +261,37 @@ class ClassDefinitionValue(GuardStableValue):
         )
         return UnknownCalleeCallV1(target).faces(callsite, site)
 
+    def _dispatched_on_class(self, name, positional, keywords, site, *, after=None):
+        """``Cls.<name>(...)`` -- ``after``: ``super().<name>(...)`` in a
+        ``classmethod`` of the class ``after`` names, with this class its
+        ``cls`` -- as the one dispatched call looked up on this class object
+        (``receiver_dispatch.dispatch_edge_call`` with ``on_class``, #7757
+        entry 6): no receiver, the written actuals as written.  Prove looks
+        ``name`` up on the order this class's own proof states, from the
+        class after ``after`` where it is given, and binds it by the kind
+        its namespace row states (``consistency::dispatched_target``).
+        Where this class names no join symbol (no workspace root) or the
+        call has no site, no edge could name it: the one unanswered call of
+        ``Cls.<name>``, owed."""
+        definition = self.class_definition
+        symbol = None if definition is None else definition.bridge_source_symbol()
+        if symbol is None or site is None:
+            return self._unanswered_call(
+                f"{self.class_name}.{name}", positional, keywords, site
+            )
+        from sugar_lift_py_tests.receiver_dispatch import dispatch_edge_call
+
+        return dispatch_edge_call(
+            name,
+            None,
+            None,
+            tuple(positional),
+            tuple(keywords),
+            site,
+            on_class=symbol,
+            after=after,
+        )
+
     def constructor_defaults(self) -> tuple:
         """``(key, value)``: the method defaults a call of the class binds
         where it binds its actuals (``object_value.bind_call``'s
@@ -384,10 +415,9 @@ class ClassDefinitionValue(GuardStableValue):
         return True, found, holder, None, value
 
     def object_method(self, method):
-        """The function ``method`` of this class's roster as the one method
-        door binds it (``object_value.bind_method_call``): its source frame,
-        with this class -- the class whose body wrote it -- as its lexical
-        ``__class__`` cell."""
+        """The function ``method`` of this class's roster as a member of the
+        one class-namespace lookup: its source frame, with this class -- the
+        class whose body wrote it -- as its lexical ``__class__`` cell."""
         from sugar_lift_py_tests.floor import ObjectMethodValue
 
         frame = method.source_call_frame
@@ -416,13 +446,16 @@ class ClassDefinitionValue(GuardStableValue):
         for ``m`` on this class (``namespace_member``), read off the class
         and called.  Nothing selects it again by name.
 
-        - A ``def`` the holding class's body left last runs with that class
-          as its ``__class__`` cell, through the one method door, whose
-          implicit first actual the descriptor kind reads
-          (``object_value.implicit_arguments``): a plain function read off
-          its class is unbound and takes none, a ``classmethod`` takes the
-          class, a ``staticmethod`` none.  A frame the call form
-          authenticated must be that function's own.
+        - A ``def`` the class's order holds for ``m`` is the one dispatched
+          call looked up on this class object (``_dispatched_on_class``):
+          prove looks the method up on the order this class's own proof
+          states and binds it as ``__get__(None, cls)`` binds the kind its
+          namespace row states (a plain function or ``staticmethod``
+          unbound, the written actuals as they stand; a ``classmethod``
+          with the class first).  The lookup here only tells that a method
+          call is what this is (a property read off its class is not
+          callable and refuses by name).  A frame the call form
+          authenticated must be the selected function's own.
         - A function the class namespace holds as a field (``f = lambda x:
           x``, ``m = some_def``), read off its class, is the function itself,
           unbound: the function's own call applies the written actuals
@@ -430,7 +463,7 @@ class ClassDefinitionValue(GuardStableValue):
         - A lookup it does not decide is the unanswered call; a name no
           source class of the order holds, a property (the property object
           is not callable) and any other value refuse by name."""
-        decided, found, holder, method, value = self.namespace_member(name)
+        decided, found, _holder, method, value = self.namespace_member(name)
         if not decided:
             return self._unanswered_call(
                 f"{self.class_name}.{name}",
@@ -462,27 +495,12 @@ class ClassDefinitionValue(GuardStableValue):
                     requested="the frame of the method the one lookup selected",
                     fix="authenticate the call against the selected method's frame",
                 )
-            from sugar_lift_py_tests.floor.object_value import method_edge_call
-            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
-            def refuse(*, owner, blame, observed, requested, fix):
-                del owner, blame, requested, fix
-                raise SourceCallBindingGap(observed)
-
-            # The function read off its class is decided by the lookup: the
-            # call is its coordinate and edge (#7757 step 6).
-            return method_edge_call(
-                self,
-                holder.object_method(method),
-                arguments,
-                keywords,
-                class_name=self.class_name,
-                ctx=ctx,
-                owner=owner,
-                blame=blame,
-                refuse=refuse,
-                required_frame=required_frame,
-            )
+            # A ``def`` read off the class: the one dispatched call, looked
+            # up on this class object at prove (``receiver_dispatch.
+            # dispatch_edge_call`` with ``on_class``, ``consistency::
+            # dispatched_target``), never the function selected here (#7757
+            # entry 6: one MRO lookup).
+            return self._dispatched_on_class(name, arguments, keywords, blame)
         from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
 
         if isinstance(value, LambdaCallable) and required_frame is None:

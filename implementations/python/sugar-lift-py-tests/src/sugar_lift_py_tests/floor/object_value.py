@@ -203,8 +203,8 @@ class ObjectValue(FloorValue):
                 fix="construct its exact frame/descriptor binding before invoking it",
             )
         # The call is its coordinate and edge, joined at prove to the
-        # method's contract (``call_member``, ``method_edge_call``, #7757
-        # step 6): what it returns -- a native boolean, ``NotImplemented``,
+        # method's contract (``call_member``, the one dispatched call, #7757
+        # step 8): what it returns -- a native boolean, ``NotImplemented``,
         # anything -- is that contract's, never its body applied here.  The
         # comparison's value is the call's, its truth the call's own.
         return self.call_member(
@@ -1034,8 +1034,9 @@ class ObjectValue(FloorValue):
         (``method_call_sugar._source_instance_method_call``).
 
         The call is the one a plain call ``f(...)`` of a same-file function
-        is: its coordinate and an edge to the method's join symbol, joined at
-        prove (``call_member``, ``method_edge_call``, #7757 step 6).
+        is: its coordinate and an edge, the method looked up and joined at
+        prove (``call_member``, ``receiver_dispatch.dispatch_edge_call``,
+        #7757 step 8).
 
         The member is the one the one class-namespace lookup selects
         (``class_member``), read once and called (``call_member``); a lookup
@@ -1393,7 +1394,7 @@ def _plain_function(method) -> bool:
     """Whether ``method`` -- the member the one class-namespace lookup
     selected (``ObjectValue.class_member``) -- is a plain function the class
     wrote: read off an instance it is a method bound to it
-    (``implicit_arguments``).  A ``staticmethod``, a ``classmethod`` and a
+    (bound at prove, ``consistency::dispatched_target``).  A ``staticmethod``, a ``classmethod`` and a
     ``property`` are not."""
     return isinstance(method, ObjectMethodValue) and method.descriptor_kind is None
 
@@ -1469,94 +1470,6 @@ _INPLACE_BINARY_DUNDER_METHODS = {
 }
 
 
-def bind_method_call(
-    receiver,
-    method,
-    arguments,
-    keywords,
-    *,
-    class_name: str,
-    ctx,
-    owner: str,
-    blame: object,
-    refuse,
-    required_frame=None,
-):
-    """``receiver.m(*arguments, **keywords)``: the call of the selected
-    function with the implicit first actual its lookup binds
-    (``implicit_arguments``), bound to read what the call's edge supplies
-    (``method_edge_call``); its body is never applied.  Every method dispatch (``obj.m()``, ``self.m()``, a
-    ``BoundMethodValue`` called with or without ``**``, zero-argument
-    ``super().m()``, ``Cls.m()`` read off the class) binds here.
-
-    ``refuse`` is the caller's own panic for a method it cannot bind.
-    """
-    target_name = f"{class_name}.{method.name}"
-    implicit = implicit_arguments(
-        receiver,
-        method,
-        target_name=target_name,
-        owner=owner,
-        blame=blame,
-        refuse=refuse,
-    )
-    if implicit and not method.parameters:
-        refuse(
-            owner=owner,
-            blame=blame,
-            observed=target_name,
-            requested="method self parameter",
-            fix=f"add method binding sugar for `{target_name}`",
-        )
-    selected_frame = required_frame or method.source_call_frame
-    frame_cid = method.source_call_frame_cid
-    formal_coordinate_cids = method.formal_coordinate_cids
-    if required_frame is None and selected_frame is not None:
-        # The method runs where this call stands while the module body runs
-        # (an implicit dunder call included): its frame is read at that
-        # module execution site, not the class statement's (#7757 item 7).
-        from sugar_lift_py_tests.source_call_frame import (
-            frame_at_current_module_execution_site,
-        )
-
-        at_site = frame_at_current_module_execution_site(selected_frame)
-        if at_site is not selected_frame:
-            selected_frame = at_site
-            frame_cid = at_site.frame_cid
-            formal_coordinate_cids = tuple(
-                coordinate.cid for coordinate in at_site.formal_coordinates
-            )
-    if selected_frame is None and (
-        keywords or len(implicit) + len(arguments) != len(method.parameters)
-    ):
-        refuse(
-            owner=owner,
-            blame=blame,
-            observed=target_name,
-            requested="arguments matching the constructor-bound method",
-            fix="bind through the authenticated method frame or keep loud",
-        )
-    return bind_call(
-        target_name,
-        (*implicit, *arguments),
-        keywords,
-        frame=selected_frame,
-        parameters=method.parameters,
-        frame_cid=frame_cid,
-        formal_coordinate_cids=formal_coordinate_cids,
-        lexical_defining_class=method.defining_class,
-        ctx=ctx,
-        owner=owner,
-        blame=blame,
-        refuse=refuse,
-        # A formal the call omits binds the default the method's ``def``
-        # statement evaluated when the class body ran, carried on the class
-        # that defines it (``ClassDefinitionValue.method_defaults``), as a
-        # lambda value carries its own.
-        defaults=getattr(method.defining_class, "method_defaults", ()),
-    )
-
-
 def receiver_class_decided(receiver) -> bool:
     """Whether the class whose namespace a method call on ``receiver`` reads
     is decided here: a source class value itself (``Cls.m``, ``super()`` in a
@@ -1576,182 +1489,6 @@ def receiver_class_decided(receiver) -> bool:
     if isinstance(receiver, ClassDefinitionValue):
         return True
     return isinstance(receiver, ObjectValue) and receiver.allocation is not None
-
-
-def method_edge_call(
-    receiver,
-    method,
-    arguments,
-    keywords,
-    *,
-    class_name: str,
-    ctx,
-    owner: str,
-    blame: object,
-    refuse,
-    required_frame=None,
-    call_occurrence=None,
-):
-    """``receiver.m(*arguments, **keywords)`` whose function a class named
-    explicitly selects (``method``): ``Cls.m(...)`` on the class value, and
-    ``super().m(...)`` on the class after ``__class__`` in the order.  A
-    method called on an instance is never selected here: it is the one
-    dispatched call over the instance's class (``ObjectValue.call_member``,
-    ``receiver_dispatch.dispatch_edge_call``, #7757 step 8).  Its coordinate
-    and an edge to
-    the method's join symbol (``python:<module>.<Class>.<m>``,
-    ``lambda_callable.definition_edge_call``), joined at prove to the
-    method's contract as a call of a ``def`` is (#7757 step 6).  The method's
-    body is never applied here.
-
-    The call is bound by the one method door (``bind_method_call``: the
-    implicit first actual its descriptor kind binds, the defaults its class
-    carries) only to read what the edge supplies; the implicit actual is the
-    edge's first positional actual.  A generator method and an ``async def``
-    method are calls like any other: what the call returns (a generator, a
-    coroutine) is what the method's contract states, never its body here.
-    A method with no source frame names no definition to join: the one
-    unanswered call of its name, owed."""
-    from sugar_lift_py_tests.floor.lambda_callable import (
-        definition_edge_call,
-        variadic_formals,
-    )
-
-    bound = bind_method_call(
-        receiver,
-        method,
-        arguments,
-        keywords,
-        class_name=class_name,
-        ctx=ctx,
-        owner=owner,
-        blame=blame,
-        refuse=refuse,
-        required_frame=required_frame,
-    )
-    frame = required_frame or method.source_call_frame
-    if frame is None:
-        return _frameless_method_call(bound, blame)
-    implicit = implicit_arguments(
-        receiver,
-        method,
-        target_name=bound.target_name,
-        owner=owner,
-        blame=blame,
-        refuse=refuse,
-    )
-    definition = frame.owner
-    from sugar_lift_py_tests.floor.class_definition_value import (
-        ClassDefinitionValue,
-    )
-
-    # A plain function read off an instance (``super().m(...)``): the call
-    # form passes the receiver itself as the call's first positional actual,
-    # keyed ``"0"`` (``receiver_dispatch.class_arguments``).  The caller reads
-    # the receiver after the call by that key, as after a dispatched call
-    # (``receiver_dispatch.receiver_after_dispatch``), and prove's one binder
-    # pairs it with the method's receiver parameter (#7757 step 7).
-    testimony = {}
-    if (
-        implicit
-        and implicit[0] is receiver
-        and not isinstance(receiver, ClassDefinitionValue)
-    ):
-        testimony["runtime_dispatch_receiver"] = receiver
-    return definition_edge_call(
-        symbol_definition=definition,
-        signature=definition,
-        parameters=tuple(method.parameters),
-        packed=variadic_formals(frame),
-        positional=(*implicit, *arguments),
-        keywords=tuple(keywords),
-        captured=(),
-        actuals=tuple(bound.arg_values),
-        site=blame,
-        call_occurrence=call_occurrence,
-        caller_ctx=ctx,
-        fallback_target=bound.target_name,
-        implicit=len(implicit),
-        **testimony,
-    )
-
-
-def _frameless_method_call(bound, site):
-    """A method call ``bind_method_call`` bound for a method no source frame
-    states (``ObjectMethodValue.source_call_frame`` None): no definition
-    names a join symbol, so it is the one unanswered call of its name
-    (``UnknownCalleeCallV1``), two-faced and owed, its completion the call's
-    own result coordinate.  Its body is never applied (#7757 step 6)."""
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.ir import ctor, str_const
-    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
-
-    target = bound.target_name
-    owner = str(site)
-    keyword_names = tuple(bound.keyword_names or ())
-    count = len(bound.arg_values) - len(keyword_names)
-    positional = bound.arg_values[:count]
-    keyword_values = bound.arg_values[count:]
-    callsite = CallSiteValue(
-        target_name=target,
-        arg_values=tuple(bound.arg_values),
-        parameters=(),
-        term=ctor(
-            call_symbol(target),
-            [value.to_term(owner=owner) for value in positional]
-            + [
-                ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
-                for name, value in zip(keyword_names, keyword_values)
-            ],
-            symbol_kind="coordinate",
-        ),
-        body=None,
-        keyword_names=keyword_names,
-        site=site,
-    )
-    return UnknownCalleeCallV1(target).faces(callsite, site)
-
-
-def implicit_arguments(receiver, method, *, target_name, owner, blame, refuse):
-    """The actuals a lookup of ``method`` on ``receiver`` binds before the
-    written ones (the descriptor protocol, ``object.__getattribute__`` /
-    ``type.__getattribute__``):
-
-    - a plain function read off an instance is a bound method: the instance;
-    - a plain function read off its class is the function itself, unbound:
-      nothing (``C.f(obj, x)`` passes ``obj`` as written);
-    - a ``classmethod`` binds the class: the class it is read off, or the
-      instance's class;
-    - a ``staticmethod`` binds nothing.
-
-    The descriptor kind is the builtin decorator's, read through the one
-    builtin door (``ClassDef._method_descriptor_kind``).  A receiver is a
-    class when it is a source class value (``ClassDefinitionValue``),
-    including one ``super()`` was given as its second argument.
-    """
-    from sugar_lift_py_tests.floor.class_definition_value import (
-        ClassDefinitionValue,
-    )
-
-    kind = method.descriptor_kind
-    if kind == "staticmethod":
-        return ()
-    on_class = isinstance(receiver, ClassDefinitionValue)
-    if kind == "classmethod":
-        cls = receiver if on_class else getattr(receiver, "defining_class", None)
-        if cls is None:
-            refuse(
-                owner=owner,
-                blame=blame,
-                observed=f"{target_name} is a classmethod read off a receiver "
-                "whose class is not carried",
-                requested="the receiver's class, the classmethod's first actual",
-                fix="carry the receiver's defining class or keep the call loud",
-            )
-        return (cls,)
-    if on_class:
-        return ()
-    return (receiver,)
 
 
 def bind_call(
@@ -1776,10 +1513,10 @@ def bind_call(
 
     Every call binds here, whatever form it is written in: a plain call
     ``f(...)`` (``CallSiteSugar``), a computed callee ``(lambda x: ...)(...)``
-    (``ComputedCallSugar``), a call with ``*``/``**`` (``SpreadCallSugar``),
-    a method call ``obj.m(...)``/``self.m(...)``/``super().m(...)`` (the
-    receiver first, ``bind_method_call``) and a class call (the class
-    statement's constructor frame).  The frame's own ``bind_actuals`` puts
+    (``ComputedCallSugar``), a call with ``*``/``**`` (``SpreadCallSugar``)
+    and a class call (the class statement's constructor frame); a method
+    call is the one dispatched call (``receiver_dispatch.
+    dispatch_edge_call``), never bound here.  The frame's own ``bind_actuals`` puts
     every actual in its formal slot; the result is the bodiless
     ``CallSiteValue`` whose actuals the call's edge supplies
     (``lambda_callable.definition_edge_call``): no body is bound, and none is

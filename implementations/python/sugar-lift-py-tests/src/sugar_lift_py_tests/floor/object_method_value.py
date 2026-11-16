@@ -7,11 +7,12 @@ from .floor_value import FloorValue
 
 @dataclass(frozen=True)
 class ObjectMethodValue(FloorValue):
-    """A source method of a class's roster, as the one method door binds it
-    (``object_value.bind_method_call``): its name, its formals and its frame.
-    It carries no body: a call of it is its coordinate and edge
-    (``object_value.method_edge_call``, #7757 step 6), and what its body
-    does is its own universe's contract, joined at prove."""
+    """A source method of a class's roster, as the one class-namespace lookup
+    reads it: its name, its formals and its frame.  It carries no body: a
+    call of it is the one dispatched call, looked up and bound at prove
+    (``receiver_dispatch.dispatch_edge_call``, ``consistency::
+    dispatched_target``, #7757 step 8), and what its body does is its own
+    universe's contract, joined at prove."""
 
     name: str
     parameters: tuple[str, ...]

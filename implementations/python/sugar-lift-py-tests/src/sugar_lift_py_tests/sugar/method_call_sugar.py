@@ -426,7 +426,7 @@ def _source_instance_method_call(
     value it answers is applied by the one routine (``apply_callee``):
 
     - a method the class binds is a ``BoundMethodValue`` carrying the member
-      the lookup selected, bound and applied by ``bind_method_call``
+      the lookup selected, called as the one dispatched call
       (``ObjectValue.call_member``), and so is a function the class
       namespace holds as a field (``function.__get__`` binds the receiver);
     - an instance field that shadows the method is that field's value
