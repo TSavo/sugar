@@ -3456,6 +3456,32 @@ impl SourceSpan {
     }
 }
 
+/// An owed operation's site (an `undecided` member with no symbol), and the
+/// definition span of every function contract in the pool that holds it
+/// (`within`): what decides whose own proof owes it (`owed_by`).
+#[derive(Debug, Clone)]
+struct OperationSite {
+    site: SourceSpan,
+    within: Vec<SourceSpan>,
+}
+
+impl OperationSite {
+    /// The operation is owed by the contract whose definition is
+    /// `definition`: it lies inside that definition and inside no definition
+    /// nested in it. An operation inside a nested `def` or `lambda` (one that
+    /// states its own contract) is that nested function's: a caller reads it
+    /// only through the nested contract's own join, where it is owed in turn.
+    /// The outer post names the nested function by its value or its call's
+    /// result, never the operation (#8985).
+    fn owed_by(&self, definition: &SourceSpan) -> bool {
+        definition.contains(&self.site)
+            && !self
+                .within
+                .iter()
+                .any(|nested| nested != definition && definition.contains(nested))
+    }
+}
+
 /// The span a function contract's definition covers: its def warrant, the
 /// first `sourceWarrants` entry that states no `role` (the `def` memento the
 /// lifter states first, `function_def_memento`; an assertion's warrant
@@ -3718,10 +3744,10 @@ struct AmbientPost {
     /// it stands, answered at a read whose call is a call of a function value
     /// stated as its join symbol (`function_value_answer`).
     value_calls: Option<Arc<FunctionAnswers>>,
-    /// `Some` for the owed entry of a member with no symbol: its site's span,
-    /// by which an answering contract whose definition holds it owes it
-    /// (`owed_in_definition`).
-    operation_site: Option<SourceSpan>,
+    /// `Some` for the owed entry of a member with no symbol: its site's span
+    /// and the definitions that hold it, by which the answering contract
+    /// whose own definition holds it owes it (`owed_in_definition`).
+    operation_site: Option<OperationSite>,
 }
 
 #[derive(Debug, Clone)]
@@ -7082,6 +7108,18 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         }
         Some(Arc::new(answers))
     };
+    // Every function contract's definition span (its def warrant): which of
+    // them holds an owed operation decides whose own proof owes it
+    // (`OperationSite::owed_by`).
+    let definitions: Vec<SourceSpan> = if operations.is_empty() {
+        Vec::new()
+    } else {
+        pool.contract_members()
+            .filter_map(|(_cid, member)| pool.contract_body_for_member(member))
+            .filter(|body| body.is_object())
+            .filter_map(|body| definition_span(&body))
+            .collect()
+    };
     for (site_cid, (member_cid, subject, span)) in operations {
         let mut post = owed_post(
             &subject,
@@ -7090,7 +7128,12 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             DroppedAmbientPostReason::Unanswered,
         );
         post.value_calls = values.clone();
-        post.operation_site = Some(span);
+        let within = definitions
+            .iter()
+            .filter(|definition| definition.contains(&span))
+            .cloned()
+            .collect();
+        post.operation_site = Some(OperationSite { site: span, within });
         owed.push(post);
     }
     let recursive = recursive_contract_cids(&posts, &owed);
@@ -8528,7 +8571,7 @@ fn owed_in_definition(
         .filter(|owed| {
             owed.operation_site
                 .as_ref()
-                .is_some_and(|site| definition.contains(site))
+                .is_some_and(|operation| operation.owed_by(definition))
         })
         .filter(|owed| !named.contains(owed.site_cid.as_str()))
         .map(|owed| DroppedAmbientPost {
@@ -17621,6 +17664,60 @@ mod tests {
                 .any(|(entry, _atom)| entry.member_cid == owed_member),
             "{:?}",
             partition.owed_operations
+        );
+    }
+
+    #[test]
+    fn an_owed_operation_inside_a_nested_definition_is_not_the_outer_posts() {
+        // `def same(x): return lambda: x.k is x.j`: the owed operation at
+        // test_consumer.py:2:23 lies inside same's definition and inside a
+        // nested one (2:10 to 2:40) that states its own contract. It is the
+        // nested function's own debt, owed where that contract is joined;
+        // same's post, which names the nested function and never the
+        // operation, joins without it.
+        let (mut pool, claim, owed_member) = same_owes_pool(3, eqf(var("out"), var("x")), true);
+        pool.insert_unanchored_for_tests(
+            test_cid(&blake3_512_of(b"owed-in-definition-nested")),
+            json!({
+                "evidence": {
+                    "kind": "contract",
+                    "body": {
+                        "contractName": "<lambda>",
+                        "formals": [],
+                        "outBinding": "out",
+                        "post": eqf(var("out"), int(1)),
+                        "sourceWarrants": [{
+                            "kind": "source-memento",
+                            "file": "test_consumer.py",
+                            "span": {
+                                "start_line": 2,
+                                "start_col": 10,
+                                "end_line": 2,
+                                "end_col": 40
+                            },
+                            "sourceCid": format!("blake3-512:{}", "e".repeat(128)),
+                            "sourceFunctionName": "<lambda>"
+                        }]
+                    }
+                }
+            }),
+        );
+        let partition =
+            linked_ambient_post_instances_for_inv(&claim, &collect_ambient_posts(&pool));
+        assert_eq!(partition.kept.len(), 1, "{partition:?}");
+        assert!(
+            partition.dropped.iter().all(|d| d.member_cid != owed_member),
+            "{:?}",
+            partition.dropped
+        );
+        // Without the nested definition the same operation is same's own.
+        let (pool, claim, owed_member) = same_owes_pool(3, eqf(var("out"), var("x")), true);
+        let partition =
+            linked_ambient_post_instances_for_inv(&claim, &collect_ambient_posts(&pool));
+        assert!(
+            partition.dropped.iter().any(|d| d.member_cid == owed_member),
+            "{:?}",
+            partition.dropped
         );
     }
 
