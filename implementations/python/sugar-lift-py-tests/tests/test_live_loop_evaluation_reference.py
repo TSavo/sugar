@@ -1395,8 +1395,15 @@ def _recurrence_standing_as(stand: TermValue):
 def _left_by_the_item(body, *, exhausted=None):
     """The loop's exits from the symbolic item's ``body``, the recurrence
     standing as ``TermValue(0)`` after what the item left."""
+    # The loop stand-in answers what the calls' records it made are by the
+    # real rule (``_records_made_here``, #9110): none, since this loop never
+    # held where its first item began (``entered`` None).
+    loop = SimpleNamespace(target_cid=LOOP, entered=None)
+    loop._records_made_here = lambda context: LoopRecurrenceSugar._records_made_here(
+        loop, context
+    )
     return LoopRecurrenceSugar._leave_symbolic_item(
-        SimpleNamespace(target_cid=LOOP),
+        loop,
         body,
         _recurrence_standing_as(TermValue(0)),
         atomic("test.item", []),

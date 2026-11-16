@@ -124,7 +124,7 @@ def test_undecided_comparison_predicate_is_not_native_completion_testimony(
     # "<op>", left, right, <key>), <key>)``, operands in the atom's order
     # (``left in right`` is item then container).
     assert type(completed.value) is PredicateValue
-    assert completed.value.site is site
+    assert completed.value.site == site
     assert completed.value.formula.name == "python:truth_result"
     compared = completed.value.formula.args[0]
     assert compared.name == "python:compare_result"
