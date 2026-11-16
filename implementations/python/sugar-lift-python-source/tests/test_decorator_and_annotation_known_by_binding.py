@@ -14,6 +14,8 @@ is then undecided, never written as if the field were plain.
 
 from __future__ import annotations
 
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
     Call,
     ClassDef,
@@ -22,8 +24,15 @@ from sugar_source_tree.nodes import (
     Name,
     call_applies_own_frame,
 )
+from sugar_source_tree.tree import SourceFile
 
-from test_cited_unreadable_manager import _unit
+
+def _unit(source: str):
+    """The typed unit of ``source``: the reader asks it how names bind."""
+    return SourceFile(
+        (source, "e.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).unit
 
 
 def _node(source: str, kind, name: str):

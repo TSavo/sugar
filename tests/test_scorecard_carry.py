@@ -43,3 +43,23 @@ def test_filtered_summaries_count_only_the_listed_files(tmp_path):
     assert totals["counts"]["collected"] == 1
     assert totals["counts"]["passed"] == 1
     assert totals["counts"]["collectionError"] == 0
+
+
+def test_a_collection_error_is_one_failing_test_in_the_row(tmp_path):
+    """A file that fails to import is in ``total`` and ``failed``: the row's
+    passed/total cell shows it failing, never a smaller total (#8416)."""
+    shard = tmp_path / "shard-00.json"
+    shard.write_text(
+        '{"items": {"a": {"buckets": ["passed"]}, "b": {"buckets": ["failed"]}},'
+        ' "collectionErrors": ["pkg/tests/test_stale_import.py"]}',
+        encoding="utf-8",
+    )
+    result = carry.scorecard_result(carry.summarize([shard], "source"))
+    assert result == {"measured": True, "passed": 1, "total": 3, "failed": 2}
+
+
+def test_a_shard_whose_every_file_failed_to_import_is_measured(tmp_path):
+    shard = tmp_path / "shard-00.json"
+    shard.write_text('{"items": {}, "collectionErrors": ["t.py"]}', encoding="utf-8")
+    result = carry.scorecard_result(carry.summarize([shard], "source"))
+    assert result == {"measured": True, "passed": 0, "total": 1, "failed": 1}

@@ -150,6 +150,26 @@ def summarize(
     }
 
 
+def scorecard_result(totals: Mapping[str, Any]) -> dict[str, Any]:
+    """The measure's ``passed``/``total``/``failed`` for the scorecard row.
+
+    A test file that failed to import (pytest ran under
+    --continue-on-collection-errors, tools/main_scorecard_suite.sh) collected
+    no tests, so it is in no item; it is counted as one failing test, in
+    ``total`` as well as ``failed``. The row's cell is passed/total and the
+    poster reads failing as total - passed, so a file that stopped importing
+    raises the failing count instead of vanishing from the total (#8416).
+    """
+    c = totals["counts"]
+    return {
+        "measured": bool(totals["inputsRead"])
+        and (c["collected"] > 0 or c["collectionError"] > 0),
+        "passed": c["passed"],
+        "total": c["collected"] + c["collectionError"],
+        "failed": c["failed"] + c["error"] + c["collectionError"],
+    }
+
+
 def cmd_summarize(args: argparse.Namespace) -> int:
     only_files: list[str] | None = None
     if args.only_files:
@@ -167,10 +187,7 @@ def cmd_summarize(args: argparse.Namespace) -> int:
         _write_json(
             args.result,
             {
-                "measured": bool(totals["inputsRead"]) and c["collected"] > 0,
-                "passed": c["passed"],
-                "total": c["collected"],
-                "failed": c["failed"] + c["error"] + c["collectionError"],
+                **scorecard_result(totals),
                 "jobWallSeconds": int(time.time() - float(t0)) if t0 else None,
             },
         )
