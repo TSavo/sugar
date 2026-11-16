@@ -250,8 +250,8 @@ class MappingObjectValue(ObjectValue):
         Where it decided the storage after it (a ``DictValue``), this
         instance holding those entries.  Where it did not -- a key whose
         presence is not decided, or base storage that is never current
-        (``_builtin_dict``) under a deletion, which must read whether the key
-        is held -- it is the one undecided item mutation
+        (``_builtin_dict``) under a store or a deletion, each of which must
+        read whether the key is held -- it is the one undecided item mutation
         (``store_effect_sugar.undecided_item_mutation_faces``), whose
         completed face states the receiver after the call as unknown
         (``python:receiver_after_call``) -- that unknown post-state is the

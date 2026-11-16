@@ -316,6 +316,22 @@ class DictValue(GuardStableValue):
         return self.undecided_subscript(index, site, owner="DictValue.subscript")
 
     def setitem(self, index, value, site, ctx):
+        # Whether the key is held (overwrite in place) or not (append), and
+        # whether a stored key's ``==`` against it raises, is read only from
+        # entries that are current (``object_identity.contents_current``), as
+        # ``delitem`` reads them; otherwise the store is the one undecided
+        # item mutation: no entry is written into contents that are not the
+        # dict's contents now, and the store's raise face is carried.
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
+        )
+
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            return undecided_item_mutation_faces(
+                site, method="__setitem__", owner="DictValue.setitem"
+            )
         guarded = self._guarded_setitem(index, value, site, ctx)
         if guarded is not None:
             return guarded
@@ -333,10 +349,6 @@ class DictValue(GuardStableValue):
             return ExitSet.completed(replace(self, entries=tuple(entries)))
         # Whether the key is held is not decided (its hash or its equality
         # against a stored key is open): the one undecided item mutation.
-        from sugar_lift_py_tests.sugar.store_effect_sugar import (
-            undecided_item_mutation_faces,
-        )
-
         return undecided_item_mutation_faces(
             site, method="__setitem__", owner="DictValue.setitem"
         )
