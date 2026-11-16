@@ -9,22 +9,34 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 from sugar_source_tree.panic import SugarNotWritten
-from sugar_source_tree.tree import SourceFile
 from with_resolution_fixture import source_file_with_preconstruction
 
 
 def _val(src):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write("import pytest\nimport contextlib\nimport tm\n" + src)
-        path = f.name
-    return (
-        next(source_file_with_preconstruction(Path(path)).functions())
-        .sugar()
-        .desugar()
-        .value
-    )
+    """The function's one reduction: its arms (an ``ExitSet``), through the
+    entrance the lift reduces every function by (module globals bound)."""
+    return function_universe_outcome(_fn(src))
+
+
+def _completed(out):
+    """The one unconditional completed value of ``out``."""
+    value = out.completed_value()
+    assert value is not None, out
+    return value
+
+
+def _post(out):
+    return _completed(out).post()
+
+
+def _invs(out):
+    return _completed(out).invs()
+
+
+def _record(out):
+    return _completed(out).record
 
 
 def _completed_val(src, callee):
@@ -67,16 +79,25 @@ def _exception_identity(function, name: str):
     return identity
 
 
-def _incompletes(v):
-    """The halted arms of the recorded entries in which every arm halts."""
-    from sugar_lift_py_tests.outcome import ExitSet
+def _incompletes(out):
+    """Every halt ``out`` leaves by: its halted arms, and the halted arms of
+    the all-halting entries a completed arm's record carries."""
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
 
-    return [
-        halt
-        for entry in v.record.contribution()
-        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
-        for halt in entry.halts()
-    ]
+    halts = list(out.halts())
+    for face in out.exits:
+        if not isinstance(face, Completed):
+            continue
+        record = getattr(face.value, "record", None)
+        if record is None:
+            continue
+        halts.extend(
+            halt
+            for entry in record.contribution()
+            if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+            for halt in entry.halts()
+        )
+    return halts
 
 
 def test_matching_except_consumes_raise_and_try_completes():
@@ -92,7 +113,7 @@ def test_matching_except_consumes_raise_and_try_completes():
         "    return z\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+    assert _post(v).args[1].name == "z"
 
 
 def test_handler_own_raise_propagates():
@@ -145,7 +166,7 @@ def test_except_valueerror_does_catch_valueerror():
         "    return z\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+    assert _post(v).args[1].name == "z"
 
 
 def test_renamed_handler_and_raise_match_by_authenticated_identity():
@@ -161,7 +182,7 @@ def test_renamed_handler_and_raise_match_by_authenticated_identity():
         "    return z\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+    assert _post(v).args[1].name == "z"
 
 
 def test_source_subclass_matches_authenticated_base_coordinate():
@@ -179,7 +200,7 @@ def test_source_subclass_matches_authenticated_base_coordinate():
         "    return z\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+    assert _post(v).args[1].name == "z"
 
 
 def test_source_unrelated_handler_propagates_by_authenticated_mro():
@@ -204,16 +225,23 @@ def test_source_unrelated_handler_propagates_by_authenticated_mro():
     assert isinstance(reds[0].effect, RaiseEffect)
 
 
-def test_same_spelling_unresolved_handler_identity_stays_loud():
-    """A formal named E is not exception authority on either side."""
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(E):\n"
-            "    try:\n"
-            "        raise E\n"
-            "    except E:\n"
-            "        pass\n"
-        ).sugar()
+def test_same_spelling_unresolved_handler_identity_is_retained_not_decided():
+    """A formal named E is not exception authority on either side.
+
+    Neither operand has an authenticated identity, so the match is the
+    retained question ``adt.is_python_type(raised, handler)``
+    (``authenticated_exception_matching``): the same spelling never decides
+    it, and the miss face still raises.  (It once refused by name; main
+    carries the undecided question instead, #7757.)"""
+    out = _val(
+        "def A(E):\n"
+        "    try:\n"
+        "        raise E\n"
+        "    except E:\n"
+        "        pass\n"
+    )
+    assert "adt.is_python_type" in repr(out)
+    assert _incompletes(out), "the miss face of the retained match must still raise"
 
 
 def test_unresolved_raised_identity_is_retained_not_decided_at_the_router():
@@ -282,7 +310,7 @@ def test_bare_reraise_reemits_the_exact_inflight_raise():
         function, "ValueError"
     )
     assert halt.effect.exception_name == "ValueError"
-    assert halt.effect.occurrence.endswith(":6:8")
+    assert halt.effect.occurrence.value.endswith(":6:8")
 
 
 def test_nested_bare_reraise_uses_the_nearest_handler_slot():
@@ -317,7 +345,7 @@ def test_nested_bare_reraise_uses_the_nearest_handler_slot():
     assert len(effects) == 1
     assert isinstance(effects[0], RaiseEffect)
     assert effects[0].exception_name == "KeyError"
-    assert effects[0].occurrence.endswith(":9:12")
+    assert effects[0].occurrence.value.endswith(":9:12")
 
 
 def test_handler_effect_slots_are_content_addressed_occurrences():
@@ -351,7 +379,7 @@ def test_else_runs_when_body_is_raise_free():
         "        return z\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+    assert _post(v).args[1].name == "z"
 
 
 def test_else_does_not_run_when_raise_is_caught():
@@ -366,7 +394,7 @@ def test_else_does_not_run_when_raise_is_caught():
         "        return 0\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+    assert _post(v).args[1].name == "z"
 
 
 def test_finally_reduces_on_caught_path():
@@ -382,7 +410,7 @@ def test_finally_reduces_on_caught_path():
         "        return z\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+    assert _post(v).args[1].name == "z"
 
 
 def test_finally_reduces_on_uncaught_path():
@@ -437,7 +465,7 @@ def test_finally_return_supersedes_caught_path():
         "        return z\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+    assert _post(v).args[1].name == "z"
 
 
 def test_finally_on_normal_completion():
@@ -451,7 +479,7 @@ def test_finally_on_normal_completion():
         "    return z\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+    assert _post(v).args[1].name == "z"
 
 
 def test_conditional_raise_both_exits_survive_through_finally():
@@ -484,7 +512,7 @@ def test_conditional_raise_both_exits_survive_through_finally():
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
     from sugar_lift_py_tests.ir import not_
 
-    returns = [e for e in v.record.contribution() if isinstance(e, GuardedReturn)]
+    returns = [e for e in _record(v).contribution() if isinstance(e, GuardedReturn)]
     assert len(returns) == 2
     assert {entry.value.value for entry in returns} == {1, 2}
     assert returns[1].guards[0] == not_(returns[0].guards[0])
@@ -511,7 +539,7 @@ def test_conditional_raise_assign_paths_through_finally_no_residual_halt():
         "    return x\n"
     )
     assert _incompletes(v) == []
-    post = v.post()
+    post = _post(v)
     assert post.kind == "and"
     assert {face.operands[1].args[1].value for face in post.operands} == {1, 2}
     by_value = {
@@ -533,7 +561,7 @@ def test_finally_fallthrough_preserves_break_for_the_matching_loop():
         "    return marker\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].value == 1
+    assert _post(v).args[1].value == 1
 
 
 def test_finally_fallthrough_preserves_continue_for_the_matching_loop():
@@ -548,7 +576,7 @@ def test_finally_fallthrough_preserves_continue_for_the_matching_loop():
         "    return marker\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].value == 1
+    assert _post(v).args[1].value == 1
 
 
 def test_finally_raise_supersedes_break_instead_of_fabricating_loop_exit():
@@ -588,7 +616,7 @@ def test_finally_return_supersedes_break_exit():
         "    return 0\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].value == 13
+    assert _post(v).args[1].value == 13
 
 
 def test_nested_exception_group_constructs_tree_without_flattening():
@@ -720,10 +748,20 @@ def test_except_star_matches_renamed_source_subclass_by_mro_identity():
         .sugar()
         .desugar()
     )
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
     assert outcome.halts() == outcome.exits
-    (halt,) = outcome.halts()
-    assert isinstance(halt.effect, GroupedRaiseEffect)
+    # ``Renamed()`` is a class call: the one call edge, which may raise (its
+    # ``__init__`` is joined at prove, never run here), so its own
+    # undetermined halt rides beside the group's.  The group is the one halt
+    # whose residual is decided by the source MRO.
+    (halt,) = [h for h in outcome.halts() if isinstance(h.effect, GroupedRaiseEffect)]
     assert [leaf.exception_name for leaf in halt.effect.children] == ["TypeError"]
+    assert all(
+        isinstance(h.effect, UndeterminedRaiseEffect)
+        for h in outcome.halts()
+        if h is not halt
+    )
 
 
 def test_except_star_handler_raise_regroups_with_unmatched_residual():
@@ -749,21 +787,25 @@ def test_except_star_handler_raise_regroups_with_unmatched_residual():
 
 
 def test_shadowed_exception_group_spelling_does_not_construct_group_effect():
-    from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
-
-    outcome = (
-        _fn(
-            "ExceptionGroup = lambda message, members: ValueError()\n"
-            "def A():\n"
-            "    raise ExceptionGroup('g', [ValueError()])\n"
-        )
-        .sugar()
-        .desugar()
+    """``ExceptionGroup`` here is the module global the assignment bound, read
+    through the entrance every function is reduced by (its module globals
+    bound, ``function_universe_outcome``): a call of it is no group
+    construction, whatever its spelling."""
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.effect.raise_effect import (
+        RaiseEffect,
+        UndeterminedRaiseEffect,
     )
-    assert outcome.halts() == outcome.exits
-    (halt,) = outcome.halts()
-    assert isinstance(halt.effect, RaiseEffect)
-    assert not isinstance(halt.effect, GroupedRaiseEffect)
+
+    outcome = _val(
+        "ExceptionGroup = lambda message, members: ValueError()\n"
+        "def A():\n"
+        "    raise ExceptionGroup('g', [ValueError()])\n"
+    )
+    assert outcome.halts() and outcome.halts() == outcome.exits
+    for halt in outcome.halts():
+        assert isinstance(halt.effect, (RaiseEffect, UndeterminedRaiseEffect))
+        assert not isinstance(halt.effect, GroupedRaiseEffect)
 
 
 def test_ordinary_except_does_not_consume_grouped_raise():
@@ -858,7 +900,7 @@ def test_false_arm_conditional_raise_routes_with_reverse_polarity():
         "    return x\n"
     )
     assert _incompletes(v) == []
-    post = v.post()
+    post = _post(v)
     assert post.kind == "and"
     by_value = {
         face.operands[1].args[1].value: face.operands[0] for face in post.operands
@@ -878,34 +920,34 @@ def test_except_as_binds_matching_raise_witness_in_handler():
         "        return error\n"
     )
     assert _incompletes(v) == []
-    post = v.post()
+    post = _post(v)
     assert post.args[0].name == "out"
     assert post.args[1].name == "python:effect_slot"
     # Authentication is explicit record testimony (not ambient seal).
-    inv_names = [inv.name for inv in v.invs()]
+    inv_names = [inv.name for inv in _invs(v)]
     assert "effect_slot_type" in inv_names or any(
         getattr(inv, "name", None) == "effect_slot_type"
         or (hasattr(inv, "args") and inv.name == "=")
-        for inv in v.invs()
+        for inv in _invs(v)
     )
     # Find effect_slot_type fact: atomic effect_slot_type(S) = "ValueError"
     typed = [
         inv
-        for inv in v.invs()
+        for inv in _invs(v)
         if inv.name == "=" and getattr(inv.args[0], "name", None) == "effect_slot_type"
     ]
     assert (
         typed
-    ), f"missing effect_slot_type in {[i.name for i in v.invs()]}: {v.invs()}"
+    ), f"missing effect_slot_type in {[i.name for i in _invs(v)]}: {_invs(v)}"
     assert typed[0].args[1].value == "ValueError"
     # Witness identity is the slot itself (post), not a type-derived equation.
     assert not any(
         inv.name == "=" and getattr(inv.args[0], "name", None) == "effect_slot_identity"
-        for inv in v.invs()
+        for inv in _invs(v)
     )
     origins = [
         inv
-        for inv in v.invs()
+        for inv in _invs(v)
         if inv.name == "="
         and getattr(inv.args[0], "name", None) == "effect_slot_origin"
     ]
@@ -934,7 +976,7 @@ def test_except_as_bound_name_observes_the_routed_effect_identity():
         "            return error.__context__\n"
     )
     assert _incompletes(v) == []
-    post = v.post()
+    post = _post(v)
     # __context__ of the routed ValueError is the handled ImportError's
     # raised value — a constructed exception coordinate, not the slot itself.
     assert post.args[0].name == "out"
@@ -944,7 +986,7 @@ def test_except_as_bound_name_observes_the_routed_effect_identity():
 
     assert not any(
         isinstance(e, ExitSet) and e.exits and e.halts() == e.exits
-        for e in v.record.contribution()
+        for e in _record(v).contribution()
     )
 
 
@@ -977,7 +1019,7 @@ def test_tuple_except_catches_any_exactly_listed_type():
         "    return z\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+    assert _post(v).args[1].name == "z"
 
 
 def test_tuple_except_does_not_catch_unlisted_type():
@@ -1006,10 +1048,10 @@ def test_tuple_except_as_binds_the_matched_type_witness():
         "        return error\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "python:effect_slot"
+    assert _post(v).args[1].name == "python:effect_slot"
     typed = [
         inv
-        for inv in v.invs()
+        for inv in _invs(v)
         if inv.name == "=" and getattr(inv.args[0], "name", None) == "effect_slot_type"
     ]
     assert typed and typed[0].args[1].value == "ValueError"
@@ -1025,45 +1067,64 @@ def test_bare_except_catches_arbitrary_raise():
         "    return z\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[1].name == "z"
+    assert _post(v).args[1].name == "z"
 
 
-def test_except_star_rejects_ordinary_raise_effect():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(z):\n"
-            "    try:\n"
-            "        raise ValueError\n"
-            "    except* ValueError:\n"
-            "        pass\n"
-            "    return z\n"
-        ).sugar().desugar()
+def test_except_star_matches_an_ordinary_raise_as_its_one_member_group():
+    """``except*`` over a plain ``raise``: CPython matches the exception as
+    the one-member group (``try_star_sugar``), so ``except* ValueError``
+    consumes it and the function goes on.  (It once refused by name.)"""
+    v = _val(
+        "def A(z):\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except* ValueError:\n"
+        "        pass\n"
+        "    return z\n"
+    )
+    assert _incompletes(v) == []
+    assert _post(v).args[1].name == "z"
 
 
-def test_non_name_except_type_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn(
+def _never_completes(out):
+    from sugar_lift_py_tests.outcome import Completed
+
+    assert out.exits, out
+    assert not any(isinstance(face, Completed) for face in out.exits), out
+
+
+def test_non_name_except_type_never_consumes_the_raise():
+    """``except exception_type():`` with ``exception_type`` bound nowhere:
+    evaluating the handler type reads a name every read of which raises
+    ``NameError`` (``SourceUnit.name_bound_nowhere``), so nothing consumes
+    the raise and no face completes.  (It once refused by name.)"""
+    _never_completes(
+        _val(
             "def A(z):\n"
             "    try:\n"
             "        raise ValueError\n"
             "    except exception_type():\n"
             "        pass\n"
             "    return z\n"
-        ).sugar()
+        )
+    )
 
 
-def test_dotted_except_without_authenticated_import_identity_stays_loud():
-    # Equal dotted spelling is not exception authority. The import-binding
-    # bridge must eventually provide a coordinate; until then this is loud.
-    with pytest.raises(SugarNotWritten):
-        _fn(
+def test_dotted_except_without_authenticated_import_identity_never_matches():
+    """Equal dotted spelling is not exception authority: ``os`` is bound
+    nowhere, so ``raise os.error`` and ``except os.error`` each read a
+    ``NameError``, and the equal spelling never consumes a raise.  (It once
+    refused by name.)"""
+    _never_completes(
+        _val(
             "def A(z):\n"
             "    try:\n"
             "        raise os.error\n"
             "    except os.error:\n"
             "        pass\n"
             "    return z\n"
-        ).sugar()
+        )
+    )
 
 
 def test_two_raise_valueerror_sites_have_distinct_origins_same_type():
@@ -1082,39 +1143,18 @@ def test_two_raise_valueerror_sites_have_distinct_origins_same_type():
     assert _incompletes(v) == []
     types = [
         inv.args[1].value
-        for inv in v.invs()
+        for inv in _invs(v)
         if inv.name == "=" and getattr(inv.args[0], "name", None) == "effect_slot_type"
     ]
     assert types.count("ValueError") >= 2
     origins = [
         inv.args[1].args[0].value
-        for inv in v.invs()
+        for inv in _invs(v)
         if inv.name == "="
         and getattr(inv.args[0], "name", None) == "effect_slot_origin"
     ]
     assert len(origins) >= 2
     assert len(set(origins)) == len(origins), f"origins must be distinct: {origins}"
-
-
-if __name__ == "__main__":
-    test_matching_except_consumes_raise_and_try_completes()
-    test_handler_own_raise_propagates()
-    test_except_keyerror_does_not_catch_valueerror()
-    test_except_valueerror_does_catch_valueerror()
-    test_else_runs_when_body_is_raise_free()
-    test_else_does_not_run_when_raise_is_caught()
-    test_finally_reduces_on_caught_path()
-    test_finally_reduces_on_uncaught_path()
-    test_except_as_binds_matching_raise_witness_in_handler()
-    test_except_as_does_not_bind_on_uncaught_path()
-    test_tuple_except_catches_any_exactly_listed_type()
-    test_tuple_except_does_not_catch_unlisted_type()
-    test_tuple_except_as_binds_the_matched_type_witness()
-    test_bare_except_catches_arbitrary_raise()
-    test_except_star_stays_loud()
-    test_non_name_except_type_stays_loud()
-    test_dotted_except_type_matches()
-    print("ok: try sugar -- structural effect routing")
 
 
 def test_except_star_type_tuple_partitions_every_listed_type():

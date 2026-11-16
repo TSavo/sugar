@@ -58,24 +58,35 @@ def _out(src: str):
 
 
 def _incompletes(src: str):
-    """The halted arms the whole function carries, outer or recorded."""
-    from sugar_lift_py_tests.outcome import ExitSet
+    """The halted arms the whole function carries, outer or recorded: its
+    halted arms, and the all-halting entries each completed arm's record
+    carries.  A body whose call may raise (``tm.step()``) has a completed
+    arm beside its halted ones, so no single completed value stands for it."""
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
 
     out = _out(src)
-    if out.exits and out.halts() == out.exits:
-        return list(out.halts())
-    value = out.completed_value()
-    assert value is not None, out
-    return [
-        halt
-        for entry in value.record.contribution()
-        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
-        for halt in entry.halts()
-    ]
+    halts = list(out.halts())
+    for face in out.exits:
+        if not isinstance(face, Completed):
+            continue
+        record = getattr(face.value, "record", None)
+        if record is None:
+            continue
+        halts.extend(
+            halt
+            for entry in record.contribution()
+            if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+            for halt in entry.halts()
+        )
+    return halts
 
 
 def _post(src: str):
-    return _out(src).value.post()
+    """The post of the function's one unconditional completed value."""
+    out = _out(src)
+    value = out.completed_value()
+    assert value is not None, out
+    return value.post()
 
 
 def _missing_names(src: str):
@@ -102,7 +113,12 @@ def _observed():
 
     def spy_edges(self, edge_states, scope, **options):
         result = edges(self, edge_states, scope, **options)
-        log["edges"].append(result)
+        # Only the try BODY's edges (``header_edges=True``, ``Try.substitute``):
+        # the same method also reads the halt states of each compound
+        # statement's suite (``_suite_halt_states``), which are not edges any
+        # handler is routed from.
+        if options.get("header_edges"):
+            log["edges"].append(result)
         return result
 
     def spy_route(self, halt_edges):

@@ -7,16 +7,14 @@ site constructs ``pytest.raises(..., match=...)``.  Two edits make it hold:
 the except-TYPE expression is now enrolled as an import value-use (so its head
 is import-bound), and ``Try._construct_sugar`` authenticates a non-Name handler
 type through ``exception_type_identity``.  A dotted head that is NOT
-import-bound (an instance/param attribute) still stays loud.
+import-bound (an instance/param attribute) has no identity: its match is the
+retained question, never decided.
 """
 
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_source_tree.panic import SugarNotWritten
 from with_resolution_fixture import source_file_with_preconstruction
 
 
@@ -74,12 +72,33 @@ _LIAR = (
 )
 
 
-def test_non_import_bound_dotted_except_type_stays_loud() -> None:
+def test_non_import_bound_dotted_except_type_is_retained_never_authenticated() -> None:
+    """A dotted head that is not import-bound (a parameter attribute) has no
+    authenticated identity, so nothing decides the match: the arm is the
+    retained question ``adt.is_python_type(raised, handler)``
+    (``authenticated_exception_matching``) over the handler value read, and
+    the miss face still raises.  (It once refused by name at construction;
+    main carries the undecided question instead, #7757.)"""
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+
     fn = _function(_LIAR)
     # The param head is not import-bound: no authenticated identity ...
     assert fn.unit.exception_type_identity(
         _except_type_node(fn, "Error")
     ) is None
-    # ... and construction stays loud rather than fabricating one.
-    with pytest.raises(SugarNotWritten):
-        fn.sugar()
+    # ... and the match is retained rather than decided from a fabricated one.
+    out = fn.sugar().desugar()
+    assert "adt.is_python_type" in repr(out)
+    halts = list(out.halts())
+    for face in out.exits:
+        if not isinstance(face, Completed):
+            continue
+        record = getattr(face.value, "record", None)
+        if record is not None:
+            halts.extend(
+                halt
+                for entry in record.contribution()
+                if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+                for halt in entry.halts()
+            )
+    assert halts, "the miss face of the retained match must still raise"

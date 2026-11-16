@@ -69,13 +69,17 @@ def test_raise_constructor_carries_its_built_call_coordinate() -> None:
 def test_raise_of_constructed_lambda_is_typed_incomplete() -> None:
     """Live law (replaces factory SugarNotWritten): raise lambda constructs.
 
-    The raised value is a constructed LambdaCallable under a halted RaiseEffect
-    — typed halt, not a missing-sugar refuse at the Raise node.
+    The raised value is a constructed LambdaCallable under a halt -- not a
+    missing-sugar refuse at the Raise node.  A lambda has no exception type
+    identity, so the halt is the ``UndeterminedRaiseEffect`` (``RaiseSugar``
+    never mints ``RaiseEffect(None)``: a nameless halt cannot impersonate an
+    authenticated exceptional exit).
     """
     outcome = _statement("def A():\n    raise (lambda: 1)\n", "Raise").sugar().desugar()
     assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
-    assert type(halt.effect).__name__ == "RaiseEffect"
+    assert type(halt.effect).__name__ == "UndeterminedRaiseEffect"
+    assert halt.effect.producer_node_owner == "RaiseSugar.desugar"
     assert type(halt.effect.raised_value).__name__ == "LambdaCallable"
 
 
