@@ -14,11 +14,11 @@ def halts_where_its_asserts_fail(block, outcome) -> ExitSet:
     ``assert`` whose test is false raises ``AssertionError`` there, so the
     body never reaches ``outcome`` (#7757: a halt is never dropped).
 
-    THE rule for "an ``assert`` is a halt", one for every body: a function's
-    own universe (``FunctionUniverseSugar.desugar``, each completed arm's
-    record) and the class call that runs ``__init__`` in place
-    (``ClassConstructorBodySugar.desugar``, each completed initializer
-    face's record).  A symbolic ``assert`` states its test as a fact
+    THE rule for "an ``assert`` is a halt", applied in one place: a
+    function's own universe (``FunctionUniverseSugar.desugar``, each
+    completed arm's record).  An ``__init__``'s asserts are halts of its own
+    contract, which a class call reaches through its dispatched ``__init__``
+    edge (#7757 B3).  A symbolic ``assert`` states its test as a fact
     (``InvValue``, ``AssertSugar``) and has no failing arm where it stands;
     the fact stays the claim of the function whose body it is.  Left there
     alone, the fact was the callee's ``inv``, which no caller reads: prove

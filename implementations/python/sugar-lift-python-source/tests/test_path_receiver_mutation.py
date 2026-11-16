@@ -990,36 +990,6 @@ _RESET_IN_INIT = (
 )
 
 
-def test_the_class_call_reads_self_where_its_initializer_ends():
-    from sugar_lift_python_source.canonical import blake3_512_of
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
-    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
-        ReceiverAfterCallSugar,
-    )
-    from sugar_source_tree.nodes import ClassDef
-    from sugar_source_tree.tree import SourceFile
-
-    tree = SourceFile(
-        (
-            _RESET_IN_INIT,
-            "init_end_fixture.py",
-            blake3_512_of(_RESET_IN_INIT.encode()),
-        ),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-    )
-    cls = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, ClassDef) and node.name == "C"
-    )
-    body = cls.source_visible_constructor_frame().body
-    # ``self`` after ``reset(self)``: its value after the call the one
-    # exposure rule rebinds it to, never the stored fields.
-    assert type(body.receiver_at_end) is ReceiverAfterCallSugar
-
-
 def test_self_exposed_in_init_is_the_object_the_class_call_returns(tmp_path):
     source = _RESET_IN_INIT + "def f(g):\n    return C(g)\n"
     returns, _halts = _returns(tmp_path, source)

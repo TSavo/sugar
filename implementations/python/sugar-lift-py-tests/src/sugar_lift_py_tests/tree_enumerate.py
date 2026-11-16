@@ -1089,9 +1089,16 @@ def class_universe_outcome(cls):
     key in the state the module's one run left, as an ``__init__``'s own
     universe reads it (``function_universe_outcome``); the instance it makes
     is allocated by this construction (``call_site``: the class statement).
-    Each completed arm returns the instance as its construction left it
-    (``ConstructedInstanceValue``: the fields it set, never its identity);
-    each halt of the constructor is a halted arm (its panic locus).
+    A source ``__init__`` is never applied here: the construction makes the
+    fresh instance and dispatches ``type(obj).__init__(obj, ...)`` on it, an
+    edge joined at prove to the ``__init__``'s own contract (#7757 B3,
+    ``ClassConstructorBodySugar._dispatched_initializer``), whose halts are
+    this call's halts.  Each completed arm returns the instance: its class
+    and its state as the ``__init__`` call left it
+    (``InitializedInstanceValue``), or, where the construction runs here (a
+    dataclass's generated stores, a source ``__new__``), the fields it set
+    (``ConstructedInstanceValue``), never its identity; each halt of the
+    constructor is a halted arm (its panic locus).
 
     The module globals the signature's ``def`` reads are free inputs, bound
     at the entry (``bind_global_inputs``) before the definition keys and

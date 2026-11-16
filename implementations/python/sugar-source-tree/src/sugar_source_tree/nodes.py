@@ -10607,47 +10607,6 @@ class FunctionDef(Statement):
             for symbol in table.get_symbols()
         )
 
-    def _source_visible_body_and_read(self, scope, name, receiver):
-        """The body's sugar, substituted in ``scope``, and the read of the
-        object ``receiver`` (seated at the formal ``name``) where the body
-        ends (``_read_where_the_body_ends``).
-
-        A class call's initializer is read so (``ClassDef._source_visible_body``):
-        the object the call returns is its receiver as a read of it after the
-        body's last statement gives it -- after every store on it and every
-        call the one exposure rule lets reach it -- never its stores
-        collected again, and never whatever the formal's name is bound to
-        there.  Each ``return`` of the body's own reads it where it stands
-        (``_INITIALIZER_RECEIVER``, ``InitializerReturn``).  A generator
-        body runs nothing at the call and reads nothing."""
-        from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
-            SourceVisibleFunctionBodySugar,
-        )
-
-        held = _InitializerReceiverV1(
-            name,
-            receiver,
-            _binds_name(self.body, name),
-            _initializer_returns(self.body),
-            (self.span.start, self.span.end),
-        )
-        scope = {**self._captured_scope(), **scope, _INITIALIZER_RECEIVER: held}
-        edges: list = []
-        substituted_body, _changed, final = FunctionDef._substitute_body_to_end(
-            self, self.body, scope, edge_states=edges
-        )
-        if FunctionDef._owns_yield(substituted_body):
-            # A generator initializer runs nothing at the call; its body is
-            # constructed by its own universe (``_construct_sugar``).
-            return SourceVisibleFunctionBodySugar((), self.fragment), None
-        body = SourceVisibleFunctionBodySugar(
-            tuple(
-                self._sugar_body_statement(statement) for statement in substituted_body
-            ),
-            self.fragment,
-        )
-        return body, _read_where_the_body_ends(self, held, final, edges)
-
     @staticmethod
     def _owns_yield(body, besides=None) -> bool:
         """Does this body own a suspension boundary of its own?
@@ -13684,6 +13643,17 @@ class ClassDef(Statement):
                     if returned_new is None
                     else tuple(coordinate.cid for coordinate in coordinates)
                 ),
+                # The source ``__init__`` the call dispatches on its fresh
+                # instance (#7757 B3): each formal after its receiver, which
+                # the call forwards to it.
+                initializer_formals=(
+                    None
+                    if initializer is None
+                    else tuple(
+                        (coordinate.cid, param.param_kind, param.name)
+                        for param, coordinate in zip(params, coordinates, strict=True)
+                    )
+                ),
             ),
             owner=self,
             constructed_new_method=constructed_new_method,
@@ -13733,6 +13703,7 @@ class ClassDef(Statement):
         dataclass_fields=None,
         exception_args_coordinate_cid=None,
         returned_new_formal_cids=None,
+        initializer_formals=None,
     ):
         from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
             ClassConstructorBodySugar,
@@ -13743,7 +13714,9 @@ class ClassDef(Statement):
         initializer = self._source_initializer()
         initializer_body = None
         receiver_coordinate_cid = None
-        receiver_formal = None
+        # The source ``__init__`` the call dispatches on its fresh instance
+        # (#7757 B3): the formals it forwards, ``((cid, kind, name), ...)``.
+        dispatched_initializer = None
         # The class statement whose body defines the function the body runs:
         # its ``__class__`` cell (PEP 3135).  A dataclass's generated
         # ``__init__`` is no source function and has none.
@@ -13794,36 +13767,15 @@ class ClassDef(Statement):
                 {**constructor_scope, **net},
             )
         elif initializer is not None:
-            receiver_param = initializer.params[0]
+            # ``type.__call__`` runs ``type(obj).__init__(obj, *args, **kw)``
+            # on the fresh instance it makes: the dispatched ``__init__``
+            # edge, joined at prove to the ``__init__``'s own contract
+            # (#7757 B3).  Its body is never applied here.
             coordinate = BindingCoordinateV1.mint(
-                self.fragment.seal().cid,
-                receiver_param.fragment,
-                ("receiver", 0),
+                self.fragment.seal().cid, self.fragment, ("receiver", 0)
             )
-            receiver = self._make_constructed_receiver_ref(coordinate.cid)
             receiver_coordinate_cid = coordinate.cid
-            if receiver_param.param_kind in (
-                "positional_only",
-                "positional_or_keyword",
-            ):
-                # The frame local a zero-argument ``super()`` in the body
-                # reads, as the ``def`` declares it.
-                receiver_formal = receiver_param.name
-            initializer_scope = {
-                receiver_param.name: BindingEntryV1(
-                    coordinate, receiver, None  # unsealed; seal when testified
-                ),
-                **scope,
-            }
-            initializer_body, receiver_at_end = (
-                initializer._source_visible_body_and_read(
-                    initializer_scope, receiver_param.name, receiver
-                )
-            )
-            # The class that wrote the ``__init__`` the call runs: the first
-            # ``__init__`` of the MRO (``initializer_entry``), a base's when
-            # it is inherited.
-            cell_class_definition = self.initializer_entry()
+            dispatched_initializer = tuple(initializer_formals or ())
         else:
             new_shape = self._authenticated_new_constructor_shape()
             if new_shape is not None:
@@ -13867,10 +13819,10 @@ class ClassDef(Statement):
             site=self.fragment,
             constructed_new_method=constructed_new_method,
             exception_args_coordinate_cid=exception_args_coordinate_cid,
-            receiver_formal=receiver_formal,
             cell_class_definition=cell_class_definition,
             receiver_at_end=receiver_at_end,
             returned_new_formal_cids=returned_new_formal_cids,
+            initializer_formals=dispatched_initializer,
         )
 
     def _make_constructed_receiver_ref(self, receiver_coordinate_cid):

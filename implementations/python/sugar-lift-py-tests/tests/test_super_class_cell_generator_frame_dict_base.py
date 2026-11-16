@@ -3,8 +3,8 @@ leftovers of #8118).
 
 - The ``__class__`` cell is the class whose body defines the function the
   call runs, at every application: a method (its own frame), a source
-  store through a mapping (``MappingObjectValue._source_store``) and a class
-  call running an inherited ``__init__`` (``ClassConstructorBodySugar``).
+  store through a mapping (``MappingObjectValue._source_store``).  A class
+  call dispatches ``__init__`` (#7757 B3), whose own frame seats its cell.
   ``class A: def m(self): return super().m()`` / ``class B(A): pass`` /
   ``B().m()`` searches after ``A``, never after ``B``.
 - A generator expression is a frame of its own whose first argument is the
@@ -39,7 +39,6 @@ from sugar_lift_py_tests.floor.builtin_semantic_callable import (
     zero_argument_super_in_generator_frame,
     zero_argument_super_receiver,
 )
-from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
@@ -112,46 +111,6 @@ def test_a_source_store_runs_an_inherited_override_with_its_defining_class() -> 
     assert stored.halts(), stored
     assert isinstance(done.value, SymbolicValue)
     assert not isinstance(done.value, MappingObjectValue)
-
-
-_INHERITED_INIT = (
-    "class Base:\n"
-    "    def __init__(self):\n"
-    "        self.x = 1\n"
-    "\n"
-    "class A(Base):\n"
-    "    def __init__(self):\n"
-    "        super().__init__()\n"
-    "\n"
-    "class B(A):\n"
-    "    pass\n"
-)
-
-
-@pytest.mark.parametrize("called", ["A", "B"])
-def test_a_class_call_seats_the_cell_of_the_class_that_wrote_init(
-    called: str,
-) -> None:
-    from dataclasses import replace
-
-    context, classes = _classes(_INHERITED_INIT, "inherited_init.py")
-    # The constructor is entered on the class the call read (``class_value``):
-    # it never reduces the class statement itself (#7757 item 21).
-    body = replace(
-        classes[called].class_definition.source_visible_constructor_frame().body,
-        class_value=classes[called],
-    )
-    assert body.cell_class_definition.name == "A"
-    seen = []
-
-    def initialize(value, ctx):
-        seen.append(ctx.temporal.value_if_bound("__class__"))
-        return ExitSet.completed(value)
-
-    body.enter_initializer(context, initialize)
-
-    # ``B()`` runs A's ``__init__``: its ``super()`` searches after A.
-    assert [cell.class_name for cell in seen] == ["A"]
 
 
 # --- (2) the frame a zero-argument super() runs in ---------------------------
