@@ -152,101 +152,85 @@ class ObjectValue(FloorValue):
         return self.undecided_contains(item, site, owner="ObjectValue.contains")
 
     def equals(self, other, site, ctx):
-        """Invoke an authenticated source ``__eq__`` when method order is known.
-
-        Different source classes require reflected/subclass dispatch testimony;
-        unconstructed return/NotImplemented behavior remains a typed refusal.
-        Never substitute object identity for a user-defined equality body,
-        nor for an ``__eq__`` the one class-namespace lookup does not decide
-        (a dataclass's generated one, a store): that is the unanswered call.
-        """
+        """``self == other``: the class's ``__eq__``, called
+        (``_source_rich_comparison``).  Never object identity substituted for
+        a user-defined equality body, nor for an ``__eq__`` the one
+        class-namespace lookup does not decide (a dataclass's generated one,
+        a store): that is the unanswered call."""
         if self.has_method("__eq__") is False:
             return super().equals(other, site, ctx)
-        return self._source_rich_comparison(
-            "__eq__", other, site, ctx, owner="ObjectValue.equals"
-        )
+        return self._source_rich_comparison("__eq__", other, site, ctx)
+
+    def not_equals(self, other, site, ctx):
+        """``self != other`` on a class whose ``__ne__`` the one lookup does
+        not decide absent: the class's ``__ne__``, called exactly as ``==``
+        calls ``__eq__`` (``_source_rich_comparison``), never ``not (self ==
+        other)`` -- that is ``object.__ne__``'s body, which a class's own
+        ``__ne__`` replaces."""
+        return self._source_rich_comparison("__ne__", other, site, ctx)
 
     def less_than(self, other, site, ctx):
-        """``self < other`` invokes the class's authenticated ``__lt__``."""
+        """``self < other`` calls the class's ``__lt__``."""
         if self.has_method("__lt__") is False:
             return super().less_than(other, site, ctx)
-        return self._source_rich_comparison(
-            "__lt__", other, site, ctx, owner="ObjectValue.less_than"
-        )
+        return self._source_rich_comparison("__lt__", other, site, ctx)
 
     def less_equal(self, other, site, ctx):
-        """``self <= other`` invokes the class's authenticated ``__le__``."""
+        """``self <= other`` calls the class's ``__le__``."""
         if self.has_method("__le__") is False:
             return super().less_equal(other, site, ctx)
-        return self._source_rich_comparison(
-            "__le__", other, site, ctx, owner="ObjectValue.less_equal"
-        )
+        return self._source_rich_comparison("__le__", other, site, ctx)
 
     def greater_than(self, other, site, ctx):
-        """``self > other`` invokes the class's authenticated ``__gt__``."""
+        """``self > other`` calls the class's ``__gt__``."""
         if self.has_method("__gt__") is False:
             return super().greater_than(other, site, ctx)
-        return self._source_rich_comparison(
-            "__gt__", other, site, ctx, owner="ObjectValue.greater_than"
-        )
+        return self._source_rich_comparison("__gt__", other, site, ctx)
 
     def greater_equal(self, other, site, ctx):
-        """``self >= other`` invokes the class's authenticated ``__ge__``."""
+        """``self >= other`` calls the class's ``__ge__``."""
         if self.has_method("__ge__") is False:
             return super().greater_equal(other, site, ctx)
-        return self._source_rich_comparison(
-            "__ge__", other, site, ctx, owner="ObjectValue.greater_equal"
-        )
+        return self._source_rich_comparison("__ge__", other, site, ctx)
 
-    def _source_rich_comparison(self, dunder: str, other, site, ctx, *, owner: str):
-        """The ONE rich-comparison dispatch onto a source class's own method.
+    def _source_rich_comparison(self, dunder: str, other, site, ctx):
+        """The ONE rich-comparison call onto the left operand's class.
 
         Python evaluates ``a <op> b`` as ``type(a).<dunder>(a, b)``, falling
         to ``type(b)``'s reflection only on ``NotImplemented`` (or first, for
-        a right-hand subclass).  This constructs exactly the case whose method
-        order is authenticated without reflection: both operands instances of
-        the same source class (or an exact native right operand) and the
-        left's definition-owned ordinary method frame; every reflected or
-        subclass order stays a named refusal.  The call is its coordinate and
-        edge: its result, ``NotImplemented`` included, is what the method's
+        a right-hand subclass that overrides it).  Where that order is
+        decided with no reflection -- both operands instances of the same
+        source class, or an exact native right operand, and the lookup finds
+        a member the class body wrote as a ``def`` -- the comparison is the
+        one dispatched call (``_dispatched_or_owed``): its coordinate and
+        edge, its result, ``NotImplemented`` included, what the method's
         contract states, joined at prove (#7757 step 6).
 
-        Which member runs and how it binds (a plain function, a
-        ``staticmethod``, a ``classmethod``, a property) is prove's one walk
-        of the order's (``consistency::dispatch_walk``, #7757 L3): the lift
-        reads no ``def``'s kind or frame.  A lookup the one class-namespace
-        lookup does not decide is the unanswered call
-        (``unanswered_method_call``); a class-field value there is no method
-        this constructs, and refuses by name.
+        Every other order is the one unanswered call of ``dunder``
+        (``unanswered_method_call``): two faces, owed, its halt kept, its
+        value the call's own result coordinate, which names nothing the
+        callee does.  That covers a lookup the one class-namespace lookup
+        does not decide, a right operand of another class or one whose type
+        is not decided (a formal: its reflection, or a subclass's, may run
+        first), and a class-field value (``__eq__ = _cmp``): which member
+        runs, and how it binds, is prove's one walk of the order
+        (``consistency::dispatch_walk``, #7757 L3).  None of them is a
+        construction refusal: each is real Python (#7757 H13).
         """
         decided, _method, value = self.class_member(dunder)
-        if not decided:
-            return self.unanswered_method_call(dunder, (other,), (), site)
         same_class = (
             isinstance(other, ObjectValue)
             and getattr(self.defining_class, "class_definition_cid", None) is not None
             and getattr(self.defining_class, "class_definition_cid", None)
             == getattr(other.defining_class, "class_definition_cid", None)
         )
-        if (isinstance(other, ObjectValue) and not same_class) or (
+        order_decided = same_class or (
             not isinstance(other, ObjectValue)
-            and (not other.denotes_value() or not other.runtime_type_is_decided())
-        ):
-            return self._floor_gap(
-                owner=owner,
-                blame=site,
-                observed=f"source {dunder} method order is not authenticated",
-                requested="same source class or an exact native right operand",
-                fix="derive reflected/subclass method order before rich comparison",
-            )
-        if value is not None:
-            return self._floor_gap(
-                owner=owner,
-                blame=site,
-                observed=f"source {dunder} is a class-field value",
-                requested=f"a {dunder} the class body wrote as a def",
-                fix="construct the class-field value's call before invoking it",
-            )
+            and other.denotes_value()
+            and other.runtime_type_is_decided()
+        )
+        if not decided or value is not None or not order_decided:
+            return self.unanswered_method_call(dunder, (other,), (), site)
         # The call is its coordinate and edge, joined at prove to the
         # method's contract (``_dispatched_or_owed``, the one dispatched
         # call, #7757 step 8): what it returns -- a native boolean,

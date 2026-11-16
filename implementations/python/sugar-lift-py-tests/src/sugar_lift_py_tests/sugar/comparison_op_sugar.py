@@ -378,20 +378,21 @@ class ComparisonOpSugar(ConstructedTermSugar):
     def _apply(self, left, right, ctx):
         if self.op_kind == "NotEq":
             from sugar_lift_py_tests.floor.object_value import ObjectValue
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
-            if any(
-                isinstance(value, ObjectValue)
-                and value.has_method("__ne__") is not False
-                for value in (left, right)
+            # A class's own ``__ne__`` (or one the lookup does not decide
+            # absent) replaces ``object.__ne__``'s ``not (a == b)``: the
+            # left's is called exactly as ``==`` calls ``__eq__``
+            # (``ObjectValue.not_equals``); the right's is Python's
+            # reflection, ``type(b).__ne__(b, a)``, after the left's
+            # ``NotImplemented`` -- the one unanswered call, two faces, owed,
+            # its halt kept.  Never a construction refusal (#7757 H13).
+            if isinstance(left, ObjectValue) and left.has_method("__ne__") is not False:
+                return left.not_equals(right, self.site, ctx)
+            if (
+                isinstance(right, ObjectValue)
+                and right.has_method("__ne__") is not False
             ):
-                construction_panic_gap(
-                    owner="ComparisonOpSugar.NotEq",
-                    blame=self.site,
-                    observed="source __ne__ cannot be replaced by negated __eq__",
-                    requested="authenticated native __ne__ dispatch",
-                    fix="construct __ne__ method order and invoke its source frame",
-                )
+                return right.unanswered_method_call("__ne__", (left,), (), self.site)
             # Equality law: a != b is not (a == b); the equals floor's
             # answer, then the completed truth negated.  A parameter operand
             # is not deferred to a caller (``==``'s reflection and identity

@@ -964,13 +964,13 @@ class FloorValue:
 
             return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         if isinstance(other, ObjectValue) and other.has_method("__eq__") is not False:
-            return self._floor_gap(
-                owner="FloorValue.equals",
-                blame=site,
-                observed="reflected source equality method is not constructed",
-                requested="authenticated reflected/subclass equality dispatch",
-                fix="invoke the native reflected method before emitting equality",
-            )
+            # ``1 == obj``: Python's order runs the right operand's
+            # reflection, ``type(obj).__eq__(obj, 1)``, after the left's
+            # ``NotImplemented`` (or first, for a subclass of the left's
+            # type).  Which one answers is prove's dispatch walk; here it is
+            # the one unanswered call of the reflection, two faces, owed, its
+            # halt kept -- never a construction refusal (#7757 H13).
+            return other.unanswered_method_call("__eq__", (self,), (), site)
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 
         if isinstance(other, GuardedValue):
