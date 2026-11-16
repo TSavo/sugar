@@ -40,20 +40,37 @@ def _outcome(source: str, name: str):
     return function_universe_outcome(function)
 
 
-def _element_halts(outcome) -> list:
-    """The halts the element's call of ``h`` left by: the one unanswered
-    call's halt, owner ``UnknownCallee:<target>``.  The target is ``h``'s
-    join symbol without its ``python:`` namespace (``test_witness.h``) where
-    a workspace names one, and the call's spelling (``h``) where none does,
-    as here (``for_test_without_workspace``:
-    ``lambda_callable.definition_edge_call``'s ``fallback_target``).  An
-    owner read as ending in ``.h`` matched no halt in this context, so a
-    halt the pull states read as dropped (the scorecard at d95c22a49)."""
+_ELEMENT_CALL = "h(x)"
+
+
+def _element_call_span(source: str) -> tuple[int, int]:
+    """The ``[start, end)`` of the element's ``h(x)`` call in ``source``:
+    the one inside the generator's parentheses, never ``def h(x)``."""
+    start = source.index("(" + _ELEMENT_CALL + " for") + 1
+    return start, start + len(_ELEMENT_CALL)
+
+
+def _element_halts(outcome, source: str) -> list:
+    """The halts the element's call of ``h`` left by: an unanswered call's
+    halt (owner ``UnknownCallee:<target>``) whose site is that ``h(x)`` call
+    in the source.  The halt is identified by the call it was raised at, not
+    by how the target is spelt: with no workspace the target is ``h``'s
+    content-addressed definition site (``<source cid>@0:33#...``), with one
+    it is ``h``'s join symbol, and neither names ``h`` the same way (the
+    scorecard at d95c22a49 and CI run 43789294103 read the stated halt as
+    dropped).  A halt dropped at the pull still leaves no halt at that
+    site, so the pulled test still fails then."""
+    span = _element_call_span(source)
     found = []
     for halt in outcome.halts():
-        owner = str(getattr(halt.effect, "producer_node_owner", ""))
-        prefix, _, target = owner.partition(":")
-        if prefix == "UnknownCallee" and target.rsplit(".", 1)[-1] == "h":
+        effect = halt.effect
+        owner = str(getattr(effect, "producer_node_owner", "") or "")
+        if not owner.startswith("UnknownCallee:"):
+            continue
+        site_span = getattr(getattr(effect, "site", None), "span", None)
+        if site_span is None:
+            continue
+        if (site_span.start, site_span.end) == span:
             found.append(halt)
     return found
 
@@ -82,29 +99,27 @@ _H ="def h(x):\n    raise ValueError(x)\n\n\n"
 
 
 def test_a_generator_never_pulled_states_no_member_halt() -> None:
-    outcome = _outcome(
-        _H
-        + "def f():\n"
+    source = (
+        _H + "def f():\n"
         "    xs = [1, 2]\n"
         "    g = (h(x) for x in xs)\n"
-        "    return 1\n",
-        "f",
+        "    return 1\n"
     )
-    assert not _element_halts(outcome), _described(outcome)
+    outcome = _outcome(source, "f")
+    assert not _element_halts(outcome, source), _described(outcome)
 
 
 def test_a_generator_pulled_by_a_for_states_the_member_halt_there() -> None:
-    outcome = _outcome(
-        _H
-        + "def f():\n"
+    source = (
+        _H + "def f():\n"
         "    xs = [1, 2]\n"
         "    g = (h(x) for x in xs)\n"
         "    for y in g:\n"
         "        pass\n"
-        "    return 1\n",
-        "f",
+        "    return 1\n"
     )
-    assert _element_halts(outcome), _described(outcome)
+    outcome = _outcome(source, "f")
+    assert _element_halts(outcome, source), _described(outcome)
 
 
 def test_a_generator_made_in_a_list_call_halts_there() -> None:
