@@ -4056,13 +4056,9 @@ fn py_decided_operation(name: &str, args: &[Term]) -> Option<PyDecided> {
             }, left_term, right_term, _key],
         ) => {
             let (left, right) = py_binary_operands(left_term, right_term)?;
-            // `x OP= y` (the kit spells the operator `OP=`,
-            // `_INPLACE_OPERATOR_COORDINATE`) over a builtin `int` or `str`
-            // (decided, or stated exactly by its guard, `py_stated`):
-            // neither type defines an in-place method, so Python runs the
-            // binary operator (#7757 step 7). Over any other operand the
-            // term stays the uninterpreted application it was.
-            let operator = operator.strip_suffix('=').unwrap_or(operator.as_str());
+            // The kit states `x OP= y` over an undecided operand as the
+            // binary form `python:binary_result("OP", ...)` (#9017): no
+            // in-place spelling reaches here.
             let (ty, law, defined, value) =
                 py_binary(operator, &left, &right, left_term, right_term)?;
             Some(PyDecided::operation(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import enum
 
 import pytest
 
@@ -15,7 +16,7 @@ from sugar_lift_py_tests.sugar.call_site_sugar import (
     CallSiteSugar,
 )
 
-from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
+from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.backend import materialize
 from sugar_source_tree.binding_state import (
     _callee_definition_by_name_in_its_unit,
@@ -36,8 +37,9 @@ def _testimony_root(source: SourceFile, collector: CollectingReporter):
 
 
 def _enum_call() -> tuple[SourceFile, FunctionDef, Call]:
-    graph = DependencyArtifactGraph.authenticate_stdlib_module("enum")
-    module = graph.modules["enum"]
+    # CPython's ``enum.py`` minted through the one path door
+    # (``source_oracle.path_source``), seated as ``enum.py``.
+    text, _path, source_cid = path_source(enum.__file__)
     reporter = CollectingReporter()
     # The construction door, not the bare one. This helper holds module source
     # in memory rather than a path, so it seats the context directly instead of
@@ -46,7 +48,7 @@ def _enum_call() -> tuple[SourceFile, FunctionDef, Call]:
     # against a None context, which is a defect in how this test opens the
     # tree, never a fact about enum.py.
     source = SourceFile(
-        (module.source, module.source_seat, module.source_cid),
+        (text, "enum.py", source_cid),
         reporter=reporter,
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )

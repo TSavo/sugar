@@ -12,7 +12,6 @@ import csv
 from dataclasses import replace
 import importlib.metadata
 from pathlib import Path
-import sys
 from types import MappingProxyType
 
 import pytest
@@ -64,28 +63,6 @@ def test_the_graph_has_no_export_resolution_door() -> None:
         "PythonObjectResolutionGapV1",
     ):
         assert not hasattr(dependency_artifact, name), name
-
-
-def test_same_spelled_non_stdlib_module_cannot_mint_stdlib_graph(
-    tmp_path: Path,
-) -> None:
-    impostor = tmp_path / "contextlib.py"
-    impostor.write_text("class suppress:\n    pass\n", encoding="utf-8")
-
-    with pytest.raises(
-        DependencyArtifactAuthenticationError, match="authenticated stdlib root"
-    ):
-        DependencyArtifactGraph.authenticate_stdlib_path(
-            "contextlib", impostor, stdlib_root=Path(sys.base_prefix) / "lib"
-        )
-
-
-def test_any_source_visible_stdlib_module_uses_the_same_graph_intake() -> None:
-    graph = DependencyArtifactGraph.authenticate_stdlib_module("typing")
-
-    assert graph.artifact_kind == "stdlib"
-    assert "typing" in graph.modules
-    assert graph.distribution_artifact_cid.startswith("blake3-512:")
 
 
 def test_fabricated_artifact_file_wrapper_is_loud(tmp_path: Path) -> None:
