@@ -233,11 +233,14 @@ def test_a_formals_unary_operator_is_two_faced_and_owes_it(
     from sugar_lift_py_tests.occurrence import occurrence_key
 
     formal = SymbolicValue(make_var("p"), formal_coordinate=object())
-    faces = getattr(formal, method)(_Site())
+    # One site for every evaluation compared: a halt's blame is the
+    # site's own text, which this stand-in states only per instance.
+    site = _Site()
+    faces = getattr(formal, method)(site)
     _assert_two_faced_and_owed(faces, f"SymbolicValue.{method}")
     (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
     (halt,) = [arm for arm in faces.exits if isinstance(arm, Halted)]
-    key = occurrence_key(_Site())
+    key = occurrence_key(site)
     term = done.value.term
     assert term.name == "python:unary_result"
     assert term.args == (str_const(operator), make_var("p"), str_const(key))
@@ -247,7 +250,7 @@ def test_a_formals_unary_operator_is_two_faced_and_owes_it(
     assert "TypeError" not in repr(faces)
     # One way, formal or not (#7757 NEW-8): a free symbol's unary is the
     # same two faces.
-    assert faces == getattr(SymbolicValue(make_var("p")), method)(_Site())
+    assert faces == getattr(SymbolicValue(make_var("p")), method)(site)
 
 
 def test_two_evaluations_of_one_formal_operation_are_two_unknowns() -> None:

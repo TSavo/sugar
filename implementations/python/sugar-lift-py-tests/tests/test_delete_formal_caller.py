@@ -49,8 +49,11 @@ An attribute delete mints no carrier either (#7757, audit 2 row NEW-1):
      ``python:delattr.completes(...)`` or raises something undetermined
      (owner ``UndecidedDelattr``), both faces owing the undecided member;
   3. ``r``'s type decided by the lift -> its floor's own ``delattr``: a
-     present field completes gone, a missing one or a getter-only property
-     is the named ``AttributeError``.
+     present field completes gone, a getter-only property is the named
+     ``AttributeError``; a name the fields do not hold is the dispatched
+     ``__delattr__`` (the lift never decides a member's absence), with no
+     class the instance names the undecided delete (owner
+     ``ObjectValue.delattr``).
 
 Equality tooth: production-minted operator set == projector-table keys, and
 neither holds ``setitem``, ``delitem`` or ``delattr_named``.
@@ -642,12 +645,22 @@ def test_missing_list_index_halts_with_named_indexerror_and_pre_effect_state() -
     _holds_earlier_store(_frame_halt(FRAME_BAD_INDEX, "IndexError"))
 
 
-def test_missing_attribute_halts_with_named_attributeerror_and_pre_effect() -> None:
-    # The floor's own face over the decided actual.
+def test_missing_attribute_is_the_undecided_delattr_and_keeps_pre_effect() -> None:
+    # The floor's own face over the decided actual.  A name the recorded
+    # fields do not hold is not decided absent here (#7757 L3, #9039/#9043/
+    # #9049): ``del receiver.field`` is the dispatched ``__delattr__``; with
+    # no class the instance names, nothing decides it, so it is the one
+    # undecided attribute mutation (``ObjectValue._dispatched_delattr``),
+    # both faces kept and owed, never an ``AttributeError`` named here.
     receiver = ObjectValue(
         class_name="Widget", fields=(), methods=(), allocation=FRAME_FRESH
     )
-    _assert_named_halt(_attr_door(receiver), "AttributeError", stated=False)
+    _undecided_delete(
+        _attr_door(receiver),
+        stated=False,
+        owner="ObjectValue.delattr",
+        noun="delattr",
+    )
     # In a function's reduction the attribute delete's halt leaves with the
     # block's record (``halts_at_statement_head``): the earlier store in it.
     # No carrier enrolls a pre-effect state to compare against any more.

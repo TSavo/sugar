@@ -121,7 +121,7 @@ def test_super_new_into_type_builds_no_class_here() -> None:
     ).call_method_value(
         "__new__",
         (
-            TermValue("metaclass"),
+            metaclass,
             StringValue("Made"),
             TupleValue(()),
             namespace,
