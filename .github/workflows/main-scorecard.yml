@@ -92,6 +92,19 @@ name: Main scorecard
 # files in the suite tree. The federation example and the Rust tests are
 # their own short jobs.
 #
+# THE SOURCE TREE'S TESTS (2026-11-16)
+#
+# The 183 test files under implementations/python/sugar-source-tree/tests ran
+# in no CI job, so stale tests there were invisible. The plan packs them onto
+# the same shards by the same measured-cost prior (no serial job); each shard
+# runs them in their own pytest (the package's own config, after the suite
+# and twins, under TREE_SHARD_BUDGET_SECONDS), and the join posts them as
+# `tree=P/T`, so `suite=` keeps counting exactly what it counted before. A
+# lost tree shard is `incomplete:` like the suite's; the alarm fires when tree
+# failing rises or its total falls. The venv already holds the package's
+# dependencies (tools/main_scorecard_env.sh wheels sugar-source-tree) and the
+# managed PYTHONPATH already has its src.
+#
 # A LOST SHARD IS NEVER A SMALLER TOTAL (#8416, run 43832361876)
 #
 # Shard 2 failed in its toolchain step (rustup re-fetched the 1.96.0 channel
@@ -131,7 +144,12 @@ env:
   SUITE_SHARD_COUNT: "8"
   SCORECARD_ISSUE_TITLE: "Main scorecard"
   # The numbers this workflow reports; the board is main-scorecard-board.yml.
-  SCORECARD_MEASURES: "suite,twins,federation,rust"
+  # `tree` is implementations/python/sugar-source-tree/tests, run on the
+  # suite shards but posted as its own number so `suite` stays comparable.
+  SCORECARD_MEASURES: "suite,twins,federation,rust,tree"
+  # Each shard's source-tree pytest is interrupted past this wall (a hung
+  # tree test marks the tree incomplete; the shard's suite still counts).
+  TREE_SHARD_BUDGET_SECONDS: "900"
   GH_TOKEN: ${{ github.token }}
   GH_REPO: ${{ github.repository }}
 
@@ -251,6 +269,7 @@ jobs:
           path: |
             suite.log
             twins.log
+            tree.log
             twin-evidence/**
           if-no-files-found: ignore
       - name: Job wall time
@@ -277,7 +296,7 @@ jobs:
       - name: Scorecard environment (persistent venv, gh)
         shell: bash
         run: bash tools/main_scorecard_env.sh
-      - name: Post the suite and twins numbers
+      - name: Post the suite, twins and tree numbers
         shell: bash
         run: bash tools/main_scorecard_suite.sh post
 

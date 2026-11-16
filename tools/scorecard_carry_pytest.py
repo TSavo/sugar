@@ -41,7 +41,7 @@ def pytest_addoption(parser: Any) -> None:
     group.addoption(
         "--carry-label",
         default="suite",
-        help="the population this pytest measures (suite, twins)",
+        help="the population this pytest measures (suite, twins, tree)",
     )
     group.addoption(
         "--carry-summary",

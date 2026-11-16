@@ -28,15 +28,15 @@ measured it, whichever workflow wrote that row.
 Regression alarm: each number is compared with the newest earlier row (another
 run) where that number was measured. Any number that got worse, or that was
 measured before and is unmeasured now, makes the comment start with
-REGRESSION: and makes this invocation exit 1. For the suite, twins and rust
-"worse" is more failing tests; and for every measure with a total, a total
+REGRESSION: and makes this invocation exit 1. For the suite, twins, rust and
+tree "worse" is more failing tests; and for every measure with a total, a total
 (passed + failed) more than SCORECARD_TOTAL_DROP_TOLERANCE (default 2%) below
 the last measured total is a regression too (``suite total 5667 -> 4212
 (shard lost?)``): counting failures alone let a lost shard post as OK (#8416).
 
 Comment shape (first line, then one machine-readable line of key=value):
   OK ... | REGRESSION: ... ; then
-  sha= prev= run= suite=p/t twins=p/t federation= rust=p/t board=c/t cpanic=
+  sha= prev= run= suite=p/t twins=p/t federation= rust=p/t tree=p/t board=c/t cpanic=
   issues= prs= pending= rerun= carried= wall=
 
 ``rerun=`` and ``carried=`` keep their shape (``suite:N,twins:N,board:N``),
@@ -46,6 +46,14 @@ carried is 0.
 ``rust`` is the Rust unit and integration tests (``cargo test``) of the crates
 on the Python proof path. Rows written before it existed have no ``rust=``
 key: they still parse (``rust`` is not in ROW_KEYS) and count as not measured.
+
+``tree`` is the sugar-source-tree package's own tests
+(implementations/python/sugar-source-tree/tests), which ran in no CI job
+before; they run on the suite's shards (tools/main_scorecard_suite.sh) but are
+their own number, so ``suite=`` stays comparable with earlier rows. Like the
+suite, the alarm fires when tree failing rises or its total falls beyond the
+tolerance. Rows written before it existed have no ``tree=`` key and count as
+not measured.
 """
 
 from __future__ import annotations
@@ -61,9 +69,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-MEASURES = ("suite", "twins", "federation", "board", "rust")
-# Required for a comment to count as a row. `rust` is read optionally: rows
-# written before it existed have no `rust=` key and must still parse.
+MEASURES = ("suite", "twins", "federation", "board", "rust", "tree")
+# Required for a comment to count as a row. `rust` and `tree` are read
+# optionally: rows written before they existed have no such key and must
+# still parse.
 ROW_KEYS = ("sha", "prev", "run", "suite", "twins", "federation", "board", "cpanic")
 # A measure's total (passed + failed) may fall by this fraction against the
 # newest earlier row that measured it (tests deleted); more is a regression.
@@ -257,8 +266,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path, final: bool) -> int:
     results, pending = load_results(runs, final)
-    suite, twins, fed_r, board, rust = (
-        results[m] for m in ("suite", "twins", "federation", "board", "rust")
+    suite, twins, fed_r, board, rust, tree = (
+        results[m] for m in ("suite", "twins", "federation", "board", "rust", "tree")
     )
     own = own_measures()
     # Not this workflow's number: written "-", never pending, never compared.
@@ -279,7 +288,8 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
     rust_pass, rust_total = pair("rust", "passed", "total")
     if rust_total == "0":
         rust_pass = rust_total = "?"
-    fed = fed_r.get("verdict") if fed_r.get("measured") else "?"
+    tree_pass, tree_total = pair("tree", "passed", "total")
+    fed =fed_r.get("verdict") if fed_r.get("measured") else "?"
     fed = fed if fed in ("PASS", "FAIL") else "?"
     if "federation" in outside:
         fed = "-"
@@ -300,13 +310,13 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
     if not issue:
         url = gh("issue", "create", "--title", title, "--body",
                  "One row per run of .github/workflows/main-scorecard.yml (suite, "
-                 "twins, federation, rust) and of main-scorecard-board.yml (the pandas "
+                 "twins, federation, rust, tree) and of main-scorecard-board.yml (the pandas "
                  "board), on every push to main, hourly, on demand. Each measuring "
                  "job edits its run's comment as soon as its own number lands; `?` "
                  "is pending until then and `-` is the other workflow's number. "
                  "Each comment starts with OK or REGRESSION:, then one "
                  "machine-readable line: sha= prev= run= suite= twins= federation= "
-                 "rust= board= cpanic= issues= prs= pending= rerun= carried= wall=.")
+                 "rust= tree= board= cpanic= issues= prs= pending= rerun= carried= wall=.")
         if url is None:
             print("::error::could not create the scorecard issue")
             return 1
@@ -429,9 +439,11 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
     fewer_failing_is_better("suite", "suite", suite_pass, suite_total, "suite")
     fewer_failing_is_better("twins", "twins", twins_pass, twins_total, "twins")
     fewer_failing_is_better("rust", "rust", rust_pass, rust_total, "rust")
+    fewer_failing_is_better("tree", "tree", tree_pass, tree_total, "tree")
     total_held("suite", "suite", suite_total, "suite")
     total_held("twins", "twins", twins_total, "twins")
     total_held("rust", "rust", rust_total, "rust")
+    total_held("tree", "tree", tree_total, "tree")
     total_held("board", "board", board_total, "board")
     higher_is_better("board completed", "board", board_done, "board", 0)
     if "board" not in pending and "board" not in outside:
@@ -481,7 +493,8 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
     row = (
         f"sha={sha} prev={prev_sha} run={run_id} suite={suite_pass}/{suite_total} "
         f"twins={twins_pass}/{twins_total} federation={fed} "
-        f"rust={rust_pass}/{rust_total} board={board_done}/{board_total} cpanic={cpanic} issues={issues} "
+        f"rust={rust_pass}/{rust_total} tree={tree_pass}/{tree_total} "
+        f"board={board_done}/{board_total} cpanic={cpanic} issues={issues} "
         f"prs={prs_cell} pending={','.join(pending) or 'none'} "
         f"rerun={carry_cell('rerun')} carried={carry_cell('carried')} wall={wall}"
     )
@@ -497,7 +510,9 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         f"(job {job_wall(twins)}) | federation {fed}"
         f"{' (carried)' if fed_r.get('carried') else ''} (job {job_wall(fed_r)}) | "
         f"rust {rust_pass}/{rust_total} failed {num(rust.get('failed'))} "
-        f"(job {job_wall(rust)}) | board {board_done}/{board_total} cpanic={cpanic} (job {job_wall(board)}) | "
+        f"(job {job_wall(rust)}) | tree {tree_pass}/{tree_total} failed+error "
+        f"{num(tree.get('failed'))} (job {job_wall(tree)}) | "
+        f"board {board_done}/{board_total} cpanic={cpanic} (job {job_wall(board)}) | "
         f"run wall {wall} | open issues {issues} | [run]({run_url})"
     )
     notes = []
