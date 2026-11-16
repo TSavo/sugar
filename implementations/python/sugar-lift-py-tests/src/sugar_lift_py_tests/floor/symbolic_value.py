@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.ir import Term
 
 from .floor_value import _BINARY_OPERATOR_COORDINATE, FloorValue
@@ -234,22 +233,6 @@ class SymbolicValue(FloorValue):
             owner="SymbolicValue.length",
         )
 
-    def append_with(self, value, site):
-        from sugar_lift_py_tests.effect import (
-            AppendRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.halted(
-            AppendRuntimeEffect(
-                "append runtime boundary: symbolic receiver has no constructed "
-                f"list post-state; value={value.to_term(owner=str(site))!r}; "
-                f"site={site}",
-                **runtime_effect_evidence("py.append", self, site),
-            )
-        )
-
     def multiply(self, other, site, ctx):
         # Symbolic numeric multiplication keeps the native coordinate. A symbolic
         # value used as a sequence repetition count has not proved Python's
@@ -363,9 +346,8 @@ class SymbolicValue(FloorValue):
         ``self.expected_exceptions[0].__name__``, and guessing a concrete type
         name is dishonest.  The spelling is still decidable: the completed
         face is ``attr:__name__(receiver)``, marked as the type-name read
-        (``type_name_attribute``), the same way ``format_data_model`` names
-        ``call:__format__`` without inventing the formatted string.  It keeps
-        the read's raise face: an object need not have a ``__name__``.
+        (``type_name_attribute``).  It keeps the read's raise face: an object
+        need not have a ``__name__``.
         """
         from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
 
@@ -398,36 +380,6 @@ class SymbolicValue(FloorValue):
         # ExitSet.completed(py.in) nor TypeError is honest without container-type
         # testimony. Named refusal, not fabrication.
         return self.undecided_contains(item, site, owner="SymbolicValue.contains")
-
-    def format_data_model(self, spec, site, ctx):
-        """Construct ``format(symbolic, spec)`` as an exact data-model coordinate.
-
-        A free/opaque receiver has no diggable ``__format__`` body. The spelling
-        is still decidable: name the ``call:__format__(receiver, spec)`` method
-        coordinate without inventing a concrete return string (#5156).
-        """
-        del ctx
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(
-            CallSiteValue(
-                target_name="__format__",
-                arg_values=(self, spec),
-                parameters=(),
-                term=ctor(
-                    call_symbol("__format__"),
-                    [
-                        self.to_term(owner=str(site)),
-                        spec.to_term(owner=str(site)),
-                    ],
-                    symbol_kind="method-coordinate",
-                ),
-                body=None,
-                site=site,
-            )
-        )
 
     def subscript_with(self, operation, ctx):
         """``symbolic[k]`` from source answers through :meth:`subscript`.

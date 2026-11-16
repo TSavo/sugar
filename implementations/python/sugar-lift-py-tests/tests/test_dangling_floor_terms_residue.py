@@ -144,18 +144,6 @@ def test_setitem_on_an_undecided_receiver_is_the_undecided_mutation(
     _undecided_item_mutation(outcome, "UndecidedSetitem")
 
 
-def test_callsite_append_projects_appended_value_directly(tmp_path) -> None:
-    receiver = _receiver("callsite")
-    value = TermValue(7)
-
-    outcome = receiver.append_with(value, _sites(tmp_path)[2])
-
-    assert outcome.completed_value() is not None
-    assert outcome.completed_value().term.args[1] == value.to_term(
-        owner="CallSiteValue.append_with value"
-    )
-
-
 @pytest.mark.parametrize("receiver_kind", ("symbolic", "callsite"))
 def test_delitem_on_an_undecided_receiver_is_the_undecided_mutation(
     tmp_path, receiver_kind: str

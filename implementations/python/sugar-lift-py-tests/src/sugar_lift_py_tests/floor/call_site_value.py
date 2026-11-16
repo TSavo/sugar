@@ -275,9 +275,8 @@ class CallSiteValue(FloorValue):
         ``self.expected_exceptions[0].__name__`` after that lookup is named as
         ``py.subscript``. The spelling is decidable: emit
         ``attr:__name__(receiver)`` the same way a symbolic receiver names the
-        attribute and ``format_data_model`` names ``call:__format__`` without
-        inventing the formatted string. Every other member is not decided
-        here: the one two-faced unanswered read, keyed per evaluation
+        attribute, without inventing the type name. Every other member is not
+        decided here: the one two-faced unanswered read, keyed per evaluation
         (``floor_value.undecided_attribute_result``).
         """
         if name in {"__name__", "__qualname__"}:
@@ -660,169 +659,10 @@ class CallSiteValue(FloorValue):
     # name (``FloorValue.setitem``), never completes with the halt dropped
     # (#7757 step 7).
 
-    def append_with(self, value, site):
-        """Construct a proven list-shaped callsite after ``.append(v)``.
-
-        Concrete ``ListValue`` folds element history. A callsite (for example
-        ``list(xs)`` over an opaque ``xs``) has no element history to fold,
-        but the append statement still rebinds the name: carry the prior list coordinate and
-        appended value on ``py.list_append`` so later statements keep a
-        FloorValue. (A ``typing.cast`` never arrives as a receiver: the Call
-        node constructs its second operand.) A call bound to the builtin
-        ``list`` (its ``LanguageCallee``, never its spelling) is list-shaped.
-        The ``py.subscript`` coordinate (its marker, never its spelling) of a
-        tuple/list in hand projects the element when the index is a ground
-        int.
-        A curried For post-state (``loop:…`` target) that carried a list via
-        append-rebind is still list-shaped: further appends rebind through
-        ``py.list_append`` without re-digging the loop body. Chained
-        ``py.list_append`` coordinates do the same.
-        Opaque subscript/iter faces stay loud; a call result is not proof
-        that the receiver is a mutable list, and a callee's spelling is not
-        proof of what it binds (#7757). Never mint RuntimeEffect over a
-        ground list proof.
-        """
-        from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
-        from sugar_lift_py_tests.floor.list_value import ListValue
-        from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.floor.tuple_value import TupleValue
-        from sugar_lift_py_tests.outcome import ExitSet, complete_value
-
-        def is_list_floor(floor) -> bool:
-            return isinstance(floor, (ListValue, ComprehensionValue))
-
-        def is_constructed_list_callsite(receiver: CallSiteValue) -> bool:
-            # Proven list constructors and post-states that already rebind through
-            # ``py.list_append``. ``loop:…`` is the curried For floor's single
-            # (or projected) list-shaped carried output after append-rebinding
-            # iterations (#5338 / public_api residual after #5574).
-            # ``py.list_append`` is the coordinate this door itself mints —
-            # chained appends must not re-panic. Content identity stays on
-            # term CID (#5569).
-            from sugar_source_tree.nodes import LanguageCallee
-
-            if receiver.language_callee is LanguageCallee.BUILTIN_LIST:
-                return True
-            if receiver.target_name.startswith("loop:"):
-                return True
-            if getattr(receiver.term, "name", None) == "py.list_append":
-                return True
-            return (
-                receiver.subscript_coordinate
-                and bool(receiver.arg_values)
-                and isinstance(receiver.arg_values[0], CallSiteValue)
-                and is_constructed_list_callsite(receiver.arg_values[0])
-            )
-
-        def list_append_coordinate(prior):
-            return ExitSet.completed(list_append_coordinate_value(prior, value, site))
-
-        def project_list_operand(operand):
-            """Fold to a list floor, rebind through list_append, or None (loud)."""
-            from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-
-            if is_list_floor(operand):
-                return operand.append_with(value, site)
-            if (
-                isinstance(operand, OpaqueOpCallsite)
-                and operand.stands_on_append_floor()
-            ):
-                # ``str.split`` by an opaque separator (its marker).
-                return operand.append_with(value, site)
-            if not isinstance(operand, CallSiteValue):
-                return None
-            if is_constructed_list_callsite(operand):
-                return list_append_coordinate(operand)
-            return resolve_receiver(operand)
-
-        def resolve_receiver(receiver: CallSiteValue):
-            # Unpack residual: handles = triple[2] where the base is a
-            # TupleValue/ListValue in hand and the index is a ground int.  A
-            # call's result is never one: no callee body is applied at lift
-            # (#7757 step 6).
-            if receiver.subscript_coordinate and len(receiver.arg_values) == 2:
-                base, index = receiver.arg_values
-                if isinstance(index, TermValue) and type(index.value) is int:
-                    if isinstance(base, (ListValue, TupleValue)):
-                        from sugar_lift_py_tests.operations.subscript_operation import (
-                            discharge_subscript,
-                        )
-
-                        projected = discharge_subscript(
-                            base,
-                            index,
-                            site,
-                            None,
-                            owner="CallSiteValue.append_with subscript",
-                        )
-                        if projected.halts() == projected.exits:
-                            return None
-                        element = complete_value(
-                            projected, owner="CallSiteValue.append_with subscript"
-                        )
-                        return project_list_operand(element)
-                if is_constructed_list_callsite(receiver):
-                    return list_append_coordinate(receiver)
-                return None
-
-            if is_constructed_list_callsite(receiver):
-                return list_append_coordinate(receiver)
-            return None
-
-        constructed = resolve_receiver(self)
-        if constructed is not None:
-            return constructed
-
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        construction_panic_gap(
-            owner="CallSiteValue.append_with",
-            blame=str(site),
-            observed=f"CallSiteValue({self.target_name})",
-            requested="classified append contract",
-            fix=(
-                "prove that the call result is a mutable list and construct "
-                "its post-append state, or leave it loud"
-            ),
-        )
-
     def callsites(self):
         # A CallSiteValue carries itself -- equals emit collects it so the
         # inv that consumes the term can still project the edge later.
         return (self,)
-
-    def linear_method_call(self, method_name: str, args: tuple, site):
-        """Name the next link in a timeless receiver-method rewrite, each
-        operand as the call finds it (``object_identity.identity_term``)."""
-        from sugar_lift_py_tests.ir import ctor
-
-        from .object_identity import call_operand_terms
-
-        return CallSiteValue(
-            target_name=method_name,
-            arg_values=(self, *args),
-            parameters=(),
-            term=ctor(
-                call_symbol(method_name),
-                call_operand_terms((self, *args), (), site, owner=str(site)),
-                symbol_kind="method-coordinate",
-            ),
-            body=None,
-            site=site,
-        )
-
-    def format_data_model(self, spec, site, ctx) -> Any:
-        """Construct ``format(call(), spec)`` at the Python data-model seam.
-
-        A callsite has an exact receiver coordinate: preserve it as the
-        symbolic ``__format__`` method call without claiming a concrete return
-        value and without manufacturing a RuntimeEffect.  No callee body is
-        applied at lift (#7757 step 6).
-        """
-        del ctx
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(self.linear_method_call("__format__", (spec,), site))
 
     def names_a_string(self) -> bool:
         """Whether this callsite is known to produce a ``str`` if it completes.
@@ -1270,30 +1110,6 @@ def _ctx_with_curried_args(
             kind=FormalActualBinding,
         )
     return result
-
-
-def list_append_coordinate_value(prior, value, site) -> CallSiteValue:
-    """``prior`` after ``.append(value)``: the ``py.list_append`` coordinate.
-
-    The one mint for a list-shaped receiver with no element history to fold
-    (``CallSiteValue.append_with``, ``OpaqueOpCallsite.append_with``).  The
-    coordinate is itself list-shaped: a chained append reads its term.
-    """
-    from sugar_lift_py_tests.ir import ctor
-
-    value_term = value.to_term(owner="CallSiteValue.append_with value")
-    return CallSiteValue(
-        target_name="list.append",
-        arg_values=(prior, value),
-        parameters=(),
-        term=ctor(
-            "py.list_append",
-            [prior.to_term(owner=str(site)), value_term],
-            symbol_kind="method-coordinate",
-        ),
-        body=None,
-        site=site,
-    )
 
 
 @dataclass(frozen=True)

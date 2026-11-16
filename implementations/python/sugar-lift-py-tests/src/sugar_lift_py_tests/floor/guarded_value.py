@@ -39,19 +39,6 @@ def _require_rebind_roster(value, *, owner: str, blame, arm: str):
     )
 
 
-def _stands_on_append_floor(face) -> bool:
-    """Whether ``face`` answers ``append_with`` itself.
-
-    Its class must define ``append_with``; a class whose instances differ
-    (``OpaqueOpCallsite``: only the ``STR_SPLIT`` coordinate is list-shaped)
-    narrows it by ``stands_on_append_floor``.
-    """
-    if "append_with" not in type(face).__dict__:
-        return False
-    narrowed = getattr(face, "stands_on_append_floor", None)
-    return narrowed() if callable(narrowed) else True
-
-
 def _item_mutation_on_arm(method, arm, operands, site, ctx):
     """One arm's item store or delete (``__setitem__``/``__delitem__``)
     through the one item mutation, in the module the store stands in (its
@@ -547,31 +534,6 @@ class GuardedValue(FloorValue):
             lambda arm, other: arm.add(other, site, ctx),
             operation="add",
             blame=site,
-        )
-
-    def append_with(self, value, site):
-        if all(
-            _stands_on_append_floor(face) for face in (self.when_true, self.when_false)
-        ):
-            return self._map_over(
-                value,
-                lambda arm, value: arm.append_with(value, site),
-                operation="append_with",
-                blame=site,
-            )
-        from sugar_lift_py_tests.effect import (
-            AppendRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.halted(
-            AppendRuntimeEffect(
-                "append runtime boundary: guarded receiver has a branch without "
-                f"a constructed list post-state; value={value.to_term(owner=str(site))!r}; "
-                f"site={site}",
-                **runtime_effect_evidence("py.append", self, site),
-            )
         )
 
     def subtract(self, other, site, ctx):

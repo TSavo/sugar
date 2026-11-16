@@ -159,27 +159,6 @@ class FloorValue:
         del ctx
         return ExitSet.completed(self)
 
-    def append_with(self, value, site):
-        # Default: this value does not stand on the append floor -- it cannot answer
-        # what appending another value yields. The None arm: a value that CAN
-        # implements append_with (ListValue folds the history; CallSiteValue
-        # rebinds through py.list_append). Absence here is the honest "no".
-        del value
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="append_with",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the append floor",
-            fix=f"write more Floor: implement {observed}.append_with",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
-
     def mint_contribution(self, name, formals):
         # Default: a record entry mints no row of its own.
         del name, formals
@@ -1400,16 +1379,6 @@ class FloorValue:
                 ),
                 site,
             )
-        )
-
-    def format_data_model(self, spec, site, ctx):
-        del spec, ctx
-        return self._floor_gap(
-            owner="FormatDunderCallSugar",
-            blame=str(site),
-            observed=type(self).__name__,
-            requested="format data-model method",
-            fix="construct __format__",
         )
 
 
