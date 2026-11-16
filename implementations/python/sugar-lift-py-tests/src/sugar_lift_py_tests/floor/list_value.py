@@ -201,15 +201,6 @@ class ListValue(GuardStableValue):
             fix="construct member equality on the Python floor or keep it loud",
         )
 
-    def append_with(self, value, site):
-        # Concrete history folds: the updated list is the old elements plus the
-        # new value. Symbolic receivers stay on the default panic.  The same
-        # object: it keeps its ``allocation``.
-        del site
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(replace(self, elements=(*self.elements, value)))
-
     def add(self, other, site, ctx):
         """Python list concatenation, or a cited coordinate for an opaque peer.
 

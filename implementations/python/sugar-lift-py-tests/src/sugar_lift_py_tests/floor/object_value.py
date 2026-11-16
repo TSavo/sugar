@@ -151,15 +151,6 @@ class ObjectValue(FloorValue):
         membership has (``FloorValue.undecided_contains``, #7757 S4)."""
         return self.undecided_contains(item, site, owner="ObjectValue.contains")
 
-    def format_data_model(self, spec, site, ctx):
-        return self.call_method_value(
-            "__format__",
-            (spec,),
-            owner="FormatDunderCallSugar",
-            blame=str(site),
-            ctx=ctx,
-        )
-
     def equals(self, other, site, ctx):
         """Invoke an authenticated source ``__eq__`` when method order is known.
 

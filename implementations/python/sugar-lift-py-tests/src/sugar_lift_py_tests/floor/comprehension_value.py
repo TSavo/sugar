@@ -209,30 +209,6 @@ class ComprehensionValue(GuardStableValue):
             return self.display.equals(other, site, ctx)
         return super().equals(other, site, ctx)
 
-    def append_with(self, value, site):
-        """Construct the post-state of a list comprehension append.
-
-        The comprehension's members may be runtime-derived, but its container
-        kind and Python append semantics are already known. Preserve the prior
-        list coordinate and appended value without inventing either history or
-        cardinality.
-        """
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(
-            ComprehensionValue(
-                ctor(
-                    "py.list_append",
-                    [
-                        self.term,
-                        value.to_term(owner="ComprehensionValue.append_with value"),
-                    ],
-                    symbol_kind="method-coordinate",
-                )
-            )
-        )
-
     def add(self, other, site, ctx):
         if self.display is not None:
             # A list decided whole adds as the list it is.

@@ -423,7 +423,7 @@ class LanguageCallee(_enum.Enum):
     # ``str.split(sep[, maxsplit])``: a method of the builtin ``str`` whose
     # result is always a new ``list``.  No name binds it; ``StringValue``'s
     # method fold mints it on the ``OpaqueOpCallsite`` of a split by an opaque
-    # separator, and ``OpaqueOpCallsite.append_with`` reads it.
+    # separator.
     STR_SPLIT = "python:builtins.str.split"
     # ``typing.final(f)``: sets ``f.__final__`` if it can and returns ``f``.
     TYPING_FINAL = "python:typing.final"

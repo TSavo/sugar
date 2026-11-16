@@ -291,8 +291,7 @@ class TupleCoordinateValue(FloorValue):
             # ``self.expected_exceptions[0]`` after a bodyless ``tuple(...)``
             # writes this coordinate. Members stay unknown: emit
             # ``py.subscript`` over the construction term the same way
-            # ``truth`` emits ``py.truthy`` and ``format_data_model`` names
-            # ``call:__format__`` without inventing the formatted string.
+            # ``truth`` emits ``py.truthy``.
             return ExitSet.completed(
                 CallSiteValue(
                     target_name="__getitem__",
