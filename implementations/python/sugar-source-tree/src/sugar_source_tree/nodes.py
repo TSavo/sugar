@@ -3007,21 +3007,47 @@ class SourceUnit:
         (``_global_input_names``), read through its undecided key
         (``undecided_module_binding_key``), exactly as a global the module's
         run leaves undecided (#8802), and its row states no value for it.
-        A builtin's name under a star import is not one (the builtin
-        reference is withheld there, ``builtin_reference_at``)."""
+        A builtin's name under a star import is not one: the star import
+        may rebind it or leave the builtin (``star_import_builtin``)."""
         if hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
             return False
         if name in self.module_bound_names:
             return False
         return "*" in self._module_name_rows()[0]
 
+    def star_import_builtin(self, name: str) -> bool:
+        """Whether ``name`` is a builtin's name a star import may rebind: the
+        module has a star import, no statement at module scope binds
+        ``name``, and the builtin floor holds it (not a name the interpreter
+        binds itself).  The builtin reference is withheld there
+        (``builtin_reference_at``): the star import may bind the name, or
+        leave the builtin, and the lifter reads no imported module's names.
+
+        A value read of it (``isinstance(keys, tuple)``, ``return
+        NotImplemented``) is the global the module's run does not decide: a
+        function that reads it as a value takes it as its ``global:<name>``
+        input with no stated value (``_star_import_value_reads``), read
+        through its undecided key, exactly as a global only a star import
+        may bind (#8802).  Before, nothing bound that read, and it was the
+        free name: ``ScopedFormula`` refused the function by it (#7757:
+        numpy ``_core/multiarray.py::lexsort`` by ``tuple``, under ``from
+        ._multiarray_umath import *``).  A call by the name never reads it as
+        a value: it is the one unanswered call by its spelling
+        (``call_site_sugar._unknown_callee_call``)."""
+        if not hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
+            return False
+        if name in self.module_bound_names:
+            return False
+        return "*" in self._module_name_rows()[0]
+
     def star_import_global_read(self, name: str, span) -> bool:
-        """Whether the read of ``name`` at ``span`` reads a module global
-        only a star import may bind (``star_import_global``): nothing the
-        source spells binds it there (``_read_falls_through_the_source``)."""
-        return self.star_import_global(name) and self._read_falls_through_the_source(
-            name, span
-        )
+        """Whether the read of ``name`` at ``span`` reads a module global a
+        star import may bind and the module's run does not decide
+        (``star_import_global``, ``star_import_builtin``): nothing the source
+        spells binds it there (``_read_falls_through_the_source``)."""
+        return (
+            self.star_import_global(name) or self.star_import_builtin(name)
+        ) and self._read_falls_through_the_source(name, span)
 
     def class_namespace_stores(self, statement: "ClassDef") -> frozenset:
         """The names stored on, or deleted from, the class object the module
@@ -10755,18 +10781,21 @@ class FunctionDef(Statement):
         each read as the name (an exception class read there is the
         undecided citation, ``UndecidedExceptionClassV1``); its value is the
         free ``global:<name>`` input its undecided key is bound to
-        (``NameSugar``)."""
+        (``NameSugar``).  So is a builtin's name a star import may rebind
+        that the body reads as a value (``SourceUnit.star_import_builtin``,
+        ``_star_import_value_reads``)."""
         unit = self.unit
         if "*" not in unit._module_name_rows()[0]:
             return frozenset()
         table = unit.function_symtable(self.name, self.line_col_span().start_line)
-        return frozenset(
+        referenced = frozenset(
             symbol.get_name()
             for symbol in table.get_symbols()
-            if symbol.is_global()
-            and symbol.is_referenced()
-            and unit.star_import_global(symbol.get_name())
+            if symbol.is_global() and symbol.is_referenced()
         )
+        return frozenset(
+            name for name in referenced if unit.star_import_global(name)
+        ) | _star_import_value_reads(self, referenced)
 
     def _module_globals_read(self) -> frozenset:
         """The module globals this body reads that the module threading
@@ -20578,16 +20607,16 @@ class Lambda(Expression):
         """The module globals this body reads that only a star import may
         bind (``SourceUnit.star_import_global``), read off CPython's symtable
         of this lambda as ``_module_globals_read`` reads the threaded ones
-        (``FunctionDef._star_import_globals_read``)."""
+        (``FunctionDef._star_import_globals_read``), and each builtin's name
+        a star import may rebind that it reads as a value
+        (``_star_import_value_reads``)."""
         unit = self.unit
         if "*" not in unit._module_name_rows()[0]:
             return frozenset()
+        spelled = {node.id for node in self.body.walk() if isinstance(node, Name)}
         return self._globals_read_among(
-            {
-                node.id
-                for node in self.body.walk()
-                if isinstance(node, Name) and unit.star_import_global(node.id)
-            }
+            {name for name in spelled if unit.star_import_global(name)}
+            | _star_import_value_reads(self, spelled)
         )
 
     def _globals_read_among(self, names) -> frozenset:
@@ -25441,6 +25470,35 @@ def _held_global_input_names(definition):
 
 def _hold_global_input_names(definition, names: frozenset) -> None:
     definition._coordinate()[2]["__global_input_names__"] = (names,)
+
+
+def _star_import_value_reads(definition, candidates) -> frozenset:
+    """Those of ``candidates`` (names ``definition``'s body, a ``def``'s or a
+    lambda's, may read as globals) that are a builtin's name a star import
+    may rebind (``SourceUnit.star_import_builtin``) and that the body reads
+    as a value: a ``Name`` of that spelling standing anywhere but as a call's
+    callee.  Such a read is the function's ``global:<name>`` input with no
+    stated value (``NameSugar``), never the free name; a call by the name is
+    the one unanswered call by its spelling and reads no value, so it takes
+    no input."""
+    unit = definition.unit
+    names = frozenset(name for name in candidates if unit.star_import_builtin(name))
+    if not names:
+        return frozenset()
+    roots = (
+        (definition.body,) if isinstance(definition, Lambda) else tuple(definition.body)
+    )
+    callees: set[int] = set()
+    for root in roots:
+        for node in root.walk():
+            if isinstance(node, Call) and isinstance(node.func, Name):
+                callees.add(id(node.func))
+    values: set[str] = set()
+    for root in roots:
+        for node in root.walk():
+            if isinstance(node, Name) and node.id in names and id(node) not in callees:
+                values.add(node.id)
+    return frozenset(values)
 
 
 def _own_global_reads(definition) -> frozenset:
