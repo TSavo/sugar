@@ -523,17 +523,65 @@ def _owed_union(*parts: tuple) -> tuple:
     for a halt the composition owns), arms that stand for each other merge
     through ``ExitSet.union`` / ``normalize``, and the debts of a set of arms
     are read with ``ExitSet.owed_items``. Nobody else unions debts by hand.
+
+    The cost (#8416, slowness is the defect): every arm of a straight-line
+    body owes the debts of every operation before it, so ``owed_items`` over
+    a body's A arms, each owing up to C items, asked ``item not in merged``
+    of a list A x C times: A x C^2 ``__eq__`` calls. Where that product is
+    large the same membership is asked of a hash index (``_union_by_index``),
+    A x C. The answer is the same tuple: the first contributor is kept as it
+    is (its own repeats too), every later item is kept exactly when no item
+    already kept is it or equals it, in first-seen order.
     """
     nonempty = [part for part in parts if part]
     if not nonempty:
         return _NO_OWED
     if len(nonempty) == 1:
         return tuple(nonempty[0])
+    rest = nonempty[1:]
+    if len(nonempty[0]) * sum(len(part) for part in rest) > _OWED_SCAN_LIMIT:
+        merged = _union_by_index(nonempty[0], rest)
+        if merged is not None:
+            return merged
     merged = list(nonempty[0])
-    for part in nonempty[1:]:
+    for part in rest:
         for item in part:
             if item not in merged:
                 merged.append(item)
+    return tuple(merged)
+
+
+# Below this many (kept items x items still to place) the list scan costs
+# less than hashing every kept item; above it the scan is the quadratic.
+_OWED_SCAN_LIMIT = 64
+
+
+def _union_by_index(first: tuple, rest: list) -> "tuple | None":
+    """``_owed_union`` of ``first`` and ``rest`` asked of a hash index, or
+    ``None`` where an index cannot answer exactly as the list scan does.
+
+    ``x in a_set`` is ``x in a_list`` for every item whose hash agrees with
+    its ``==`` (Python's own contract, which every frozen dataclass here
+    keeps). An item that cannot be hashed, or whose class keeps identity
+    hashing beside its own ``__eq__``, is not indexed: the whole union is
+    then left to the scan, so nothing is ever kept or dropped that the scan
+    would not keep or drop.
+    """
+    for part in (first, *rest):
+        for item in part:
+            cls = type(item)
+            if cls.__hash__ is object.__hash__ and cls.__eq__ is not object.__eq__:
+                return None
+    try:
+        merged = list(first)
+        seen = set(merged)
+        for part in rest:
+            for item in part:
+                if item not in seen:
+                    seen.add(item)
+                    merged.append(item)
+    except TypeError:
+        return None
     return tuple(merged)
 
 
