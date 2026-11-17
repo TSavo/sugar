@@ -24,7 +24,14 @@ from typing import Any, Iterable, Mapping
 from .canonicalizer import blake3_512_of, encode_jcs
 from .context_manager_contract import _json_value
 
-from sugar_source_tree.nodes import Expression, Module, Node, Statement
+from sugar_source_tree.nodes import (
+    Expression,
+    Module,
+    Node,
+    Statement,
+    annotation_evaluated,
+    module_postpones_annotations,
+)
 
 
 class UnsupportedStatementGrammar(RuntimeError):
@@ -607,6 +614,7 @@ class _Pass:
         module_identities: dict[str, dict[str, Any]],
         module_state: State | None = None,
         analyze_nested: bool = True,
+        postpones_annotations: bool = False,
     ):
         self.source_cid = source_cid
         self.module_name = module_name
@@ -638,6 +646,10 @@ class _Pass:
         self.gate_verdicts: dict[tuple[int, int, int, int], bool] = {}
         self.module_state = module_state or {}
         self.analyze_nested = analyze_nested
+        # Whether the module postpones its annotations
+        # (``module_postpones_annotations``): a ``def``'s annotations are
+        # walked exactly where this lift evaluates them.
+        self.postpones_annotations = postpones_annotations
         self.class_outer_states: dict[int, State] = {}
 
     def module_import_target(self, name: str) -> str | None:
@@ -666,6 +678,7 @@ class _Pass:
             module_identities=self.module_identities,
             module_state=self.module_state,
             analyze_nested=False,
+            postpones_annotations=self.postpones_annotations,
         )
         return transfer.statement(node, state, scope)
 
@@ -752,6 +765,10 @@ class _Pass:
                 self._call(node, state, scope)
             return
         if node.kind == "Lambda":
+            # A default is evaluated where the lambda is, as a ``def``'s is.
+            for param in node.params:
+                if param.default is not None:
+                    self.expression(param.default, state, scope)
             inner = dict(state)
             for param in node.params:
                 inner[param.name] = frozenset({_NON_IMPORT})
@@ -761,6 +778,7 @@ class _Pass:
             inner = dict(state)
             for generator in node.generators:
                 self.expression(generator.iter, inner, scope)
+                self.store_target(generator.target, inner, scope)
                 for name in _bound_names(generator.target):
                     inner[name] = frozenset({_NON_IMPORT})
                 for condition in generator.ifs:
@@ -774,6 +792,40 @@ class _Pass:
         for _, _, child in node.children():
             if isinstance(child, Expression):
                 self.expression(child, state, scope)
+            elif isinstance(child, Node) and type(child)._structural_part:
+                # A grammar piece the expression holds is no Expression of its
+                # own (``_structural_part``): a Dict display's ``key: value``
+                # item.  What it holds Python evaluates right here, so its
+                # reads are this expression's reads (#7757).  Skipping it left
+                # every ``{"k": np.nan}`` without its import row: the read
+                # reached the meaning layer as the free name ``np``.
+                for _, _, part in child.children():
+                    if isinstance(part, Expression):
+                        self.expression(part, state, scope)
+
+    def store_target(self, target: Node | None, state: State, scope: Node) -> None:
+        """The reads a store target makes before it stores.
+
+        ``recv.attr = v`` evaluates ``recv``; ``recv[k] = v`` (and ``del
+        recv[k]``) evaluates ``recv`` and ``k``; an unpack target evaluates
+        each element's.  A bare name evaluates nothing.  Those reads are
+        value uses like any other (``os.environ["TZ"] = tz`` reads the
+        import-bound ``os.environ``), so they take their rows here; the names
+        a target binds are the caller's transfer, never read as uses.
+        """
+        if target is None:
+            return
+        kind = target.kind
+        if kind == "Attribute":
+            self.expression(target.value, state, scope)
+        elif kind == "Subscript":
+            self.expression(target.value, state, scope)
+            self.expression(target.slice_, state, scope)
+        elif kind in ("Tuple", "List"):
+            for element in target.elts:
+                self.store_target(element, state, scope)
+        elif kind == "Starred":
+            self.store_target(target.value, state, scope)
 
     def _unique_import_def(
         self, local_name: str, state: State, *, allow_unbound: bool
@@ -1165,6 +1217,17 @@ class _Pass:
                 *(p.default for p in node.params if p.default is not None),
             ):
                 self.expression(default, state, scope)
+            # Then each annotation Python evaluates where the ``def`` runs
+            # (``annotation_evaluated``: none in a module that postpones
+            # them, never a string): ``def f(s: pd.Series)`` reads ``pd``.
+            for annotation in (
+                *(p.annotation for p in node.params),
+                node.returns,
+            ):
+                if annotation is not None and annotation_evaluated(
+                    annotation, postponed_module=self.postpones_annotations
+                ):
+                    self.expression(annotation, state, scope)
             if scope.kind == "Module":
                 state[node.name] = frozenset(
                     {
@@ -1219,6 +1282,7 @@ class _Pass:
                 else None
             )
             for target in targets:
+                self.store_target(target, state, scope)
                 names = _bound_names(target)
                 if (
                     importorskip is not None
@@ -1270,6 +1334,7 @@ class _Pass:
             body_in = self._loop_entry(node, state, scope)
             self.expression(getattr(node, "test", None), body_in, scope)
             if hasattr(node, "target"):
+                self.store_target(node.target, body_in, scope)
                 for name in _bound_names(node.target):
                     body_in[name] = frozenset({_NON_IMPORT})
             body = self.statements(node.body, body_in, scope)
@@ -1305,11 +1370,13 @@ class _Pass:
             for item in node.items:
                 self.expression(item.context_expr, state, scope)
                 if item.optional_vars:
+                    self.store_target(item.optional_vars, state, scope)
                     for name in _bound_names(item.optional_vars):
                         state[name] = frozenset({_NON_IMPORT})
             return self.statements(node.body, state, scope)
         if node.kind == "Delete":
             for target in node.targets:
+                self.store_target(target, state, scope)
                 for name in _bound_names(target):
                     state[name] = frozenset({_UNBOUND})
             return state
@@ -1404,6 +1471,7 @@ def _final_module_state(
         module_is_package=module_is_package,
         module_identities=module_identities,
         analyze_nested=False,
+        postpones_annotations=module_postpones_annotations(module),
     )
     return prepass.statements(module.body, {}, module)
 
@@ -1574,6 +1642,7 @@ def _run_lexical_import_pass_on_module(
         module_is_package=path.name == "__init__.py",
         module_identities=identities,
         module_state=module_state,
+        postpones_annotations=module_postpones_annotations(module),
     )
     runner.statements(module.body, {}, module)
     return runner
