@@ -4,30 +4,6 @@ from dataclasses import dataclass, replace
 
 from .floor_value import FloorValue
 
-# Types that a class object is never an instance of under ordinary Python.
-# ``isinstance(SomeClass, tuple)`` is False; container and scalar value types
-# are disjoint from the class-object side of the type/value distinction.
-_CLASS_OBJECT_DISJOINT_TYPES = frozenset(
-    {
-        "tuple",
-        "list",
-        "dict",
-        "set",
-        "frozenset",
-        "str",
-        "bytes",
-        "bytearray",
-        "int",
-        "bool",
-        "float",
-        "complex",
-        "range",
-        "NoneType",
-        "memoryview",
-        "slice",
-    }
-)
-
 
 @dataclass(frozen=True)
 class ClassValue(FloorValue):
@@ -107,27 +83,22 @@ class ClassValue(FloorValue):
         (``python:type("…")``). The display ``type_name`` string is never
         consulted: under builtin shadowing the same spelling can name a
         foreign type, and deciding False from that string is a wrong answer.
+
+        A builtin class's metaclass is ``type`` exactly, so it is answered
+        from ``type``'s row of the one order table
+        (``python_type_coordinate.builtin_order_isinstance``); any other
+        classinfo is the undecided type test, its halt kept (#7757).
         """
         from sugar_lift_py_tests.floor.python_type_coordinate import (
-            authenticated_python_type_spelling,
-        )
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-            FalseBoolLiteralSugar,
-        )
-        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-            TrueBoolLiteralSugar,
+            builtin_order_isinstance,
         )
 
-        del type_name  # display spelling is not authority
-        authenticated_name = authenticated_python_type_spelling(
-            type_term, owner="ClassValue.python_isinstance", site=site
+        decided = builtin_order_isinstance(
+            "type", type_term, site, owner="ClassValue.python_isinstance"
         )
-        if authenticated_name in {"type", "object"}:
-            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
-        if authenticated_name in _CLASS_OBJECT_DISJOINT_TYPES:
-            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
-        return super().python_isinstance(authenticated_name, type_term, site)
+        if decided is not None:
+            return decided
+        return super().python_isinstance(type_name, type_term, site)
 
     def test_python_subtype(self, supertype, site):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue

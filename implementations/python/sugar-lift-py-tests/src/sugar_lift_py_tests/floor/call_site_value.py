@@ -500,53 +500,41 @@ class CallSiteValue(FloorValue):
         ``python_type_coordinate`` for (``CallSiteSugar._applied_builtin_type_of``)
         is one.  Any other callsite is the undecided type test, its halt
         kept (``FloorValue.python_isinstance``, #7757).
+
+        Which class ``type(x)`` is -- and so its metaclass -- is undecided:
+        only ``type``'s own order is decided, each ``True``
+        (``builtin_order_isinstance`` with ``exact=False``).  Against any
+        other class ``object_isinstance`` reads the class's ``__class__``,
+        which a metaclass may define to raise, so that is the undecided type
+        test too, never ``False``.
         """
         if self.python_type_coordinate is None:
             return super().python_isinstance(type_name, type_term, site)
-        from sugar_lift_py_tests.floor.class_value import _CLASS_OBJECT_DISJOINT_TYPES
         from sugar_lift_py_tests.floor.python_type_coordinate import (
-            authenticated_python_type_spelling,
-        )
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-            FalseBoolLiteralSugar,
-        )
-        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-            TrueBoolLiteralSugar,
+            builtin_order_isinstance,
         )
 
-        del type_name
-        authenticated = authenticated_python_type_spelling(
-            type_term, owner="CallSiteValue.python_isinstance", site=site
+        decided = builtin_order_isinstance(
+            "type",
+            type_term,
+            site,
+            owner="CallSiteValue.python_isinstance",
+            exact=False,
         )
-        if authenticated in {"type", "object"}:
-            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
-        if authenticated in _CLASS_OBJECT_DISJOINT_TYPES:
-            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
-        return super().python_isinstance(authenticated, type_term, site)
+        if decided is not None:
+            return decided
+        return super().python_isinstance(type_name, type_term, site)
 
     def test_python_type(self, value, site):
-        type_coordinate = self.python_type_coordinate
-        if type_coordinate is None:
-            from sugar_lift_py_tests.effect import (
-                CallResultTypeRuntimeEffect,
-                runtime_effect_evidence,
-            )
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            return ExitSet.halted(
-                CallResultTypeRuntimeEffect(
-                    "call-result type runtime boundary: "
-                    f"`{self.target_name}(...)` has no cited return-type/native "
-                    "tester coordinate; Python must execute the call before its "
-                    f"result can serve as an isinstance type operand; site={site}",
-                    **runtime_effect_evidence("adt.is_python_type", self, site),
-                )
-            )
-        # ``type(y)`` is a class, but which one -- and so its metaclass's
-        # ``__instancecheck__``, and whether ``value`` is asked for its
-        # ``__class__`` -- is undecided: the undecided type test, its halt
-        # kept (``floor_value.undecided_type_test``, #7757).
+        """``isinstance(value, <this call's result>)``.  A cited ``type(y)``
+        is a class, but which one -- and so its metaclass's
+        ``__instancecheck__``, and whether ``value`` is asked for its
+        ``__class__`` -- is undecided; an uncited call's result may be no
+        class at all (the ``TypeError``), a class, or a tuple of them.
+        Either way the test completes or raises, nothing deciding which: the
+        undecided type test, both faces owed, its halt kept
+        (``floor_value.undecided_type_test``, #7757).  Never a halt with no
+        completion: that refutes a truthful claim that the test completes."""
         from sugar_lift_py_tests.floor.floor_value import undecided_type_test
 
         return undecided_type_test(

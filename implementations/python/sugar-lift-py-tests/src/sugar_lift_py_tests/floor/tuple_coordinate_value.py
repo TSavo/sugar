@@ -335,40 +335,24 @@ class TupleCoordinateValue(FloorValue):
         Members stay unknown; the construction itself is still a tuple, so
         ``isinstance(expected_exceptions, type)`` in RaisesExc's mismatch
         diagnostic is False rather than an open predicate that would then
-        ask ``issubclass`` of a non-class.
+        ask ``issubclass`` of a non-class.  Answered from ``tuple``'s row of
+        the one order table
+        (``python_type_coordinate.builtin_order_isinstance``); any other
+        classinfo is the undecided type test, its halt kept (#7757).
         """
         from sugar_lift_py_tests.floor.python_type_coordinate import (
-            authenticated_python_type_spelling,
-        )
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-            FalseBoolLiteralSugar,
-        )
-        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-            TrueBoolLiteralSugar,
+            builtin_order_isinstance,
         )
 
-        del type_name
-        authenticated = authenticated_python_type_spelling(
-            type_term, owner="TupleCoordinateValue.python_isinstance", site=site
+        decided = builtin_order_isinstance(
+            "tuple",
+            type_term,
+            site,
+            owner="TupleCoordinateValue.python_isinstance",
         )
-        if authenticated in {"tuple", "object"}:
-            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
-        if authenticated in {
-            "list",
-            "dict",
-            "set",
-            "frozenset",
-            "str",
-            "bytes",
-            "int",
-            "bool",
-            "float",
-            "type",
-            "NoneType",
-        }:
-            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
-        return super().python_isinstance(authenticated, type_term, site)
+        if decided is not None:
+            return decided
+        return super().python_isinstance(type_name, type_term, site)
 
     def test_python_type(self, value, site):
         """``isinstance(value, <this constructed tuple>)`` without inventing

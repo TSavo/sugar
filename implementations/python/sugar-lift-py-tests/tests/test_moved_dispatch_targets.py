@@ -25,11 +25,11 @@ from sugar_lift_py_tests.floor import (
     TermValue,
     TupleValue,
 )
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.ir import _Ctor, make_var
-from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.ir import ctor
 from sugar_source_tree.nodes import Name
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -67,6 +67,11 @@ def test_the_deleted_floor_terms_shim_is_not_quietly_back() -> None:
 
 
 def test_dynamic_isinstance_projects_the_value_through_its_owned_term_door() -> None:
+    """A classinfo nothing decides is the undecided type test (#7757): it
+    completes with ``python:isinstance_result(<classinfo>, <value>, <key>)``
+    under its own completes atom and halts under the complement, both
+    owed.  Never a halt with no completion: that refutes a truthful claim
+    that the test completes."""
     source = "subject\n"
     tree = SourceFile((source, "dynamic-isinstance.py", blake3_512_of(source.encode())))
     site = next(node for node in tree.nodes() if isinstance(node, Name)).fragment
@@ -75,15 +80,18 @@ def test_dynamic_isinstance_projects_the_value_through_its_owned_term_door() -> 
 
     outcome = dynamic_type.test_python_type(value, site)
 
-    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    assert len(outcome.exits) == 2, outcome
+    (completed,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     (halt,) = outcome.halts()
-    expected = ctor(
-        "adt.is_python_type",
-        [value.to_term(owner="isinstance value"), dynamic_type.term],
-    )
-    assert halt.effect.witness.operation == expected
-    assert halt.effect.witness.operand == dynamic_type.term
-    assert halt.effect.witness.site is site
+    assert "python:isinstance_op.completes" in repr(completed.guard)
+    result = completed.value.term
+    assert result.name == "python:isinstance_result"
+    assert result.args[0] == dynamic_type.term
+    assert result.args[1] == value.term
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt
+    assert halt.effect.producer_node_owner == "SymbolicValue.test_python_type"
+    for arm in outcome.exits:
+        assert arm.owed, arm
 
 
 def test_dynamic_isinstance_keeps_a_value_owned_term_refusal_loud() -> None:

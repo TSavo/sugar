@@ -8,7 +8,6 @@ from .matrix_multiply_runtime_effect import (
 from .coverage_gap_effect import CoverageGapEffect
 from .call_result_type_runtime_effect import CallResultTypeRuntimeEffect
 from .dynamic_format_runtime_effect import DynamicFormatRuntimeEffect
-from .dynamic_type_operand_runtime_effect import DynamicTypeOperandRuntimeEffect
 from .effect import Effect, effect_kind, effect_reason, effect_status, require_effect
 from .imported_module_runtime_effect import ImportedModuleRuntimeEffect
 from .key_error_runtime_effect import KeyErrorRuntimeEffect
@@ -44,7 +43,6 @@ __all__ = [
     "CoverageGapEffect",
     "CallResultTypeRuntimeEffect",
     "DynamicFormatRuntimeEffect",
-    "DynamicTypeOperandRuntimeEffect",
     "Effect",
     "ImportedModuleRuntimeEffect",
     "KeyErrorRuntimeEffect",

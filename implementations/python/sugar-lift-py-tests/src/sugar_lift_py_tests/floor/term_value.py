@@ -42,29 +42,25 @@ class TermValue(GuardStableValue):
         return super().equals(other, site, ctx)
 
     def python_isinstance(self, type_name: str, type_term, site):
-        del type_name  # display spelling is not authority
+        """The carried scalar is an instance of every class of its own
+        type's real order (a ``bool`` is an ``int``; each is an ``object``)
+        and of no other builtin class; any other classinfo is the undecided
+        type test, its halt kept
+        (``python_type_coordinate.builtin_order_isinstance``, #7757)."""
         from sugar_lift_py_tests.floor.python_type_coordinate import (
-            authenticated_python_type_spelling,
-        )
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-            FalseBoolLiteralSugar,
-        )
-        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-            TrueBoolLiteralSugar,
+            builtin_order_isinstance,
         )
 
-        authenticated = authenticated_python_type_spelling(
-            type_term, owner="TermValue.python_isinstance", site=site
+        value_type = {int: "int", float: "float", bool: "bool"}.get(
+            type(self.value)
         )
-        matches = (type(self.value) is int and authenticated == "int") or (
-            type(self.value) is float and authenticated == "float"
-        )
-        return ExitSet.completed(
-            TrueBoolLiteralSugar(site=site)
-            if matches
-            else FalseBoolLiteralSugar(site=site)
-        )
+        if value_type is not None:
+            decided = builtin_order_isinstance(
+                value_type, type_term, site, owner="TermValue.python_isinstance"
+            )
+            if decided is not None:
+                return decided
+        return super().python_isinstance(type_name, type_term, site)
 
     def truth(self, site):
         # Python-faithful: nonzero is True. bool(nan) is True and nan != 0 IS

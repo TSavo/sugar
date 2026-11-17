@@ -155,32 +155,3 @@ def test_a_store_on_a_receiver_after_an_undecided_call_is_runtime_dependent() ->
             "RuntimeEffect",
             ctor("python:attribute_store", [str_const("o"), str_const("n")]),
         )
-
-
-def test_dynamic_type_operand_effect_names_its_operation() -> None:
-    """A constructor partition can identity-hash a dynamic isinstance halt."""
-    from sugar_lift_py_tests.effect import (
-        DynamicTypeOperandRuntimeEffect,
-        runtime_effect_evidence_from_terms,
-    )
-    from sugar_lift_py_tests.floor.receiver_state_partition_value import (
-        ReceiverStatePartitionValue,
-    )
-    from sugar_lift_py_tests.outcome import ExitSet, Halted
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
-
-    site = _site("isinstance(x, T)\n")
-    operation = ctor("adt.is_python_type", (make_var("x"), make_var("T")))
-    effect = DynamicTypeOperandRuntimeEffect(
-        "dynamic isinstance type operand",
-        **runtime_effect_evidence_from_terms(operation, make_var("T"), site),
-    )
-    term = effect.to_term(owner="DynamicTypeOperandRuntimeEffect.to_term")
-    assert term.name == "python:dynamic-type-operand"
-    assert term.args == (operation,)
-
-    partition = ReceiverStatePartitionValue(
-        exits=ExitSet((Halted(true_guard(), effect, None, frozenset()),))
-    )
-    identity = partition.identity
-    assert isinstance(identity, str) and identity

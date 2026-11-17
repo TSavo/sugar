@@ -133,7 +133,8 @@ class GroupedRaiseSugar(Sugar):
         message; a decided non-``str`` is the ``TypeError`` halt.  A message
         whose type that reader does not decide answers the undecided type
         test (``floor_value.undecided_type_test``): its halt stands, and its
-        result's truth (the one truth rule, its own halt kept) is the guard
+        result's truth (the one truth rule; a ``bool``'s, which completes) is
+        the guard
         of the one two-faced outcome (``ExitSet.two_faced``): it completes
         with the message under that truth and raises the ``TypeError`` under
         its complement, both arms owing the read as the ``undecided``

@@ -14,26 +14,20 @@ class EllipsisValue(FloorValue):
     table (``symbolic_value.py``: ``"py.ellipsis": "ellipsis"``)."""
 
     def python_isinstance(self, type_name: str, type_term, site):
-        del type_name  # display spelling is not authority
+        """``...`` is an instance of every class of ``ellipsis``'s real
+        order (``object`` included) and of no other builtin class; any other
+        classinfo is the undecided type test, its halt kept
+        (``python_type_coordinate.builtin_order_isinstance``, #7757)."""
         from sugar_lift_py_tests.floor.python_type_coordinate import (
-            authenticated_python_type_spelling,
-        )
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-            FalseBoolLiteralSugar,
-        )
-        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-            TrueBoolLiteralSugar,
+            builtin_order_isinstance,
         )
 
-        authenticated = authenticated_python_type_spelling(
-            type_term, owner="EllipsisValue.python_isinstance", site=site
+        decided = builtin_order_isinstance(
+            "ellipsis", type_term, site, owner="EllipsisValue.python_isinstance"
         )
-        return ExitSet.completed(
-            TrueBoolLiteralSugar(site=site)
-            if authenticated == "ellipsis"
-            else FalseBoolLiteralSugar(site=site)
-        )
+        if decided is not None:
+            return decided
+        return super().python_isinstance(type_name, type_term, site)
 
     def truth(self, site):
         # Ellipsis is truthy in Python (bool(...) is True) -- unlike None.

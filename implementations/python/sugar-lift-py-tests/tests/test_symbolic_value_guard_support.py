@@ -187,11 +187,21 @@ def test_type_call_result_is_a_type_object() -> None:
     assert as_type.completed_value() is not None
     assert isinstance(as_type.completed_value(), TrueBoolLiteralSugar)
 
+    as_object = result.python_isinstance(
+        "object", ctor("python:type", [str_const("object")]), "site"
+    )
+    assert isinstance(as_object.completed_value(), TrueBoolLiteralSugar)
+
+    # Which class ``type(exc)`` is, and so its metaclass, is undecided: a
+    # ``__class__`` the metaclass defines may raise where ``object_isinstance``
+    # reads it, so ``isinstance(type(exc), tuple)`` is the undecided type
+    # test, its halt kept -- never a decided ``False`` (#7757).
     as_tuple = result.python_isinstance(
         "tuple", ctor("python:type", [str_const("tuple")]), "site"
     )
-    assert as_tuple.completed_value() is not None
-    assert isinstance(as_tuple.completed_value(), FalseBoolLiteralSugar)
+    assert as_tuple.completed_value() is None, as_tuple
+    assert not isinstance(as_tuple.completed_value(), FalseBoolLiteralSugar)
+    assert as_tuple.halts(), as_tuple
 
 
 def _name_attribute_callsite():

@@ -98,7 +98,10 @@ def _unanswered_truth(value, site, *, owner: str):
     its key (``occurrence.site_coordinate_cid``).
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.floor.floor_value import undecided_truth_result
+    from sugar_lift_py_tests.floor.floor_value import (
+        is_undecided_type_test_result,
+        undecided_truth_result,
+    )
     from sugar_lift_py_tests.floor.object_identity import identity_term
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
@@ -106,12 +109,20 @@ def _unanswered_truth(value, site, *, owner: str):
 
     operand = identity_term(value, site, "receiver", owner=owner)
     key = occurrence_key(site)
+    truth = PredicateValue(
+        undecided_truth_result(operand, key),
+        site,
+        operand_callsites=tuple(value.callsites()),
+    )
+    if is_undecided_type_test_result(value):
+        # An undecided isinstance / issubclass result is a ``bool`` (both
+        # builtins return one), and ``bool.__bool__`` cannot raise: its
+        # truth completes, still undecided and owed, with no halt face.
+        from sugar_lift_py_tests.unanswered_calls import unanswered_call
+
+        return ExitSet.completed(truth, owed=(unanswered_call(None, site),))
     return ExitSet.two_faced(
-        PredicateValue(
-            undecided_truth_result(operand, key),
-            site,
-            operand_callsites=tuple(value.callsites()),
-        ),
+        truth,
         UndeterminedRaiseEffect(
             blame=str(site),
             occurrence=key,

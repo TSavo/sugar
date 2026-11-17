@@ -1659,6 +1659,24 @@ def undecided_attribute_result(
 
 
 _TYPE_TESTS = frozenset({"isinstance", "issubclass"})
+_TYPE_TEST_RESULTS = frozenset(f"python:{test}_result" for test in _TYPE_TESTS)
+
+
+def is_undecided_type_test_result(value) -> bool:
+    """Whether ``value`` is the completed value of the undecided type test
+    (:func:`undecided_type_test`): ``python:isinstance_result(...)`` or
+    ``python:issubclass_result(...)``.  It is a ``bool`` -- both builtins
+    return one, whatever a metaclass's check answered -- so its truth is
+    the one truth rule's completion alone (``bool_op_sugar._unanswered_truth``):
+    ``bool.__bool__`` cannot raise."""
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import _Ctor
+
+    return (
+        type(value) is SymbolicValue
+        and type(value.term) is _Ctor
+        and value.term.name in _TYPE_TEST_RESULTS
+    )
 
 
 def undecided_type_test(

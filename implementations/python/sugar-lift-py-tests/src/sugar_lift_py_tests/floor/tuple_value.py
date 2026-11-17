@@ -94,41 +94,21 @@ class TupleValue(GuardStableValue):
     def python_isinstance(self, type_name: str, type_term, site):
         """A constructed tuple is exactly an instance of ``tuple`` / ``object``.
 
-        Dispatch reads the authenticated ``type_term`` coordinate. Display
-        ``type_name`` is never authority.
+        Dispatch reads the authenticated ``type_term`` coordinate against
+        ``tuple``'s row of the one order table
+        (``python_type_coordinate.builtin_order_isinstance``); any other
+        classinfo is the undecided type test, its halt kept (#7757).
         """
         from sugar_lift_py_tests.floor.python_type_coordinate import (
-            authenticated_python_type_spelling,
-        )
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-            FalseBoolLiteralSugar,
-        )
-        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-            TrueBoolLiteralSugar,
+            builtin_order_isinstance,
         )
 
-        del type_name
-        authenticated = authenticated_python_type_spelling(
-            type_term, owner="TupleValue.python_isinstance", site=site
+        decided = builtin_order_isinstance(
+            "tuple", type_term, site, owner="TupleValue.python_isinstance"
         )
-        if authenticated in {"tuple", "object"}:
-            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
-        if authenticated in {
-            "list",
-            "dict",
-            "set",
-            "frozenset",
-            "str",
-            "bytes",
-            "int",
-            "bool",
-            "float",
-            "type",
-            "NoneType",
-        }:
-            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
-        return super().python_isinstance(authenticated, type_term, site)
+        if decided is not None:
+            return decided
+        return super().python_isinstance(type_name, type_term, site)
 
     def length(self, site):
         # A tuple knows its length: the count of reduced elements.
@@ -247,7 +227,11 @@ class TupleValue(GuardStableValue):
             return self._collect_subtype_tests(
                 subtype, site, index + 1, (*predicates, result)
             )
-        if _undecided_type_test_result(result):
+        from sugar_lift_py_tests.floor.floor_value import (
+            is_undecided_type_test_result,
+        )
+
+        if is_undecided_type_test_result(result):
             # One element's undecided type test completed with its result
             # value: its truth through the one truth rule, its halt kept.
             return result.truth(site).and_then(
@@ -319,7 +303,11 @@ class TupleValue(GuardStableValue):
             return self._collect_type_tests(
                 value, site, index + 1, (*predicates, result)
             )
-        if _undecided_type_test_result(result):
+        from sugar_lift_py_tests.floor.floor_value import (
+            is_undecided_type_test_result,
+        )
+
+        if is_undecided_type_test_result(result):
             # One element's undecided type test (``isinstance(x, dict)`` over
             # an undecided ``x``) completed with its result value: its truth
             # through the one truth rule, its halt kept (#7757).
@@ -435,23 +423,3 @@ class TupleValue(GuardStableValue):
         from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
         return builtin_attribute_store_exit(name, site=site, owner="TupleValue.delattr")
-
-
-_UNDECIDED_TYPE_TEST_RESULTS = frozenset(
-    {"python:isinstance_result", "python:issubclass_result"}
-)
-
-
-def _undecided_type_test_result(result) -> bool:
-    """Whether ``result`` is the completed value of the undecided type test
-    (``floor_value.undecided_type_test``): ``python:isinstance_result(...)``
-    or ``python:issubclass_result(...)``, a value whose truth the one truth
-    rule takes."""
-    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-    from sugar_lift_py_tests.ir import _Ctor
-
-    return (
-        type(result) is SymbolicValue
-        and type(result.term) is _Ctor
-        and result.term.name in _UNDECIDED_TYPE_TEST_RESULTS
-    )

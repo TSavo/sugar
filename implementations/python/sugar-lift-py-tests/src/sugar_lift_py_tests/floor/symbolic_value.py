@@ -69,20 +69,17 @@ class SymbolicValue(FloorValue):
         ``isinstance(b'ab', bytes)`` must reduce to the True/False floor so
         function posts and Derived EUF residue pin Bool, not an open
         ``adt.is_python_type`` atom that soft-SATs lies (#4387
-        builtin_type_name_isinstance). Unknown / non-ground terms are the
-        undecided type test, its halt kept, via the FloorValue default
+        builtin_type_name_isinstance). A ground ctor is answered from its
+        type's row of the one order table
+        (``python_type_coordinate.builtin_order_isinstance``: ``object`` and
+        the real bases ``True``).  Unknown / non-ground terms, and any
+        classinfo the order does not decide, are the undecided type test,
+        its halt kept, via the FloorValue default
         (``floor_value.undecided_type_test``, #7757).
         """
         from sugar_lift_py_tests.ir import _Ctor
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-            FalseBoolLiteralSugar,
-        )
-        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-            TrueBoolLiteralSugar,
-        )
 
-        # Closed map: ctor name → Python type name the vendor uses in isinstance.
+        # Closed map: ctor name → the exact builtin type of the value it builds.
         ground_type_names = {
             "python:bytes": "bytes",
             "python:bytearray": "bytearray",
@@ -98,6 +95,7 @@ class SymbolicValue(FloorValue):
         }
         from sugar_lift_py_tests.floor.python_type_coordinate import (
             authenticated_python_type_spelling,
+            builtin_order_isinstance,
         )
 
         del type_name  # display spelling is not authority
@@ -106,12 +104,14 @@ class SymbolicValue(FloorValue):
         )
         term = self.term
         if type(term) is _Ctor and term.name in ground_type_names:
-            matches = ground_type_names[term.name] == authenticated
-            return ExitSet.completed(
-                TrueBoolLiteralSugar(site=site)
-                if matches
-                else FalseBoolLiteralSugar(site=site)
+            decided = builtin_order_isinstance(
+                ground_type_names[term.name],
+                type_term,
+                site,
+                owner="SymbolicValue.python_isinstance",
             )
+            if decided is not None:
+                return decided
         return super().python_isinstance(authenticated, type_term, site)
 
     def test_python_type(self, value, site):
@@ -122,7 +122,7 @@ class SymbolicValue(FloorValue):
         ground ``|`` of ``python:type`` leaves — never mint RuntimeEffect for
         that decidable union (#5340 sklearn test_stats / _pytest.approx path).
         """
-        from sugar_lift_py_tests.ir import _ConstStr, _Ctor, ctor
+        from sugar_lift_py_tests.ir import _ConstStr, _Ctor
 
         term = self.term
         if (
@@ -143,27 +143,16 @@ class SymbolicValue(FloorValue):
                 tuple(SymbolicValue(type_term) for type_term in type_terms)
             ).test_python_type(value, site)
 
-        from sugar_lift_py_tests.effect import (
-            DynamicTypeOperandRuntimeEffect,
-            runtime_effect_evidence_from_terms,
-        )
-        from sugar_lift_py_tests.outcome import ExitSet
+        # Any other classinfo nothing decides: it may be no class (the
+        # ``TypeError``), a class whose metaclass runs its own
+        # ``__instancecheck__``, or a tuple of either.  The test completes or
+        # raises, nothing deciding which: the undecided type test, both faces
+        # owed, its halt kept (#7757).  Never a halt with no completion: that
+        # refutes a truthful claim that the test completes.
+        from sugar_lift_py_tests.floor.floor_value import undecided_type_test
 
-        operation = ctor(
-            "adt.is_python_type",
-            [value.to_term(owner="isinstance value"), term],
-        )
-        return ExitSet.halted(
-            DynamicTypeOperandRuntimeEffect(
-                "dynamic isinstance type operand runtime boundary: "
-                f"Python must resolve {term!r} as a type or raise TypeError; "
-                f"site={site}",
-                **runtime_effect_evidence_from_terms(
-                    operation,
-                    term,
-                    site,
-                ),
-            )
+        return undecided_type_test(
+            value, self, site, owner="SymbolicValue.test_python_type"
         )
 
     def test_python_subtype(self, supertype, site):

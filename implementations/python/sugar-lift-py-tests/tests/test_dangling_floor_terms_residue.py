@@ -93,11 +93,17 @@ def test_symbolic_isinstance_re_i_regexflag_projects_value_directly(tmp_path) ->
 
     outcome = regex_flag.test_python_type(imported_flag, _sites(tmp_path)[0])
 
-    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
-    operation = outcome.halts()[0].effect.witness.operation
-    assert isinstance(operation, _Ctor)
-    assert operation.name == "adt.is_python_type"
-    assert operation.args == (imported_flag.term, regex_flag.term)
+    # The undecided type test (#7757): the value's own term, projected
+    # directly, under its completes atom; a halt under the complement.
+    assert len(outcome.exits) == 2 and len(outcome.halts()) == 1, outcome
+    from sugar_lift_py_tests.outcome import Completed
+
+    (result,) = [
+        arm.value.term for arm in outcome.exits if isinstance(arm, Completed)
+    ]
+    assert isinstance(result, _Ctor)
+    assert result.name == "python:isinstance_result"
+    assert result.args[:2] == (regex_flag.term, imported_flag.term)
 
 
 def _undecided_item_mutation(outcome, owner: str):
