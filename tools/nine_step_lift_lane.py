@@ -65,6 +65,15 @@ left 822 of 1421 pandas files without a row):
   file ceiling. A file never minted has no row and is counted missing by the
   join (never invented). A file minted but never proved gets its row (its
   mint and members are real) with ``prove.error = "unreached"``.
+* ``--profile-timeouts N`` (instrument only): after phase 2, up to N files
+  whose mint stalled (the file ceiling, or the kit's response deadline) are
+  minted once more with the kit's stack sampler on (``SUGAR_KIT_PROFILE_DIR``,
+  ``sugar_lift_py_tests.kit_sample_profile``) and the CLI's response deadline
+  raised to the file ceiling. The kit writes its aggregated profile every few
+  seconds, so the profile survives the kill. Profiles land in
+  ``DIR/profiles/<file>/`` and one row per file in ``DIR/profiles.jsonl``
+  (rc, seconds, top frames); ``rows.jsonl`` and every count are untouched.
+  No profile run starts after phase 2's last start.
 
 Every row carries ``status``: ``lifted``, ``refused``, ``timeout`` (mint hit
 the file ceiling, or the kit's own plugin transport deadline), or ``crash``
@@ -183,6 +192,11 @@ WORKER_MEM_GB = 2.0  # assumed peak of one file, for the default worker count
 MAX_LOAD_DEFAULT = 1.25  # x CPUs: above this 1-minute load no new file starts
 OOM_SCORE_ADJ = 500  # the lane's files go before the runner under OOM
 KIT_DEADLINE_MARK = "transport stalled"  # the kit's own plugin deadline
+# The kit's opt-in stack sampler (sugar_lift_py_tests.kit_sample_profile) and
+# the CLI's response deadline (lift_plugin::response_deadline).
+KIT_PROFILE_DIR_ENV = "SUGAR_KIT_PROFILE_DIR"
+KIT_RESPONSE_DEADLINE_ENV = "SUGAR_LIFT_RESPONSE_TIMEOUT_SECS"
+PROFILE_TOP_FRAMES = 8
 OBSERVED_CHARS = 240
 ERROR_CHARS = 400
 PROVE_RESERVE_MAX_SHARE = 0.75  # phase 2 never reserves more of the budget
@@ -366,8 +380,13 @@ def kill_group(pgid: int) -> None:
         pass
 
 
-def run(cmd: list[str], *, cwd: Path, timeout: float) -> tuple[int | None, str, str, float]:
+def run(
+    cmd: list[str], *, cwd: Path, timeout: float, env: dict[str, str] | None = None,
+) -> tuple[int | None, str, str, float]:
     """(rc or None on timeout, stdout, stderr, seconds).
+
+    ``env``: variables added to this process's environment for the command
+    (the kit inherits them through ``sugar``).
 
     The command leads its own process group (``start_new_session``); when it
     ends or times out the whole group is killed, so the kit's plugin process
@@ -384,6 +403,7 @@ def run(cmd: list[str], *, cwd: Path, timeout: float) -> tuple[int | None, str, 
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
+        env={**os.environ, **env} if env else None,
     )
     rc: int | None
     try:
@@ -713,6 +733,84 @@ def mint_one(
     row["seconds"] = round(time.monotonic() - t0, 2)
     row["status"] = file_status(row)
     return row
+
+
+def mint_stalled(row: dict) -> bool:
+    """The mint hit the file ceiling or the kit's response deadline."""
+    mint = row.get("mint") or {}
+    if not mint:
+        return False
+    return mint.get("rc") is None or KIT_DEADLINE_MARK in (mint.get("error") or "")
+
+
+def profile_slug(rel: str) -> str:
+    return rel.replace("/", "__")
+
+
+def read_profile_summary(directory: Path) -> dict | None:
+    """The heaviest kit profile in ``directory``, cut to its top frames."""
+    best: dict | None = None
+    for path in sorted(directory.glob("kit-profile-*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if best is None or data.get("samples", 0) > best.get("samples", 0):
+            best = {**data, "path": path.name}
+    if best is None:
+        return None
+    return {
+        "path": best["path"],
+        "samples": best.get("samples"),
+        "elapsedSeconds": best.get("elapsedSeconds"),
+        "request": best.get("request"),
+        "requests": best.get("requests"),
+        "self": (best.get("self") or [])[:PROFILE_TOP_FRAMES],
+        "inclusive": (best.get("inclusive") or [])[:PROFILE_TOP_FRAMES],
+    }
+
+
+def profile_one(
+    sugar_bin: str, root: Path, rel: str, work: Path, profiles: Path, cap: float,
+) -> dict:
+    """Mint ``rel`` once more with the kit's stack sampler on (instrument only).
+
+    The kit writes ``profiles/<rel slug>/kit-profile-<pid>.json`` every few
+    seconds, so the file survives the kill. The CLI's response deadline is
+    raised to the file ceiling, so the kit runs as long as the lane lets one
+    file run and the profile covers the whole stall. The mint's result is
+    read for its rc and seconds only; no proof is kept and no row changes.
+    """
+    target = profiles / profile_slug(rel)
+    shutil.rmtree(target, ignore_errors=True)
+    target.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix="profile-", dir=work))
+    project = scratch / "project"
+    try:
+        stage_source(root, rel, project)
+        rc, out, err, secs = run(
+            [sugar_bin, "mint", "--project", str(project), "--out", str(project), "--json"],
+            cwd=project,
+            timeout=cap,
+            env={KIT_PROFILE_DIR_ENV: str(target), KIT_RESPONSE_DEADLINE_ENV: str(int(cap))},
+        )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    summary = read_profile_summary(target)
+    return {
+        "file": rel,
+        "status": "profiled",
+        "profile": {
+            "rc": rc,
+            "seconds": round(secs, 2),
+            "error": None if rc == 0 else ("timeout" if rc is None else last_line(err or out)),
+            "dir": target.name,
+            "summary": summary,
+        },
+        "seconds": round(secs, 2),
+    }
 
 
 def file_status(row: dict) -> str:
@@ -1168,7 +1266,9 @@ def run_phase(
                     f"{row.get('seconds', '?')}s running={len(running)}",
                     flush=True,
                 )
-    tally = " ".join(f"{name}={statuses[name]}" for name in ("lifted", "refused", "timeout", "crash"))
+    names = ("lifted", "refused", "timeout", "crash")
+    names += tuple(sorted(set(statuses) - set(names)))
+    tally = " ".join(f"{name}={statuses[name]}" for name in names)
     print(
         f"{args.label} seat {phase} phase done in {time.monotonic() - phase_t0:.0f}s: "
         f"measured={measured} {tally} unreached={len(unreached)}",
@@ -1284,6 +1384,27 @@ def seat(args: argparse.Namespace) -> int:
     with rows_path.open("a", encoding="utf-8") as sink:
         for rel in never_proved:
             sink.write(json.dumps(unproved_row(minted[rel], index, "unreached"), sort_keys=True) + "\n")
+
+    # Phase 3 (instrument only): the files whose mint stalled, minted once
+    # more with the kit's stack sampler on. Nothing here touches rows.jsonl.
+    if args.profile_timeouts > 0:
+        profiles_path = out_dir / "profiles.jsonl"
+        profiles_dir = (out_dir / "profiles").resolve()
+        profiled = read_rows(profiles_path)
+        final = read_rows(rows_path)
+        stalled = [
+            rel for rel in slowest_first(root, mine, prior_mint)
+            if rel not in profiled and mint_stalled(final.get(rel) or {})
+        ][: max(0, args.profile_timeouts - len(profiled))]
+
+        def profile(rel: str) -> dict:
+            return guarded(rel, lambda: profile_one(
+                sugar_bin, root, rel, work_dir, profiles_dir, args.file_cap))
+
+        run_phase(
+            args, phase="profile", rels=stalled, work=profile, sink_path=profiles_path,
+            workers=workers, cpus=cpus, t0=t0, last_start=last_prove, total=len(stalled),
+        )
     print(
         f"{args.label} seat {i}/{k} done in {time.monotonic() - t0:.0f}s: "
         f"minted={len(minted)} never_minted={len(never_minted)} "
@@ -1506,6 +1627,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--prior", nargs="*", metavar="ROWS",
         help="rows.jsonl files or directories from an earlier run (order only)",
+    )
+    parser.add_argument(
+        "--profile-timeouts", type=int, default=0, metavar="N",
+        help="after prove, mint up to N files whose mint stalled once more with "
+        f"the kit's stack sampler on ({KIT_PROFILE_DIR_ENV}); profiles land in "
+        "OUT_DIR/profiles/, rows in OUT_DIR/profiles.jsonl, never in rows.jsonl",
     )
     parser.add_argument("--count", action="store_true", help="print the enrolled file count")
     parser.add_argument("--join", nargs="+", metavar="DIR")

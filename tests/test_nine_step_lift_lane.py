@@ -364,3 +364,68 @@ def test_link_or_copy(tmp_path):
     lane.link_or_copy(source, target)
     assert target.read_bytes() == b"x"
     assert os.path.samefile(source, target) or target.read_bytes() == b"x"
+
+
+# -- the stalled files' kit profiles (instrument only) ------------------------
+
+FAKE_PROFILING_SUGAR = """#!{python}
+import json, os, pathlib, sys
+args = sys.argv[1:]
+assert args[0] == "mint", args
+out = pathlib.Path(os.environ["SUGAR_KIT_PROFILE_DIR"])
+assert out.is_absolute(), out
+deadline = os.environ["SUGAR_LIFT_RESPONSE_TIMEOUT_SECS"]
+for pid, samples in ((11, 3), (12, 40)):
+    (out / f"kit-profile-{{pid}}.json").write_text(json.dumps({{
+        "samples": samples, "elapsedSeconds": 1.5, "deadline": deadline,
+        "request": {{"inFlight": "sugar.enumerate:universe", "id": 62}},
+        "requests": {{"sugar.enumerate:universe": samples}},
+        "self": [{{"frame": f"f{{i}}", "samples": 1}} for i in range(20)],
+        "inclusive": [{{"frame": "g", "samples": samples}}],
+    }}))
+print("lift plugin transport stalled at stage=read_line.enter message_id=62", file=sys.stderr)
+sys.exit(1)
+"""
+
+
+def test_mint_stalled_is_the_ceiling_or_the_kit_deadline():
+    assert lane.mint_stalled({"mint": {"rc": None, "error": "timeout"}})
+    assert lane.mint_stalled({"mint": {"rc": 1, "error": "x: transport stalled at y"}})
+    assert not lane.mint_stalled({"mint": {"rc": 1, "error": "LifterRefusal: z"}})
+    assert not lane.mint_stalled({"mint": {"rc": 0, "error": None}, "dumpTimeout": True})
+    assert not lane.mint_stalled({"file": "a.py"})
+
+
+def test_profile_one_reads_the_heaviest_kit_profile_and_keeps_no_proof(tmp_path):
+    root = tmp_path / "pkg"
+    (root / "tests").mkdir(parents=True)
+    (root / "tests/test_matmul.py").write_text("def test_a():\n    x = 1\n")
+    fake = tmp_path / "sugar"
+    fake.write_text(FAKE_PROFILING_SUGAR.format(python=sys.executable))
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    work = tmp_path / "work"
+    work.mkdir()
+    profiles = tmp_path / "profiles"
+    row = lane.profile_one(str(fake), root, "tests/test_matmul.py", work, profiles, 300)
+    assert row["file"] == "tests/test_matmul.py"
+    assert row["status"] == "profiled"
+    assert row["profile"]["rc"] == 1
+    assert "transport stalled" in row["profile"]["error"]
+    assert row["profile"]["dir"] == "tests__test_matmul.py"
+    summary = row["profile"]["summary"]
+    assert summary["path"] == "kit-profile-12.json"
+    assert summary["samples"] == 40
+    assert len(summary["self"]) == lane.PROFILE_TOP_FRAMES
+    assert summary["request"]["id"] == 62
+    # The CLI's response deadline was raised to the file ceiling.
+    kept = json.loads((profiles / "tests__test_matmul.py" / "kit-profile-12.json").read_text())
+    assert kept["deadline"] == "300"
+    assert list(work.iterdir()) == []  # the project is scratch: no proof kept
+
+
+def test_run_adds_env_to_the_inherited_environment(tmp_path):
+    rc, out, _, _ = lane.run(
+        [sys.executable, "-c", "import os; print(os.environ['LANE_T'], 'PATH' in os.environ)"],
+        cwd=tmp_path, timeout=30, env={"LANE_T": "on"},
+    )
+    assert rc == 0 and out.split() == ["on", "True"]
