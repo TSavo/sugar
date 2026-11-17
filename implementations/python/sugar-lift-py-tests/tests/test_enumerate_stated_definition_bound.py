@@ -17,7 +17,13 @@ from __future__ import annotations
 import json
 
 from sugar_lift_py_tests import lift_rpc, tree_enumerate
-from sugar_lift_py_tests.ir import TermTableBuilder, atomic, ctor, make_var
+from sugar_lift_py_tests.ir import (
+    TermTableBuilder,
+    atomic,
+    ctor,
+    make_var,
+    str_const,
+)
 
 
 def _doubled(depth: int):
@@ -132,3 +138,26 @@ def test_the_measure_is_the_resolved_statements_length() -> None:
 
     assert tree_enumerate.stated_inline_bytes(wire, table.nodes) == len(expanded)
     assert len(table.nodes) < 12  # the DAG, not the 64 leaves
+
+
+def test_a_lone_surrogate_is_measured_as_the_bytes_the_wire_carries() -> None:
+    """pandas ``tests/base/test_unique.py`` (and four more files, lane run
+    44005532504) hold ``"\\ud83d"``: the measure's plain ``.encode("utf-8")``
+    raised, and the whole file's mint died with no proof.  The wire carries a
+    lone surrogate as U+FFFD (``_rpc_canonical_bytes``, the bytes the term
+    table mints CIDs from), so the measure counts exactly those bytes; it
+    never counts the six-byte ``\\ud83d`` escape nor the string as absent."""
+    table = TermTableBuilder()
+    lone = "\ud83d!"
+    row = _Row(ctor("pair", [str_const(lone), str_const(lone)]))
+    wire = [row.to_rpc_with_term_table(table), {"kind": "x", "s": lone}]
+
+    expanded = json.dumps(
+        _resolved(wire, table.nodes), separators=(",", ":"), ensure_ascii=False
+    )
+    on_wire = expanded.replace("\ud83d", "�").encode("utf-8")
+
+    measured = tree_enumerate.stated_inline_bytes(wire, table.nodes)
+    assert measured == len(on_wire)
+    escaped = expanded.replace("\ud83d", "\\ud83d").encode("utf-8")
+    assert measured < len(escaped)

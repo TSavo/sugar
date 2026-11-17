@@ -648,13 +648,21 @@ def stated_inline_bytes(value, nodes) -> int:
     explicit worklist: the DAG is walked, the expansion never built, and a
     deep term spine does not lean on the call stack.  A CID ``nodes`` lacks
     is counted as the reference itself; the fold's decode is what refuses a
-    dangling reference."""
+    dangling reference.
+
+    A scalar is counted as the bytes the wire carries for it
+    (``_rpc_canonical_bytes``, the encoding the term table mints CIDs from):
+    a str holding a lone surrogate (``"\\ud83d"`` in pandas tests) travels as
+    U+FFFD, and a plain ``.encode("utf-8")`` of it here crashed the whole
+    file's mint with no proof."""
+    from sugar_lift_py_tests.ir import _rpc_canonical_bytes
+
     sizes: dict[str, int] = {}
 
     def scalar(item) -> int:
         return len(
-            json.dumps(item, separators=(",", ":"), ensure_ascii=False).encode(
-                "utf-8"
+            _rpc_canonical_bytes(
+                json.dumps(item, separators=(",", ":"), ensure_ascii=False)
             )
         )
 
