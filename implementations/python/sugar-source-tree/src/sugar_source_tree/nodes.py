@@ -2060,6 +2060,11 @@ class SourceUnit:
     _module_run_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
+    # ``(typed module, names the module's own run reads as a value)``
+    # (``module_run_value_reads``), rebuilt if the typed root is replaced.
+    _module_run_value_reads_memo: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
     # ``(typed module, start offsets, module statements, answers)``: the
     # module body's statements in source order, for ``module_execution_site``,
     # and each answer it gave, by ``(span start, span end, for-or-with)``.
@@ -2139,6 +2144,7 @@ class SourceUnit:
         object.__setattr__(self, "_dynamic_global_writer_memo", None)
         object.__setattr__(self, "_module_global_rows_memo", None)
         object.__setattr__(self, "_module_run_memo", None)
+        object.__setattr__(self, "_module_run_value_reads_memo", None)
         object.__setattr__(self, "_module_statement_starts_memo", None)
         object.__setattr__(self, "_class_namespace_stores_memo", None)
         object.__setattr__(self, "_lexical_import_seat_memo", None)
@@ -3776,6 +3782,93 @@ class SourceUnit:
             definition.span.start,
             definition.span.end,
         ) in self._module_global_rows_memo[6]
+
+    def module_run_value_reads(self) -> frozenset:
+        """The names a read the module's own run makes reads as a value:
+        every ``Name`` the module body evaluates at import -- a module
+        statement, a class body (at any depth of classes), a ``def``'s or a
+        lambda's defaults, a ``def``'s decorators and evaluated annotations
+        -- other than a binding spelling and other than the positions a
+        definition is resolved by name in (``module_definition_denoted_by``,
+        ``language_callee_of``), each a bare name: a call's callee, a
+        decorator, a class base, a raised or a handled class.  A name read
+        only there is no answer here, and resolves by name as it did.
+        ``get_resampler.__doc__ = ...``,
+        ``Rolling.__doc__ = Window.__doc__``, ``@doc(IndexingMixin.loc)``,
+        ``_in_ops_funcs = (_in, _not_in)``, ``_cParser = CParser``,
+        ``params=[None, MockEngineDecorator]``, ``rules = [Holiday(...,
+        observance=nearest_workday)]`` in a class body each read one.  A
+        ``def`` or lambda body runs only when it is called: not walked.
+
+        A ``def``/``class`` statement of the module run binds such a name
+        for the statements after it (``_local_definition_binding``), as it
+        binds a name some reader outside the module block reads
+        (``module_threaded_names``): the read is the value the statement
+        bound, never the bare name (#7757).  Read off the typed tree once per
+        typed root; a unit with no typed root refuses by name
+        (``_require_typed_module``)."""
+        module = self._require_typed_module(
+            "SourceUnit.module_run_value_reads", blame=self.filename
+        )
+        memo = self._module_run_value_reads_memo
+        if memo is not None and memo[0] is module:
+            return memo[1]
+        names: set[str] = set()
+        # The nodes that hold no value read: binding spellings (a ``Name``,
+        # or the ``Tuple``/``List``/``Starred`` pattern around one) and a
+        # bare ``Name`` in a by-name position.  A parent is visited before
+        # its children.
+        held: set[int] = set()
+        stack: list = list(module.body)
+        while stack:
+            node = stack.pop()
+            spellings = list(node.binding_spellings())
+            if isinstance(node, Assign):
+                targets = tuple(node.targets)
+            elif isinstance(node, (AnnAssign, NamedExpr, For, AsyncFor)):
+                targets = (node.target,)
+            else:
+                targets = ()
+            for target in targets:
+                _collect_binding_spellings(target, spellings)
+            held.update(id(spelling) for spelling in spellings)
+            by_name: tuple = ()
+            if isinstance(node, Call):
+                by_name = (node.func,)
+            elif isinstance(node, Raise):
+                by_name = (node.exc,)
+            elif isinstance(node, ExceptHandler):
+                handled = node.type_
+                by_name = (
+                    tuple(handled.elts) if isinstance(handled, Tuple_) else (handled,)
+                )
+            if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+                by_name = tuple(node.decorators)
+                children = (
+                    *node.decorators,
+                    *node.type_params,
+                    *node.params,
+                    *(() if node.returns is None else (node.returns,)),
+                )
+            elif isinstance(node, Lambda):
+                children = tuple(node.params)
+            else:
+                if isinstance(node, ClassDef):
+                    by_name = (*node.decorators, *node.bases)
+                children = tuple(
+                    child for _name, _index, child in node._child_edges()
+                )
+            held.update(id(item) for item in by_name if isinstance(item, Name))
+            for child in children:
+                if id(child) in held:
+                    continue
+                if isinstance(child, Name):
+                    names.add(child.id)
+                elif isinstance(child, Node):
+                    stack.append(child)
+        answer = frozenset(names)
+        object.__setattr__(self, "_module_run_value_reads_memo", (module, answer))
+        return answer
 
     def module_definition_names(self) -> frozenset:
         """The module names a definition binds through its statement's key: a
@@ -7344,6 +7437,24 @@ def _module_threads(scope, name: str) -> bool:
     (``SourceUnit.module_threaded_names``)."""
     record = scope.get(_MODULE_STATEMENT_STATES)
     return record is not None and record.open and name in record.names
+
+
+def _module_run_reads(scope, definition) -> bool:
+    """Whether ``scope`` threads a module body (``SourceUnit.module_run``:
+    the open ``_MODULE_STATEMENT_STATES`` record) and the name the
+    ``def``/``class`` statement ``definition`` binds is one that run itself
+    reads as a value (``SourceUnit.module_run_value_reads``): the statement
+    binds its value for the statements after it
+    (``_local_definition_binding``)."""
+    record = scope.get(_MODULE_STATEMENT_STATES)
+    if record is None or not record.open:
+        return False
+    unit = definition.unit
+    if definition.name not in unit.module_run_value_reads():
+        return False
+    # A module statement's own (at any depth of ``if``/``try``/loops): a
+    # method a class body binds is the class namespace's, not the module's.
+    return unit.scope_holding(definition.line_col_span()) is None
 
 
 def _module_uncarried_names(statement, carried, scope) -> frozenset:
@@ -26533,12 +26644,28 @@ def _local_definition_binding(definition, scope):
     reader reads the join over the routes (``GuardedBinding``), the value
     under the guard of the route that bound it and a ``NameError`` halt under
     the complement, and the statement never stands in an arm of it (#7757).
+
+    While the module body runs, a ``def``/``class`` whose name the run
+    itself reads as a value (``_module_run_reads``: ``get_resampler.__doc__
+    = ...``, ``Rolling.__doc__ = Window.__doc__``, ``(_in, _not_in)``, a
+    class body's ``observance=nearest_workday``) binds it for the statements
+    after it the same way: a class or a decorated ``def`` its value under
+    its key, a plain ``def`` its function value under its key, as a local
+    ``def`` does.  Before, the run bound nothing for such a name, so its read
+    stayed the bare name: the free name ``ScopedFormula`` refused every
+    class and function reading the module's run by (#7757).
     """
     lexical = scope.get(_LEXICALLY_BOUND_NAMES)
     local = isinstance(lexical, frozenset) and definition.name in lexical
-    if not (local or _module_threads(scope, definition.name)):
+    threaded = _module_threads(scope, definition.name)
+    module_read = not (local or threaded) and _module_run_reads(scope, definition)
+    if not (local or threaded or module_read):
         return None
-    valued = local or definition.unit.binds_conditional_definition_value(definition)
+    valued = (
+        local
+        or module_read
+        or definition.unit.binds_conditional_definition_value(definition)
+    )
     if call_applies_own_frame(definition) and not (
         valued and _binds_function_value(definition)
     ):
