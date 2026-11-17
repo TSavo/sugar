@@ -36,8 +36,17 @@ class ConstructionPanic(LifterRefusal):
         }
 
 
-def construction_panic(info: ConstructionGap) -> NoReturn:
-    """Raise the construction None arm. No soft halted arm; no audit row."""
+def construction_panic(
+    info: ConstructionGap, *, temporal: object = None, trace_detail: dict | None = None
+) -> NoReturn:
+    """Raise the construction None arm. No soft halted arm; no audit row.
+
+    ``temporal`` / ``trace_detail``: read only by the opt-in refusal trace
+    (``refusal_trace``, ``SUGAR_KIT_TRACE_REFUSALS=1``): the binding state at
+    the refusing read and the door's own names. The refusal is the same."""
+    from sugar_lift_py_tests.refusal_trace import record_refusal
+
+    record_refusal(info, temporal=temporal, detail=trace_detail)
     raise ConstructionPanic(info)
 
 
@@ -60,9 +69,14 @@ def construction_panic_gap(
     fix: str,
     gap_kind: GapKind = GapKind.FLOOR,
     gap_locus: GapLocus = GapLocus.CONSTRUCTION,
+    temporal: object = None,
+    trace_detail: dict | None = None,
     **_ignored,
 ) -> NoReturn:
-    """Mouth for residual floor/temporal None arms. Construct or panic."""
+    """Mouth for residual floor/temporal None arms. Construct or panic.
+
+    ``temporal`` / ``trace_detail`` reach the opt-in refusal trace only
+    (``construction_panic``)."""
     prose = _blame_prose(blame)
     info = ConstructionGap(
         owner=owner,
@@ -73,7 +87,7 @@ def construction_panic_gap(
         gap_kind=gap_kind,
         gap_locus=gap_locus,
     )
-    construction_panic(info)
+    construction_panic(info, temporal=temporal, trace_detail=trace_detail)
 
 
 def dig_boundary_panic(
@@ -91,4 +105,4 @@ def dig_boundary_panic(
         requested="dig",
         fix=f"caught={caught} reason={reason}",
     )
-    raise ConstructionPanic(info)
+    construction_panic(info)

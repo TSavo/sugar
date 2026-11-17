@@ -1,0 +1,88 @@
+name: Nine-step lift lane setup
+description: >
+  The one set-up of a nine-step lift lane job (tools/nine_step_lift_lane.py):
+  the pinned interpreter, the persistent scorecard venv and gh
+  (tools/main_scorecard_env.sh), the Rust toolchain, z3, and the corpus
+  resolved and authenticated by sugar_lift_py_tests.authenticated_pytest,
+  pandas checked against its pin (tools/bx_corpus_pin_gate.py). The pandas
+  lift seat (main-scorecard-board.yml), the numpy lift
+  (main-scorecard-numpy.yml) and the one-file diagnostic (lift-trace.yml) all
+  run this, so a trace measures the corpus the lane measures. The caller
+  checks the repository out first.
+
+inputs:
+  corpus:
+    description: "pandas or numpy"
+    required: true
+
+outputs:
+  root:
+    description: The corpus package directory (its name is the package).
+    value: ${{ steps.corpus.outputs.root }}
+  files:
+    description: The enrolled file count (numpy only; pandas counts with --count).
+    value: ${{ steps.corpus.outputs.files }}
+  version:
+    description: The corpus distribution version (numpy only).
+    value: ${{ steps.corpus.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12.13"
+    - name: Scorecard environment (persistent venv, gh)
+      shell: bash
+      run: bash tools/main_scorecard_env.sh
+    - name: Set up Rust toolchain
+      uses: ./.github/actions/setup-rust-cache
+    - name: Install z3 (cached on the runner)
+      shell: bash
+      run: tools/ci-apt-install.sh z3
+    - name: Resolve authenticated ${{ inputs.corpus }} corpus
+      id: corpus
+      shell: bash
+      env:
+        LIFT_CORPUS: ${{ inputs.corpus }}
+      run: |
+        set -euo pipefail
+        case "$LIFT_CORPUS" in
+          pandas)
+            root="$(
+              python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
+            )"
+            echo "root=$root" >> "$GITHUB_OUTPUT"
+            echo "pandas corpus: $root"
+            ;;
+          numpy)
+            python - <<'PY' >> "$GITHUB_OUTPUT"
+        from sugar_lift_py_tests.authenticated_pytest import authenticated_numpy_corpus
+        c = authenticated_numpy_corpus()
+        import sys
+        print(f"root={c.root}")
+        print(f"version={c.version}")
+        print(f"files={c.file_count}")
+        print(f"cid={c.manifest_cid}")
+        print(
+            f"numpy corpus: {c.distribution}=={c.version} files={c.file_count} "
+            f"manifestCid={c.manifest_cid} root={c.root}",
+            file=sys.stderr,
+        )
+        PY
+            ;;
+          *)
+            echo "unknown corpus: $LIFT_CORPUS (want pandas or numpy)" >&2
+            exit 2
+            ;;
+        esac
+    - name: Corpus pin gate (pandas 3.0.3)
+      if: inputs.corpus == 'pandas'
+      shell: bash
+      env:
+        PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
+      run: |
+        set -euo pipefail
+        python tools/bx_corpus_pin_gate.py \
+          --expected-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
+          --corpus-root "$PANDAS_CORPUS"

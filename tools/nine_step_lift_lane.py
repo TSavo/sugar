@@ -37,6 +37,10 @@ that module's contract at step 9 instead of standing unbound.
 A re-run of the same seat resumes: files with a final row are skipped, and a
 file minted earlier (its proof still in the store) is not minted again.
 
+``--only REL`` narrows the seat to one enrolled file (the one-file
+diagnostic, ``.github/workflows/lift-trace.yml``): it mints and proves that
+file alone, so its calls into other modules of the corpus stay unbound.
+
 How a seat spends its wall (#8416 follow-up, run 43960179946 took 3 h and
 left 822 of 1421 pandas files without a row):
 
@@ -197,7 +201,10 @@ KIT_DEADLINE_MARK = "transport stalled"  # the kit's own plugin deadline
 KIT_PROFILE_DIR_ENV = "SUGAR_KIT_PROFILE_DIR"
 KIT_RESPONSE_DEADLINE_ENV = "SUGAR_LIFT_RESPONSE_TIMEOUT_SECS"
 PROFILE_TOP_FRAMES = 8
-OBSERVED_CHARS = 240
+# A refusal's own text (``observed``, and each field of the kit's testimony
+# below) is kept whole up to 4 KB: refusals.json is what a fix agent reads,
+# and a cut ``observed`` dropped the key and the coordinate it names.
+OBSERVED_CHARS = 4096
 ERROR_CHARS = 400
 PROVE_RESERVE_MAX_SHARE = 0.75  # phase 2 never reserves more of the budget
 
@@ -225,9 +232,10 @@ JOIN_DROP_LABELS = frozenset(
 )
 DROP_REASON_RE = re.compile(r"([a-z][a-z-]*) for (python:[^\s,()]+)")
 # One field of a kit refusal's testimony (owner, blame, observed, requested,
-# fix) as the row keeps it: long enough for the owner and the coordinate,
-# which the 400-char error line cut off (run 43960179946, #9132).
-DIAGNOSTIC_FIELD_CHARS = 2000
+# fix) as the row keeps it: whole up to 4 KB, so the owner, the coordinate and
+# every key it names survive (the 400-char error line cut them off, run
+# 43960179946, #9132).
+DIAGNOSTIC_FIELD_CHARS = OBSERVED_CHARS
 DIAGNOSTIC_KEYS = ("owner", "blame", "observed", "requested", "fix")
 
 
@@ -452,11 +460,11 @@ def first_object_with(text: str, key: str) -> dict | None:
     return None
 
 
-def last_line(text: str) -> str:
+def last_line(text: str, limit: int = ERROR_CHARS) -> str:
     for line in reversed(text.strip().splitlines()):
         line = line.strip()
         if line:
-            return line[:ERROR_CHARS]
+            return line[:limit]
     return ""
 
 
@@ -520,7 +528,7 @@ def read_members(sugar_bin: str, proof: Path, cwd: Path, cap: float) -> tuple[di
     if rc is None:
         return None, "dump timeout"
     if rc != 0:
-        return None, f"dump rc={rc}: {last_line(err or out)}"
+        return None, f"dump rc={rc}: {last_line(err or out, OBSERVED_CHARS)}"
     payload = first_object_with(out, "members")
     if payload is None:
         return None, "dump printed no members object"
@@ -679,7 +687,9 @@ def mint_one(
                 owner = "mint-no-proof"
             diagnostic = mint_diagnostic(f"{err}\n{out}") if rc not in (0, None) else None
             row["mint"]["diagnostic"] = diagnostic
-            observed = row["mint"]["error"] or ""
+            # The refusal keeps the whole error line (to OBSERVED_CHARS); the
+            # mint block's ``error`` stays the short label.
+            observed = "" if rc == 0 else ("timeout" if rc is None else last_line(err or out, OBSERVED_CHARS))
             if diagnostic and diagnostic.get("owner"):
                 # The kit's owner and coordinate first: the error line's own
                 # prefix (the transport's wrapping) never names them.
@@ -1284,6 +1294,15 @@ def seat(args: argparse.Namespace) -> int:
     corpus = CorpusModules.scan(root, files)
     i, k = args.slice
     mine = [p.relative_to(root).as_posix() for p in files[i::k]]
+    if args.only:
+        # One file of the corpus (the lift-trace workflow): spelled relative
+        # to the corpus root, with or without the package directory.
+        only = args.only.strip("/")
+        if only.startswith(f"{root.name}/"):
+            only = only[len(root.name) + 1:]
+        if only not in mine:
+            raise SystemExit(f"--only {args.only!r}: not an enrolled file of {root} (slice {i}/{k})")
+        mine = [only]
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     rows_path = out_dir / "rows.jsonl"
@@ -1633,6 +1652,12 @@ def main(argv: list[str] | None = None) -> int:
         help="after prove, mint up to N files whose mint stalled once more with "
         f"the kit's stack sampler on ({KIT_PROFILE_DIR_ENV}); profiles land in "
         "OUT_DIR/profiles/, rows in OUT_DIR/profiles.jsonl, never in rows.jsonl",
+    )
+    parser.add_argument(
+        "--only",
+        help="seat mode: mint and prove this one enrolled file only (corpus-relative, "
+        "e.g. pandas/core/frame.py or core/frame.py); the other modules are not minted, "
+        "so its cross-module edges stay unbound",
     )
     parser.add_argument("--count", action="store_true", help="print the enrolled file count")
     parser.add_argument("--join", nargs="+", metavar="DIR")
