@@ -772,6 +772,15 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
     // A link unit records no call: a Python call's only record is its
     // `undecided` member, which the universe scan below routes to `ir`
     // (step 8; PR B on #7766). The unit's caller-side edge list is gone.
+    //
+    // Enrollment and every resume run on ONE resident generation: the kit
+    // retains each enrolled unit in its own process until its resume
+    // (`lift_rpc._RETAINED_LINK_UNITS`), so a generation retired between them
+    // loses the continuation and the resume refuses the whole file (run
+    // 43960179946: every pandas file with 63 or more link units, 46 files,
+    // `mint` exit 1 at ~3.4 s). The hold ends before the universe scans, each
+    // of which stands on its own.
+    let one_generation = conn.transport.hold_generation();
     let link_unit_rows = preconstruction_rows_rpc(&conn, Level::ParameterContractLinkUnits)?;
     if !link_unit_rows.is_empty() {
         let units: Vec<sugar_linker::caller_parameter::ParameterContractLinkUnitV1> =
@@ -807,6 +816,7 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
             resume_rpc(&conn, &cid_value, &set_value)?;
         }
     }
+    drop(one_generation);
 
     for file in files {
         source_mementos.push(file.memento.to_json());
