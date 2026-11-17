@@ -8,17 +8,16 @@ use sugar_compiler::kit_path::LiftTermTable;
 fn decoder_reuses_one_shared_node_per_term_cid() {
     let leaf_value = json!({"kind": "var", "name": "x"});
     let leaf = jcs_cid_of_json(&leaf_value);
-    let parent_value = json!({
-        "kind": "ctor", "name": "call:pair", "args": [leaf_value.clone(), leaf_value]
-    });
-    let parent = jcs_cid_of_json(&parent_value);
+    // Merkle (#7757): a row's CID hashes the row itself, children by CID.
+    let parent_row = json!({"kind": "ctor", "name": "call:pair", "args": [
+        {"kind": "term-ref", "cid": leaf.clone()},
+        {"kind": "term-ref", "cid": leaf.clone()}
+    ]});
+    let parent = jcs_cid_of_json(&parent_row);
     let payload = json!({
         "termTable": {
-            leaf.clone(): {"kind": "var", "name": "x"},
-            parent.clone(): {"kind": "ctor", "name": "call:pair", "args": [
-                {"kind": "term-ref", "cid": leaf.clone()},
-                {"kind": "term-ref", "cid": leaf}
-            ]}
+            leaf.clone(): leaf_value,
+            parent.clone(): parent_row
         }
     });
 

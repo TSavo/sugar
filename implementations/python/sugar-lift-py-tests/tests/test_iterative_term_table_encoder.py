@@ -95,15 +95,17 @@ def test_callsite_cycle_key_is_heap_backed_for_a_5000_deep_spine() -> None:
 
 
 class _RecursiveControlTable:
-    """Bounded copy of the pre-#4573 writer for byte-identity testimony."""
+    """Bounded recursive writer for byte-identity testimony: a row's CID is
+    the hash of the row itself, children named by their CIDs (#7757)."""
 
     def __init__(self) -> None:
         self.nodes: dict[str, dict[str, object]] = {}
 
     def reference(self, term: Term) -> dict[str, str]:
-        cid = jcs_hash(term_to_value(term))
+        node = self._node(term)
+        cid = jcs_hash(_json_value(node))
         if cid not in self.nodes:
-            self.nodes[cid] = self._node(term)
+            self.nodes[cid] = node
         return {"kind": "term-ref", "cid": cid}
 
     def _node(self, term: Term) -> dict[str, object]:
@@ -156,7 +158,8 @@ def _rpc_spine(depth: int, *, name: str = "ssa") -> dict:
 
 
 class _RecursiveControlRpcTable:
-    """Bounded copy of the pre-#4573 residual reference_rpc writer."""
+    """Bounded recursive reference_rpc writer: a row's CID is the hash of the
+    row itself, children named by their CIDs (#7757)."""
 
     def __init__(self) -> None:
         self.nodes: dict[str, dict[str, object]] = {}
@@ -164,17 +167,17 @@ class _RecursiveControlRpcTable:
     def reference_rpc(self, term: dict) -> dict[str, str]:
         from sugar_lift_py_tests.ir import _json_like_to_value
 
-        cid = jcs_hash(_json_like_to_value(term))
+        if term.get("kind") == "ctor":
+            node = {
+                "kind": "ctor",
+                "name": term["name"],
+                "args": [self.reference_rpc(arg) for arg in term.get("args", [])],
+            }
+        else:
+            node = json.loads(encode_jcs(_json_like_to_value(term)))
+        cid = jcs_hash(_json_like_to_value(node))
         if cid not in self.nodes:
-            kind = term.get("kind")
-            if kind == "ctor":
-                self.nodes[cid] = {
-                    "kind": "ctor",
-                    "name": term["name"],
-                    "args": [self.reference_rpc(arg) for arg in term.get("args", [])],
-                }
-            else:
-                self.nodes[cid] = json.loads(encode_jcs(_json_like_to_value(term)))
+            self.nodes[cid] = node
         return {"kind": "term-ref", "cid": cid}
 
 

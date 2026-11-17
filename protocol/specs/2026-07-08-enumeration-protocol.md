@@ -156,17 +156,19 @@ serialized, and never cross the wire.
 ## Section 5. Content-addressed term DAG
 
 Any response that carries ProofIR terms carries one payload-level
-`termTable` object. Its keys are the existing semantic term CIDs. Each value
-contains one canonical term node: scalar fields plus immediate child
+`termTable` object. Its keys are the term CIDs. Each value contains one
+canonical term node: scalar fields plus immediate child
 `{"kind":"term-ref","cid":"..."}` references. Formula term positions carry
 the same reference shape. The symbol-kind testimony table remains a separate
 payload sidecar and does not enter term identity.
 
-The CID of a table row is computed from the same fully resolved canonical term
-bytes used before this wire shape. Therefore the wire representation changes
-without changing any term CID or downstream proof identity. A receiver decodes
-the table once, interns exactly one shared node per CID, and resolves every
-term position by lookup. Missing children, cycles, malformed references, and
+The CID of a table row is the blake3-512 of the row's own JCS bytes: its
+scalar fields and its children's `term-ref` edges (a Merkle hash, #7757). The
+same term always has the same CID, and minting or checking every CID costs
+the size of the term graph, never the size of the term written out (which
+doubles per conditional whose arms share a subterm). A receiver decodes
+the table once, interns exactly one shared node per CID, checks each row's
+hash once, and resolves every term position by lookup. Missing children, cycles, malformed references, and
 CID-to-content mismatches are transport decode failures, and a term-ref in a
 response with no `termTable` is malformed. There is no inline term-tree
 compatibility arm at this wire door.
