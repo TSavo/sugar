@@ -69,8 +69,9 @@ class SymbolicValue(FloorValue):
         ``isinstance(b'ab', bytes)`` must reduce to the True/False floor so
         function posts and Derived EUF residue pin Bool, not an open
         ``adt.is_python_type`` atom that soft-SATs lies (#4387
-        builtin_type_name_isinstance). Unknown / non-ground terms stay on the
-        reserved tester atom via the FloorValue default.
+        builtin_type_name_isinstance). Unknown / non-ground terms are the
+        undecided type test, its halt kept, via the FloorValue default
+        (``floor_value.undecided_type_test``, #7757).
         """
         from sugar_lift_py_tests.ir import _Ctor
         from sugar_lift_py_tests.outcome import ExitSet
@@ -166,22 +167,24 @@ class SymbolicValue(FloorValue):
         )
 
     def test_python_subtype(self, supertype, site):
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import ExitSet
+        """``issubclass(<this undecided value>, <supertype>)``: nothing says
+        this value is a class, so ``recursive_issubclass`` may ask it for
+        ``__bases__`` (which may raise, and is the ``TypeError`` where it
+        answers none), and a supertype's metaclass may run its own
+        ``__subclasscheck__``.  The undecided type test, its halt kept
+        (``floor_value.undecided_type_test``, #7757); a finite tuple of
+        types distributes first, one test per element."""
+        from sugar_lift_py_tests.floor.floor_value import undecided_type_test
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
-        return ExitSet.completed(
-            PredicateValue(
-                atomic(
-                    "python.subtype",
-                    [
-                        self.to_term(owner="python.issubclass subtype"),
-                        supertype.to_term(owner="python.issubclass supertype"),
-                    ],
-                ),
-                site,
-                operand_callsites=(*self.callsites(), *supertype.callsites()),
-            )
+        if type(supertype) is TupleValue:
+            return supertype.test_python_subtype(self, site)
+        return undecided_type_test(
+            self,
+            supertype,
+            site,
+            owner="SymbolicValue.test_python_subtype",
+            test="issubclass",
         )
 
     def to_term(self, *, owner: str):

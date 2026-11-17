@@ -247,6 +247,14 @@ class TupleValue(GuardStableValue):
             return self._collect_subtype_tests(
                 subtype, site, index + 1, (*predicates, result)
             )
+        if _undecided_type_test_result(result):
+            # One element's undecided type test completed with its result
+            # value: its truth through the one truth rule, its halt kept.
+            return result.truth(site).and_then(
+                lambda truth: self._continue_subtype_test(
+                    subtype, site, index, predicates, truth
+                )
+            )
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
         construction_panic_gap(
@@ -310,6 +318,15 @@ class TupleValue(GuardStableValue):
         if type(result) is PredicateValue:
             return self._collect_type_tests(
                 value, site, index + 1, (*predicates, result)
+            )
+        if _undecided_type_test_result(result):
+            # One element's undecided type test (``isinstance(x, dict)`` over
+            # an undecided ``x``) completed with its result value: its truth
+            # through the one truth rule, its halt kept (#7757).
+            return result.truth(site).and_then(
+                lambda truth: self._continue_type_test(
+                    value, site, index, predicates, truth
+                )
             )
 
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
@@ -418,3 +435,23 @@ class TupleValue(GuardStableValue):
         from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
         return builtin_attribute_store_exit(name, site=site, owner="TupleValue.delattr")
+
+
+_UNDECIDED_TYPE_TEST_RESULTS = frozenset(
+    {"python:isinstance_result", "python:issubclass_result"}
+)
+
+
+def _undecided_type_test_result(result) -> bool:
+    """Whether ``result`` is the completed value of the undecided type test
+    (``floor_value.undecided_type_test``): ``python:isinstance_result(...)``
+    or ``python:issubclass_result(...)``, a value whose truth the one truth
+    rule takes."""
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import _Ctor
+
+    return (
+        type(result) is SymbolicValue
+        and type(result.term) is _Ctor
+        and result.term.name in _UNDECIDED_TYPE_TEST_RESULTS
+    )

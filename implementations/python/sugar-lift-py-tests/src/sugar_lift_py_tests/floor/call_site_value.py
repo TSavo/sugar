@@ -498,7 +498,8 @@ class CallSiteValue(FloorValue):
         ``isinstance(type(x), type)`` is True. The builtin is known by its
         binding, never the spelling: only the call ``bind_call`` cited a
         ``python_type_coordinate`` for (``CallSiteSugar._applied_builtin_type_of``)
-        is one.  Other callsites keep the reserved tester atom.
+        is one.  Any other callsite is the undecided type test, its halt
+        kept (``FloorValue.python_isinstance``, #7757).
         """
         if self.python_type_coordinate is None:
             return super().python_isinstance(type_name, type_term, site)
@@ -542,13 +543,14 @@ class CallSiteValue(FloorValue):
                     **runtime_effect_evidence("adt.is_python_type", self, site),
                 )
             )
-        from sugar_lift_py_tests.floor.type_tester import native_type_tester
+        # ``type(y)`` is a class, but which one -- and so its metaclass's
+        # ``__instancecheck__``, and whether ``value`` is asked for its
+        # ``__class__`` -- is undecided: the undecided type test, its halt
+        # kept (``floor_value.undecided_type_test``, #7757).
+        from sugar_lift_py_tests.floor.floor_value import undecided_type_test
 
-        return native_type_tester(
-            value,
-            type_coordinate,
-            site,
-            type_callsites=(self,),
+        return undecided_type_test(
+            value, self, site, owner="CallSiteValue.test_python_type"
         )
 
     def test_python_subtype(self, supertype, site):
@@ -556,9 +558,11 @@ class CallSiteValue(FloorValue):
 
         A cited ``python_type_coordinate`` (``type(obj)`` through the builtin
         binding) testifies the result is a class, so CPython's non-class
-        ``TypeError`` is not a face: which class is undecided, so the answer
-        is the two-faced ``python.subtype`` obligation over the coordinate.
-        An uncited call result has no class testimony and stays loud.
+        ``TypeError`` is not a face: which class is undecided, so against a
+        builtin class the answer is the open ``python.subtype`` predicate
+        over the coordinate, and against any other supertype the undecided
+        type test, its halt kept (``floor_value.class_subtype_test``).  An
+        uncited call result has no class testimony and stays loud.
         """
         if self.python_type_coordinate is None:
             from sugar_source_tree.panic import SugarNotWritten
@@ -573,22 +577,14 @@ class CallSiteValue(FloorValue):
                 requested="a cited class coordinate for the call result",
                 fix="cite the callee's returned type object, or keep the call loud",
             )
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.floor.floor_value import class_subtype_test
 
-        return ExitSet.completed(
-            PredicateValue(
-                atomic(
-                    "python.subtype",
-                    [
-                        self.python_type_coordinate,
-                        supertype.to_term(owner="python.issubclass supertype"),
-                    ],
-                ),
-                site,
-                operand_callsites=(*self.callsites(), *supertype.callsites()),
-            )
+        return class_subtype_test(
+            self,
+            supertype,
+            site,
+            owner="CallSiteValue.test_python_subtype",
+            subtype_term=self.python_type_coordinate,
         )
 
     def length(self, site):

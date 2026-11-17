@@ -371,21 +371,20 @@ class TupleCoordinateValue(FloorValue):
         return super().python_isinstance(authenticated, type_term, site)
 
     def test_python_type(self, value, site):
-        """Name isinstance against this constructed tuple without inventing members.
+        """``isinstance(value, <this constructed tuple>)`` without inventing
+        members.
 
-        RaisesExc's ``matches`` checks ``isinstance(exception, expected_exceptions)``.
-        A tuple of types is valid classinfo. Members stay unknown, so this cannot
-        fold to a Bool or expand into an or of per-element tests the way
-        TupleValue does. Emit ``adt.is_python_type(value, tuple_term)`` the same
-        way ``native_type_tester`` names a cited type coordinate without
-        inventing the Boolean.
-        """
-        from sugar_lift_py_tests.floor.type_tester import native_type_tester
+        RaisesExc's ``matches`` checks ``isinstance(exception,
+        expected_exceptions)``.  A tuple of types is valid classinfo, but its
+        members stay unknown: each may be no class (the ``TypeError``) or a
+        class whose metaclass runs its own ``__instancecheck__``, so this
+        cannot fold to a Bool or expand into an or of per-element tests the
+        way ``TupleValue`` does.  The undecided type test, its halt kept
+        (``floor_value.undecided_type_test``, #7757)."""
+        from sugar_lift_py_tests.floor.floor_value import undecided_type_test
 
-        return native_type_tester(
-            value,
-            self.to_term(owner="TupleCoordinateValue.test_python_type"),
-            site,
+        return undecided_type_test(
+            value, self, site, owner="TupleCoordinateValue.test_python_type"
         )
 
     def length(self, site):

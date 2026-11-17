@@ -14,7 +14,6 @@ from sugar_lift_py_tests.floor import (
     ComprehensionValue,
     FloorValue,
     GuardedValue,
-    PredicateValue,
     SymbolicValue,
     TermValue,
     TupleCoordinateValue,
@@ -284,9 +283,16 @@ def test_tuple_coordinate_member_name_is_a_coordinate_not_an_invented_string(
     )
 
 
-def test_tuple_coordinate_type_test_is_a_predicate_not_an_invented_membership(
+def test_tuple_coordinate_type_test_is_undecided_not_an_invented_membership(
     tmp_path: Path,
 ) -> None:
+    """``isinstance(exc, <tuple of unknown members>)``: a member may be no
+    class (the ``TypeError``) or run its metaclass's ``__instancecheck__``,
+    so the test is the undecided type test, its halt kept -- never a
+    halt-free completion, never an or over invented members (#7757)."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed
+
     call, subscript = _nodes(_tree(tmp_path, "type-test.py"))
     ctx = _context("tuple-coordinate-type-test")
     constructed = _value(call.sugar().desugar(ctx))
@@ -295,15 +301,16 @@ def test_tuple_coordinate_type_test_is_a_predicate_not_an_invented_membership(
 
     outcome = constructed.test_python_type(obj, site)
 
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), PredicateValue)
-    assert outcome.completed_value().formula == atomic(
-        "adt.is_python_type",
-        [
-            obj.to_term(owner="native_type_tester"),
-            constructed.to_term(owner="TupleCoordinateValue.test_python_type"),
-        ],
-    )
+    assert outcome.completed_value() is None, outcome
+    (completed,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert "python:isinstance_op.completes" in repr(completed.guard)
+    assert isinstance(completed.value, SymbolicValue)
+    assert completed.value.term.name == "python:isinstance_result"
+    assert completed.value.term.args[0] == constructed.to_term(owner="test")
+    assert completed.value.term.args[1] == obj.term
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt
+    assert halt.effect.producer_node_owner == "TupleCoordinateValue.test_python_type"
     assert constructed.source.finite_elements is None
 
 

@@ -43,27 +43,26 @@ class ExitTypeCoordinate(FloorValue):
         return ctor("python:exit_type", [str_const(self.face_id)])
 
     def test_python_subtype(self, supertype, site):
+        """``issubclass(<exit type slot>, T)``: the slot is ``None`` where
+        the body left without raising, and ``issubclass(None, T)`` is the
+        ``TypeError``; a symbolic ``T`` may be no class or run its
+        metaclass's ``__subclasscheck__``.  Nothing authenticates the slot
+        here (a raised face's ``RaisedExitTypeValue`` does), so the test is
+        the undecided type test, its halt kept
+        (``floor_value.undecided_type_test``, #7757)."""
         from sugar_lift_py_tests.floor import ClassValue, SymbolicValue, TupleValue
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.floor.floor_value import undecided_type_test
 
         if type(supertype) is TupleValue:
             return supertype.test_python_subtype(self, site)
         if not isinstance(supertype, (ClassValue, SymbolicValue)):
             return _dynamic_subtype_operand(self, supertype, site)
-        return ExitSet.completed(
-            PredicateValue(
-                atomic(
-                    "python.subtype",
-                    [
-                        self.to_term(owner="python.issubclass subtype"),
-                        supertype.to_term(owner="python.issubclass supertype"),
-                    ],
-                ),
-                site,
-                operand_callsites=(*self.callsites(), *supertype.callsites()),
-            )
+        return undecided_type_test(
+            self,
+            supertype,
+            site,
+            owner="ExitTypeCoordinate.test_python_subtype",
+            test="issubclass",
         )
 
 
@@ -191,8 +190,12 @@ class RaisedExitTypeValue(FloorValue):
 
         ``issubclass`` consults ``type(T).__subclasscheck__``. Only a builtin
         exception class has the closed metaclass ``type``, so only there does
-        the raised MRO testimony settle the question. Any other class operand
-        keeps the ``python.subtype`` atom; nothing is decided by spelling.
+        the raised MRO testimony settle the question. Any other builtin class
+        keeps the ``python.subtype`` atom (two classes, metaclass ``type``,
+        no halt); an undecided operand may be no class or run its own
+        ``__subclasscheck__``, so it is the undecided type test, its halt
+        kept (``floor_value.class_subtype_test``, #7757).  Nothing is decided
+        by spelling.
         """
         from sugar_lift_py_tests.floor import ClassValue, SymbolicValue, TupleValue
         from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
@@ -201,8 +204,6 @@ class RaisedExitTypeValue(FloorValue):
         from sugar_lift_py_tests.floor.builtin_exception_class_value import (
             BuiltinExceptionClassValue,
         )
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import atomic
         from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
@@ -227,18 +228,10 @@ class RaisedExitTypeValue(FloorValue):
                 return ExitSet.completed(literal(site=site))
         if not isinstance(native, (ClassValue, SymbolicValue, BuiltinExceptionClassValue)):
             return _dynamic_subtype_operand(self, supertype, site)
-        return ExitSet.completed(
-            PredicateValue(
-                atomic(
-                    "python.subtype",
-                    [
-                        self.to_term(owner="python.issubclass subtype"),
-                        native.to_term(owner="python.issubclass supertype"),
-                    ],
-                ),
-                site,
-                operand_callsites=(*self.callsites(), *native.callsites()),
-            )
+        from sugar_lift_py_tests.floor.floor_value import class_subtype_test
+
+        return class_subtype_test(
+            self, native, site, owner="RaisedExitTypeValue.test_python_subtype"
         )
 
     def equals(self, other, site, ctx):

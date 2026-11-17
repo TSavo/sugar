@@ -72,19 +72,20 @@ class ImportMemberValue(FloorValue):
         return False
 
     def test_python_type(self, value, site):
-        """Cite this export as the isinstance type operand.
+        """``isinstance(value, <this export>)``: the undecided type test, its
+        halt kept (``floor_value.undecided_type_test``, #7757).
 
-        The source used the import as classinfo. The type identity is the
-        authenticated qualified name (``re.Pattern``), not a free ``Pattern``
-        Var. A ground string answers False for any authenticated type other
-        than ``str``.
-        """
-        from sugar_lift_py_tests.ir import ctor, str_const
+        The export's runtime type is not decided from its path
+        (``runtime_type_is_decided``): it may be no class (the
+        ``TypeError``), and a class's metaclass may run its own
+        ``__instancecheck__`` (``collections.abc``'s ``ABCMeta`` answers
+        ``True`` for a registered ``str``), which may answer anything or
+        raise.  So no value decides it, not even one whose own floor knows
+        its type: a ``str`` is never decided ``False`` against an import."""
+        from sugar_lift_py_tests.floor.floor_value import undecided_type_test
 
-        return value.python_isinstance(
-            self.qualified_name,
-            ctor("python:type", [str_const(self.qualified_name)]),
-            site,
+        return undecided_type_test(
+            value, self, site, owner="ImportMemberValue.test_python_type"
         )
 
     def to_term(self, *, owner: str):

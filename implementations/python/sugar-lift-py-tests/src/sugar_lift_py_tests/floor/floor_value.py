@@ -1389,20 +1389,25 @@ class FloorValue:
         )
 
     def python_isinstance(self, type_name: str, type_term, site):
-        """Emit the reserved tester atom when this value is not ground-known."""
-        del type_name
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import ExitSet
+        """``isinstance(self, <builtin type>)`` where this value's own floor
+        does not know its type: the undecided type test, its halt kept
+        (:func:`undecided_type_test`, #7757).
 
-        return ExitSet.completed(
-            PredicateValue(
-                atomic(
-                    "adt.is_python_type",
-                    [self.to_term(owner="FloorValue.python_isinstance"), type_term],
-                ),
-                site,
-            )
+        A floor that knows its value's type answers ``True`` / ``False`` in
+        its own override (a ``str``, a tuple, an int, a class object,
+        ``type(x)``'s result).  Here nothing does: ``type(self)`` may be no
+        subclass of the builtin, and then ``object_isinstance`` asks this
+        value for its ``__class__``, which a property or a
+        ``__getattribute__`` of its type may answer by raising.  Never a
+        halt-free completion."""
+        del type_name
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        return undecided_type_test(
+            self,
+            SymbolicValue(type_term),
+            site,
+            owner="FloorValue.python_isinstance",
         )
 
 
@@ -1653,9 +1658,17 @@ def undecided_attribute_result(
     )
 
 
-def undecided_type_test(value, classinfo, site, *, owner: str):
-    """``isinstance(<value>, <classinfo>)`` that nothing here decides: the
-    undecided truth, its halt kept (#7757).
+_TYPE_TESTS = frozenset({"isinstance", "issubclass"})
+
+
+def undecided_type_test(
+    value, classinfo, site, *, owner: str, test: str = "isinstance"
+):
+    """``isinstance(<value>, <classinfo>)`` -- or, with ``test="issubclass"``,
+    ``issubclass(<value>, <classinfo>)`` -- that nothing here decides: the
+    undecided truth, its halt kept (#7757).  Every type test over an operand
+    whose floor does not decide it takes this one form; nothing else answers
+    an undecided type test.
 
     ``PyObject_IsInstance`` (Objects/abstract.c) answers ``True`` at once
     only where ``type(value) is classinfo``.  Otherwise a class whose
@@ -1663,12 +1676,16 @@ def undecided_type_test(value, classinfo, site, *, owner: str):
     ``__instancecheck__``, which may answer anything or raise; and under
     ``type``'s own check (``object_isinstance``) a value whose type is no
     subclass is asked for its ``__class__``, which a property or a
-    ``__getattribute__`` of its type may answer by raising.  So the test is
-    the one form of an undecided operation's value
-    (``undecided_result_terms``): it completes with
-    ``python:isinstance_result(<classinfo>, <value>, <key>)`` only under
-    ``python:isinstance_op.completes``, keyed per evaluation, and halts with
-    an ``UndeterminedRaiseEffect`` (``owner``) under the complement, owed on
+    ``__getattribute__`` of its type may answer by raising.
+    ``PyObject_IsSubclass`` is the same shape: a metaclass's
+    ``__subclasscheck__`` may raise, and under ``type``'s own check
+    (``recursive_issubclass``) an operand that is no class is asked for its
+    ``__bases__`` (``abstract_get_bases``), which may raise, and is a
+    ``TypeError`` where it answers none.  So the test is the one form of an
+    undecided operation's value (``undecided_result_terms``): it completes
+    with ``python:<test>_result(<classinfo>, <value>, <key>)`` only under
+    ``python:<test>_op.completes``, keyed per evaluation, and halts with an
+    ``UndeterminedRaiseEffect`` (``owner``) under the complement, owed on
     both faces.  No ``TypeError`` is named and no truth is chosen.  Prove
     relates nothing to it: the isinstance law (``consistency::
     isinstance_law_facts``) reads only ``python:isinstance(<x>, "<C>")``
@@ -1682,15 +1699,17 @@ def undecided_type_test(value, classinfo, site, *, owner: str):
     from sugar_lift_py_tests.occurrence import occurrence_key
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
+    if test not in _TYPE_TESTS:
+        raise ValueError(f"undecided_type_test: no type test {test!r}")
     if site is None:
         _siteless_undecided_read(
             owner,
-            f"isinstance({type(value).__name__}, {type(classinfo).__name__})",
+            f"{test}({type(value).__name__}, {type(classinfo).__name__})",
             "Call",
         )
     key = occurrence_key(site)
     term, completes = undecided_result_terms(
-        "isinstance",
+        test,
         (
             identity_term(classinfo, site, "classinfo", owner=owner),
             identity_term(value, site, "operand", owner=owner),
@@ -1707,6 +1726,50 @@ def undecided_type_test(value, classinfo, site, *, owner: str):
         ),
         guard=completes,
         site=site,
+    )
+
+
+def class_subtype_test(subtype, supertype, site, *, owner: str, subtype_term=None):
+    """``issubclass(<subtype>, <supertype>)`` where ``subtype``'s floor
+    testifies it is a class (``type(x)``'s result, a raised exception's
+    class) but not which one; ``subtype_term`` names it where its own term
+    does not (a cited ``type(x)`` coordinate).
+
+    Halt-free only where ``supertype`` is a builtin class (``ClassValue``,
+    metaclass ``type``): ``recursive_issubclass`` then asks
+    ``PyType_IsSubtype`` of two classes, which cannot raise, so the open
+    truth is the ``python.subtype`` predicate.  A finite tuple distributes
+    (``TupleValue.test_python_subtype``).  Any other supertype -- an
+    undecided value, a source class, an import -- may be no class (the
+    ``TypeError``) or run a metaclass's ``__subclasscheck__``, so the test
+    is the undecided type test (:func:`undecided_type_test`), its halt
+    kept."""
+    from sugar_lift_py_tests.floor.class_value import ClassValue
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.ir import atomic
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    if type(supertype) is TupleValue:
+        return supertype.test_python_subtype(subtype, site)
+    if not isinstance(supertype, ClassValue):
+        return undecided_type_test(
+            subtype, supertype, site, owner=owner, test="issubclass"
+        )
+    if subtype_term is None:
+        subtype_term = subtype.to_term(owner="python.issubclass subtype")
+    return ExitSet.completed(
+        PredicateValue(
+            atomic(
+                "python.subtype",
+                [
+                    subtype_term,
+                    supertype.to_term(owner="python.issubclass supertype"),
+                ],
+            ),
+            site,
+            operand_callsites=(*subtype.callsites(), *supertype.callsites()),
+        )
     )
 
 

@@ -159,7 +159,7 @@ def _assert_undecided_type_test(outcome, owner: str) -> None:
     "classinfo, owner",
     [
         (_never, "ClassDefinitionValue.test_python_type"),
-        (_dict, "BuiltinDictClassValue.test_python_type"),
+        (_dict, "FloorValue.python_isinstance"),
     ],
     ids=["metaclass", "dict"],
 )

@@ -143,8 +143,12 @@ class ClassValue(FloorValue):
         if type(supertype) is TupleValue:
             return supertype.test_python_subtype(self, site)
         if type(supertype) is SymbolicValue:
-            return SymbolicValue(self.to_term(owner=str(site))).test_python_subtype(
-                supertype, site
+            # An undecided supertype may be no class, or run its metaclass's
+            # ``__subclasscheck__``: the undecided type test, its halt kept.
+            from sugar_lift_py_tests.floor.floor_value import class_subtype_test
+
+            return class_subtype_test(
+                self, supertype, site, owner="ClassValue.test_python_subtype"
             )
         if not isinstance(supertype, ClassValue):
             from sugar_lift_py_tests.gap.panic import construction_panic_gap

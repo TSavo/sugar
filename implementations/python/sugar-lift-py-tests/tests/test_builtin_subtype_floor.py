@@ -47,16 +47,43 @@ def test_tuple_of_types_is_finite_subtype_disjunction():
     )
 
 
-def test_symbolic_subtype_emits_typed_obligation():
+def test_symbolic_subtype_is_the_undecided_type_test_its_halt_kept():
+    """``issubclass(<undecided>, U)``: the operand may be no class (its
+    ``__bases__`` read may raise; none is the ``TypeError``) and ``U``'s
+    metaclass may run its own ``__subclasscheck__``.  Never a halt-free
+    ``python.subtype`` completion (#7757)."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor import SymbolicValue
-    from sugar_lift_py_tests.ir import _Atomic, ctor, make_var
+    from sugar_lift_py_tests.ir import ctor, make_var
+    from sugar_lift_py_tests.outcome import Completed
 
     subtype = SymbolicValue(make_var("T"))
     supertype = SymbolicValue(ctor("python:type", [make_var("U")]))
-    result = subtype.test_python_subtype(supertype, "site").completed_value()
+    outcome = subtype.test_python_subtype(supertype, "site")
 
-    assert isinstance(result.formula, _Atomic)
-    assert result.formula.name == "python.subtype"
+    assert outcome.completed_value() is None, outcome
+    (completed,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert "python:issubclass_op.completes" in repr(completed.guard)
+    assert "python:issubclass_result" in repr(completed.value)
+    assert "python.subtype" not in repr(outcome)
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt
+    assert halt.effect.producer_node_owner == "SymbolicValue.test_python_subtype"
+    for arm in outcome.exits:
+        assert arm.owed, arm
+
+
+def test_a_class_against_an_undecided_supertype_keeps_the_halt():
+    """``issubclass(<builtin class>, <undecided>)``: the supertype may be no
+    class, or run its metaclass's ``__subclasscheck__``."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+
+    outcome = _class("Leaf").test_python_subtype(SymbolicValue(make_var("U")), "site")
+
+    assert outcome.completed_value() is None, outcome
+    (halt,) = outcome.halts()
+    assert halt.effect.producer_node_owner == "ClassValue.test_python_subtype"
 
 
 def test_non_type_supertype_stays_loud():

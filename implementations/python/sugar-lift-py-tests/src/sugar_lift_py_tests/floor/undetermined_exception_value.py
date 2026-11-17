@@ -113,8 +113,11 @@ class UndeterminedExceptionTypeValue(FloorValue):
       retains ``adt.is_python_type(<e>, B)``, the same atom ``except B``
       retains over the same exception (a builtin class has metaclass
       ``type``, so subclass and except matching coincide).
-    * any other class operand retains ``python.subtype(python:type_of(<e>),
-      C)``: ``C``'s metaclass may define ``__subclasscheck__``.
+    * any other builtin class ``C`` retains ``python.subtype(
+      python:type_of(<e>), C)``: two classes, metaclass ``type``, no halt.
+    * an undecided operand (a symbolic value) may be no class, or its
+      metaclass may run its own ``__subclasscheck__``: the undecided type
+      test, its halt kept (``floor_value.class_subtype_test``, #7757).
 
     Every other projection (rich comparison, attribute reads, identity
     against a non-``None`` operand) refuses through the ``FloorValue``
@@ -178,18 +181,13 @@ class UndeterminedExceptionTypeValue(FloorValue):
                 requested="authenticated class, tuple-of-classes, or symbolic type operand",
                 fix="construct the Python type operand or keep issubclass loudly unsupported",
             )
-        return ExitSet.completed(
-            PredicateValue(
-                atomic(
-                    "python.subtype",
-                    [
-                        self.to_term(owner="python.issubclass subtype"),
-                        native.to_term(owner="python.issubclass supertype"),
-                    ],
-                ),
-                site,
-                operand_callsites=tuple(native.callsites()),
-            )
+        from sugar_lift_py_tests.floor.floor_value import class_subtype_test
+
+        return class_subtype_test(
+            self,
+            native,
+            site,
+            owner="UndeterminedExceptionTypeValue.test_python_subtype",
         )
 
     def is_identical(self, other, site):

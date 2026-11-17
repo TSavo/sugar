@@ -131,13 +131,16 @@ class GroupedRaiseSugar(Sugar):
         reader (the builtin ``str`` class's ``test_python_type``), never of
         the value's species here.  A decided ``str`` completes with the
         message; a decided non-``str`` is the ``TypeError`` halt.  A message
-        whose type that reader retains (``adt.is_python_type(<message>,
-        str)``) is the one two-faced outcome (``ExitSet.two_faced``): it
-        completes with the message under that type test and raises the
-        ``TypeError`` under its complement, both arms owing the read as the
-        ``undecided`` member.  Never a guess either way."""
+        whose type that reader does not decide answers the undecided type
+        test (``floor_value.undecided_type_test``): its halt stands, and its
+        result's truth (the one truth rule, its own halt kept) is the guard
+        of the one two-faced outcome (``ExitSet.two_faced``): it completes
+        with the message under that truth and raises the ``TypeError`` under
+        its complement, both arms owing the read as the ``undecided``
+        member.  Never a guess either way."""
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -169,6 +172,11 @@ class GroupedRaiseSugar(Sugar):
                     guard=verdict.formula,
                     site=self.site,
                 )
+            if isinstance(verdict, SymbolicValue):
+                # The undecided type test's result value
+                # (``floor_value.undecided_type_test``): its truth through
+                # the one truth rule, every halt kept (#7757).
+                return verdict.truth(self.site).and_then(decide)
             raise SugarNotWritten(
                 blame=self.site,
                 owner=owner,
