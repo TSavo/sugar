@@ -101,7 +101,10 @@ WHAT THE NUMBERS MEAN
 * REFUSED counts named refusals: every ``undecided`` member with a
   ``refused`` reason (a function, class or module body the lifter refuses
   by name, with its owner), plus one per file for which mint packaged no
-  proof at all (owner ``mint-exit-<rc>`` or ``mint-timeout``).
+  proof at all (owner ``mint-exit-<rc>`` or ``mint-timeout``). Such a row
+  carries ``diagnostic``: the kit's JSON-RPC error read whole from mint's
+  output (``owner``, ``blame``, ``observed``, ``requested``, ``fix``,
+  ``exceptionType``), so the refusal that killed the file is named.
 * Functions: the denominator is every ``def`` / ``async def`` in the
   enrolled files, counted by ``ast`` from the source (independent of the
   lifter). A function is lifted when its file packaged a proof and no
@@ -207,6 +210,11 @@ JOIN_DROP_LABELS = frozenset(
     }
 )
 DROP_REASON_RE = re.compile(r"([a-z][a-z-]*) for (python:[^\s,()]+)")
+# One field of a kit refusal's testimony (owner, blame, observed, requested,
+# fix) as the row keeps it: long enough for the owner and the coordinate,
+# which the 400-char error line cut off (run 43960179946, #9132).
+DIAGNOSTIC_FIELD_CHARS = 2000
+DIAGNOSTIC_KEYS = ("owner", "blame", "observed", "requested", "fix")
 
 
 # --------------------------------------------------------------------------
@@ -441,6 +449,48 @@ def link_or_copy(source: Path, target: Path) -> None:
         shutil.copyfile(source, target)
 
 
+def _clip(value: object) -> object:
+    if isinstance(value, str):
+        return value[:DIAGNOSTIC_FIELD_CHARS]
+    return value
+
+
+def mint_diagnostic(text: str) -> dict | None:
+    """The kit's own refusal testimony in a failed mint's output, structured.
+
+    A refusal that escapes the kit answers a JSON-RPC error and ``sugar
+    mint`` prints that error object whole inside its error line (``lift
+    plugin returned error: {...}``). Its ``data.diagnostic`` names the
+    refusal's ``owner`` and ``blame`` (the coordinate) with ``observed`` /
+    ``requested`` / ``fix``; ``data.exception_type`` names its class. The
+    error line itself is kept to ERROR_CHARS, which cut every owner off.
+    An error whose ``data`` is a traceback (an exception that is not a
+    refusal) keeps the traceback's tail. A fatal factory panic prints its
+    diagnostic object bare (``diagnostic={...}``); it is read the same way.
+    The last such object wins (the error is the last thing mint prints).
+    None when the output carries no such object.
+    """
+    found: dict | None = None
+    for value in json_objects(text):
+        if "code" in value and "message" in value:
+            got: dict = {"code": value.get("code"), "message": _clip(value.get("message"))}
+            data = value.get("data")
+            if isinstance(data, dict):
+                if "exception_type" in data:
+                    got["exceptionType"] = data.get("exception_type")
+                diagnostic = data.get("diagnostic")
+                if isinstance(diagnostic, dict):
+                    for key in DIAGNOSTIC_KEYS:
+                        if key in diagnostic:
+                            got[key] = _clip(diagnostic[key])
+            elif isinstance(data, str):
+                got["traceback"] = data[-DIAGNOSTIC_FIELD_CHARS:]
+            found = got
+        elif "owner" in value and any(key in value for key in ("observed", "fix", "blame")):
+            found = {key: _clip(value[key]) for key in DIAGNOSTIC_KEYS if key in value}
+    return found
+
+
 # --------------------------------------------------------------------------
 # Phase 1: one file's mint
 
@@ -607,16 +657,27 @@ def mint_one(
             owner = "mint-timeout" if rc is None else f"mint-exit-{rc}"
             if rc == 0:
                 owner = "mint-no-proof"
-            row["refusals"] = [
-                {
-                    "owner": owner,
-                    "symbol": None,
-                    "isDef": False,
-                    "file": rel,
-                    "line": None,
-                    "observed": (row["mint"]["error"] or "")[:OBSERVED_CHARS],
-                }
-            ]
+            diagnostic = mint_diagnostic(f"{err}\n{out}") if rc not in (0, None) else None
+            row["mint"]["diagnostic"] = diagnostic
+            observed = row["mint"]["error"] or ""
+            if diagnostic and diagnostic.get("owner"):
+                # The kit's owner and coordinate first: the error line's own
+                # prefix (the transport's wrapping) never names them.
+                observed = (
+                    f"{diagnostic['owner']} at {diagnostic.get('blame')}: "
+                    f"{diagnostic.get('observed') or diagnostic.get('message') or ''}"
+                )
+            refusal = {
+                "owner": owner,
+                "symbol": None,
+                "isDef": False,
+                "file": rel,
+                "line": None,
+                "observed": observed[:OBSERVED_CHARS],
+            }
+            if diagnostic:
+                refusal["diagnostic"] = diagnostic
+            row["refusals"] = [refusal]
             row["seconds"] = round(time.monotonic() - t0, 2)
             row["status"] = file_status(row)
             return row
@@ -1349,9 +1410,12 @@ def join(args: argparse.Namespace) -> int:
     if args.refusals:
         by_owner: dict[str, list[dict]] = {}
         for r in refusal_rows:
-            by_owner.setdefault(r["owner"], []).append(
-                {k: r.get(k) for k in ("symbol", "file", "line", "observed")}
-            )
+            site = {k: r.get(k) for k in ("symbol", "file", "line", "observed")}
+            if r.get("diagnostic"):
+                # A file mint packaged no proof for: the kit's own testimony
+                # (owner, blame, observed, requested, fix), structured.
+                site["diagnostic"] = r["diagnostic"]
+            by_owner.setdefault(r["owner"], []).append(site)
         listing = [
             {"owner": owner, "count": count, "sites": by_owner[owner]}
             for owner, count in owners.most_common()
