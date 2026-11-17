@@ -20,7 +20,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 import json
 import logging
-import time
 import weakref
 from typing import Any, Iterator, List, Optional, Tuple, Union
 
@@ -423,8 +422,8 @@ def _term_content_cid(term: "Term") -> str:
 
     Scope-stable: the same structural term yields the same CID whether or not
     ``term_intern_scope`` is active, and across distinct intern scopes
-    (#5568 / #5569). Finite and total by construction (heap-backed blake3 of
-    expanded form) — content-address, do not recurse.
+    (#5568 / #5569). Finite and total by construction (heap-backed Merkle
+    blake3 over the term graph, #7757) — content-address, do not recurse.
 
     Memoization (#5572):
     - Request-local ``cid_by_id``: id → CID *string* only (volume under
@@ -1409,10 +1408,12 @@ class TermTableBuilder:
     def _materialize_rpc(self, root: dict[str, Any]) -> str:
         """Intern one JSON-RPC term tree without native recursion.
 
-        Expanded-term canonical bytes (the CID preimage) are built bottom-up on
-        an explicit worklist. Table rows still store child ``term-ref`` edges so
-        the wire remains a DAG. Object-identity memo within one walk dedups
-        shared dicts; cross-call dedup remains CID-keyed via ``self.nodes``.
+        A row's CID is the hash of the row itself: its scalar fields and its
+        children's ``term-ref`` edges (Merkle, #7757). It is minted bottom-up
+        on an explicit worklist once per distinct object, so the cost is the
+        graph's size, never the size of the term written out. Object-identity
+        memo within one walk dedups shared dicts; cross-call dedup remains
+        CID-keyed via ``self.nodes``.
         """
         if not isinstance(root, dict):
             raise TypeError(
@@ -1420,77 +1421,39 @@ class TermTableBuilder:
                 "fix=pass source-lifter RPC term objects only"
             )
 
-        # Expanded canonical retained only for shared objects (inbound > 1).
-        inbound: dict[int, int] = {}
-        seen: set[int] = set()
-        pending: list[dict[str, Any]] = [root]
-        while pending:
-            term = pending.pop()
+        cid_by_id: dict[int, str] = {}
+        work: list[tuple[dict[str, Any], bool]] = [(root, False)]
+        while work:
+            term, finishing = work.pop()
             identity = id(term)
-            if identity in seen:
+            if identity in cid_by_id:
                 continue
             if not isinstance(term, dict):
                 raise TypeError(
                     f"RPC term child must be a dict, got {type(term)!r}; "
                     "fix=source-lifter terms are JSON objects only"
                 )
-            seen.add(identity)
-            kind = term.get("kind")
-            children = (
-                term.get("args", []) or []
-                if kind == "ctor"
-                else [term["body"]] if kind == "lambda" else []
-            )
-            for child in children:
-                if not isinstance(child, dict):
-                    raise TypeError(
-                        f"RPC term child must be a dict, got {type(child)!r}"
-                    )
-                child_id = id(child)
-                inbound[child_id] = inbound.get(child_id, 0) + 1
-                pending.append(child)
-
-        # Shared nodes retain (canonical preimage, CID) so a second edge reuses
-        # both the expanded string and the already-minted content address.
-        shared_canonical: dict[int, tuple[str, str]] = {}
-        cid_by_id: dict[int, str] = {}
-        values: list[str] = []
-        cid_stack: list[str] = []
-        work: list[tuple[dict[str, Any], bool]] = [(root, False)]
-        while work:
-            term, finishing = work.pop()
-            identity = id(term)
-            cached = shared_canonical.get(identity)
-            if not finishing and cached is not None:
-                values.append(cached[0])
-                cid_stack.append(cached[1])
-                continue
             kind = term.get("kind")
             if kind in {"ctor", "lambda"} and not finishing:
-                work.append((term, True))
                 children = (
                     term.get("args", []) or [] if kind == "ctor" else [term["body"]]
                 )
-                work.extend((child, False) for child in reversed(children))
+                for child in children:
+                    if not isinstance(child, dict):
+                        raise TypeError(
+                            f"RPC term child must be a dict, got {type(child)!r}"
+                        )
+                work.append((term, True))
+                work.extend(
+                    (child, False)
+                    for child in reversed(children)
+                    if id(child) not in cid_by_id
+                )
                 continue
 
-            if term.get("kind") == "ctor":
-                args = term.get("args", []) or []
-                arity = len(args)
-                children = values[-arity:] if arity else []
-                child_cids = cid_stack[-arity:] if arity else []
-                if arity:
-                    del values[-arity:]
-                    del cid_stack[-arity:]
-                canonical = (
-                    '{"args":['
-                    + ",".join(children)
-                    + '],"kind":"ctor","name":'
-                    + encode_jcs(vstr(term["name"]))
-                    + "}"
-                )
-                # Child CIDs were minted when each child finished — never
-                # re-walk the expanded child preimage for a term-ref edge.
+            if kind == "ctor":
+                child_cids = [cid_by_id[id(arg)] for arg in term.get("args", []) or []]
+                canonical = _ctor_row_canonical(term["name"], child_cids)
                 node_payload: dict[str, Any] = {
                     "kind": "ctor",
                     "name": term["name"],
@@ -1499,17 +1462,12 @@ class TermTableBuilder:
                         for child_cid in child_cids
                     ],
                 }
-            elif term.get("kind") == "lambda":
-                body = values.pop()
-                body_cid = cid_stack.pop()
-                canonical = (
-                    '{"body":'
-                    + body
-                    + ',"kind":"lambda","paramName":'
-                    + encode_jcs(vstr(term["paramName"]))
-                    + ',"paramSort":'
-                    + encode_jcs(_json_like_to_value(term["paramSort"]))
-                    + "}"
+            elif kind == "lambda":
+                body_cid = cid_by_id[id(term["body"])]
+                canonical = _lambda_row_canonical(
+                    term["paramName"],
+                    encode_jcs(_json_like_to_value(term["paramSort"])),
+                    body_cid,
                 )
                 node_payload = {
                     "kind": "lambda",
@@ -1528,8 +1486,6 @@ class TermTableBuilder:
 
             cid = blake3_512_of(_rpc_canonical_bytes(canonical))
             cid_by_id[identity] = cid
-            if inbound.get(identity, 0) > 1:
-                shared_canonical[identity] = (canonical, cid)
             if cid not in self.nodes:
                 self.nodes[cid] = node_payload
                 node_count = len(self.nodes)
@@ -1542,13 +1498,7 @@ class TermTableBuilder:
                             "door": "reference_rpc",
                         },
                     )
-            values.append(canonical)
-            cid_stack.append(cid)
 
-        if len(values) != 1 or len(cid_stack) != 1:
-            raise AssertionError(
-                f"iterative RPC term encoder left {len(values)} canonical values"
-            )
         root_cid = cid_by_id.get(id(root))
         if root_cid is None:
             raise AssertionError("iterative RPC term encoder lost the root CID")
@@ -1584,116 +1534,91 @@ class TermTableBuilder:
         return json.loads(encode_jcs(term_to_value(term)))
 
     def _materialize(self, root: Term) -> None:
-        """Intern one expanded term tree with heap-backed postorder traversal."""
-        TermTableBuilder._expanded_canonical(root, self._record_node)
+        """Intern one term graph with heap-backed postorder traversal.
+
+        A subterm this builder already holds is not walked again: its CID and
+        every row beneath it are in the table."""
+        TermTableBuilder._merkle_cids(root, self._cached_cid, self._record_node)
 
     @staticmethod
     def root_cid(root: Term) -> str:
-        """Return the root's wire CID without minting a node per subterm.
+        """Return the root's wire CID without building the table's rows.
 
         Byte-identical to ``TermTableBuilder().reference(root)["cid"]``: the
-        same expanded canonical text, hashed once. A content-identity probe
-        needs only the root coordinate; the per-node table (one blake3 and one
-        node dict per subterm) is wire emission work.
+        same row hashes, minted once per distinct subterm. A content-identity
+        probe needs only the root coordinate; the per-node row dicts are wire
+        emission work. A subterm whose content CID is already memoized
+        (``_TERM_CONTENT_CID``) answers from the memo.
         """
-        return blake3_512_of(_rpc_canonical_bytes(TermTableBuilder._expanded_canonical(root, None)))
+        return TermTableBuilder._merkle_cids(root, _memoized_content_cid, None)
 
     @staticmethod
-    def _expanded_canonical(root: Term, record) -> str:
-        """Expanded canonical text of ``root``; ``record(term, canonical)`` per node."""
-        inbound: dict[int, int] = {}
-        seen: set[int] = set()
-        pending = [root]
-        while pending:
-            term = pending.pop()
-            identity = id(term)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            children = (
-                term.args
-                if isinstance(term, _Ctor)
-                else (term.body,) if isinstance(term, _Lambda) else ()
-            )
-            for child in children:
-                child_id = id(child)
-                inbound[child_id] = inbound.get(child_id, 0) + 1
-                pending.append(child)
+    def _merkle_cids(root: Term, known, record) -> str:
+        """Merkle CID of ``root`` (#7757).
 
-        # Canonical strings are retained only for shared nodes. A linear spine
-        # therefore uses O(depth + root-bytes) memory instead of retaining every
-        # expanded prefix, while repeated DAG children are serialized once.
-        shared_canonical: dict[int, str] = {}
-        values: list[str] = []
+        A row's CID hashes the row the table stores: a leaf's canonical
+        value, a ctor's name and its children's ``term-ref`` edges, a lambda's
+        parameter and its body's edge. Each distinct object is hashed once,
+        so the cost is the term graph's size; the term written out (which
+        doubles per conditional whose arms share a subterm) is never built.
+
+        ``known(term)`` may answer a CID already minted for that object;
+        ``record(term, cid)`` is called once per newly minted object, children
+        before parents."""
+        local: dict[int, str] = {}
         work: list[tuple[Term, bool]] = [(root, False)]
         while work:
             term, finishing = work.pop()
             identity = id(term)
-            cached_value = shared_canonical.get(identity)
-            if not finishing and cached_value is not None:
-                values.append(cached_value)
+            if identity in local:
                 continue
-            if isinstance(term, (_Ctor, _Lambda)) and not finishing:
-                work.append((term, True))
-                children = term.args if isinstance(term, _Ctor) else (term.body,)
-                work.extend((child, False) for child in reversed(children))
-                continue
+            if not finishing:
+                if known is not None:
+                    cid = known(term)
+                    if cid is not None:
+                        local[identity] = cid
+                        continue
+                if isinstance(term, (_Ctor, _Lambda)):
+                    work.append((term, True))
+                    children = term.args if isinstance(term, _Ctor) else (term.body,)
+                    work.extend(
+                        (child, False)
+                        for child in reversed(children)
+                        if id(child) not in local
+                    )
+                    continue
 
             if isinstance(term, _Ctor):
-                arity = len(term.args)
-                children = values[-arity:] if arity else []
-                if arity:
-                    del values[-arity:]
-                canonical = (
-                    '{"args":['
-                    + ",".join(children)
-                    + '],"kind":"ctor","name":'
-                    + encode_jcs(vstr(term.name))
-                    + "}"
+                canonical = _ctor_row_canonical(
+                    term.name, [local[id(arg)] for arg in term.args]
                 )
             elif isinstance(term, _Lambda):
-                body = values.pop()
-                canonical = (
-                    '{"body":'
-                    + body
-                    + ',"kind":"lambda","paramName":'
-                    + encode_jcs(vstr(term.param_name))
-                    + ',"paramSort":'
-                    + encode_jcs(sort_to_value(term.param_sort))
-                    + "}"
+                canonical = _lambda_row_canonical(
+                    term.param_name,
+                    encode_jcs(sort_to_value(term.param_sort)),
+                    local[id(term.body)],
                 )
             else:
                 canonical = encode_jcs(term_to_value(term))
-
-            if inbound.get(identity, 0) > 1:
-                shared_canonical[identity] = canonical
-            if record is not None:
-                record(term, canonical)
-            values.append(canonical)
-
-        if len(values) != 1:
-            raise AssertionError(
-                f"iterative term encoder left {len(values)} canonical values"
-            )
-        return values[0]
-
-    def _record_node(self, term: Term, canonical: str) -> None:
-        started = time.monotonic()
-        cid = self._cached_cid(term)
-        if cid is None:
             cid = blake3_512_of(_rpc_canonical_bytes(canonical))
-            self._cids[id(term)] = (term, cid)
-            if _TERM_TABLE_LOG.isEnabledFor(logging.DEBUG):
-                _TERM_TABLE_LOG.debug(
-                    "term_cid_minted",
-                    extra={
-                        "stage": "lift.workspace.to_rpc.term_table.cid",
-                        "cid": cid,
-                        "cid_count": len(self._cids),
-                        "term_kind": type(term).__name__,
-                        "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-                    },
-                )
+            local[identity] = cid
+            if record is not None:
+                record(term, cid)
+
+        return local[id(root)]
+
+    def _record_node(self, term: Term, cid: str) -> None:
+        self._cids[id(term)] = (term, cid)
+        if _TERM_TABLE_LOG.isEnabledFor(logging.DEBUG):
+            _TERM_TABLE_LOG.debug(
+                "term_cid_minted",
+                extra={
+                    "stage": "lift.workspace.to_rpc.term_table.cid",
+                    "cid": cid,
+                    "cid_count": len(self._cids),
+                    "term_kind": type(term).__name__,
+                },
+            )
         if cid in self.nodes:
             self._log_node(term, cid, cache="hit")
             return
@@ -1735,6 +1660,47 @@ class TermTableBuilder:
                     "term_kind": type(term).__name__,
                 },
             )
+
+
+def _term_ref_canonical(cid: str) -> str:
+    """JCS text of one ``{"kind": "term-ref", "cid": cid}`` edge."""
+    return '{"cid":' + encode_jcs(vstr(cid)) + ',"kind":"term-ref"}'
+
+
+def _ctor_row_canonical(name: str, child_cids: list[str]) -> str:
+    """JCS text of a ctor row: its name and its children's edges (Merkle)."""
+    return (
+        '{"args":['
+        + ",".join(_term_ref_canonical(cid) for cid in child_cids)
+        + '],"kind":"ctor","name":'
+        + encode_jcs(vstr(name))
+        + "}"
+    )
+
+
+def _lambda_row_canonical(param_name: str, param_sort_jcs: str, body_cid: str) -> str:
+    """JCS text of a lambda row: its parameter and its body's edge (Merkle)."""
+    return (
+        '{"body":'
+        + _term_ref_canonical(body_cid)
+        + ',"kind":"lambda","paramName":'
+        + encode_jcs(vstr(param_name))
+        + ',"paramSort":'
+        + param_sort_jcs
+        + "}"
+    )
+
+
+def _memoized_content_cid(term: "Term") -> str | None:
+    """The content CID already memoized for this object or its structure, if
+    any; never mints one."""
+    entry = _TERM_CONTENT_CID.get(id(term))
+    if entry is not None and entry[0]() is term:
+        return entry[1]
+    structure = _known_structure_id(term)
+    if structure is not None:
+        return _CID_BY_STRUCTURE.get(structure)
+    return None
 
 
 def _rpc_canonical_bytes(canonical: str) -> bytes:

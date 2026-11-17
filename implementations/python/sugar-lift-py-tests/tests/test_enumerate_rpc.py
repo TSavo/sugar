@@ -653,25 +653,18 @@ def test_closed_enumerate_result_prunes_unreachable_rows_and_omits_empty_table()
 def test_closed_enumerate_result_deduplicates_shared_reachable_subterms() -> None:
     leaf = {"kind": "var", "name": "x"}
     leaf_cid = blake3_512_of(encode_jcs(_json_like_to_value(leaf)).encode())
-    parent_resolved = {
+    # Merkle (#7757): the parent's CID hashes its own row, the shared leaf
+    # named by its CID, never the term written out.
+    parent_row = {
         "kind": "ctor",
         "name": "call:pair",
-        "args": [leaf, leaf],
+        "args": [
+            {"kind": "term-ref", "cid": leaf_cid},
+            {"kind": "term-ref", "cid": leaf_cid},
+        ],
     }
-    parent_cid = blake3_512_of(
-        encode_jcs(_json_like_to_value(parent_resolved)).encode()
-    )
-    term_table = {
-        leaf_cid: leaf,
-        parent_cid: {
-            "kind": "ctor",
-            "name": "call:pair",
-            "args": [
-                {"kind": "term-ref", "cid": leaf_cid},
-                {"kind": "term-ref", "cid": leaf_cid},
-            ],
-        },
-    }
+    parent_cid = blake3_512_of(encode_jcs(_json_like_to_value(parent_row)).encode())
+    term_table = {leaf_cid: leaf, parent_cid: parent_row}
     nodes = [
         {
             "memento": {"file": "demo.py"},
