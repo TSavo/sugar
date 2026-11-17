@@ -352,18 +352,19 @@ def _joined_evaluation(arms):
     provably exclusive.  Arms it cannot prove exclusive hold the key at two
     values on one path: there is no one value to carry, the key is not
     bound, and its read is refused by name (``EvaluationRefSugar``,
-    ``LoopBindingRefSugar``), never answered with one of the two.
+    ``LoopBindingRefSugar``), never answered with one of the two.  The
+    admission is asked (``ExitSet.completed_face_factors``), never caught:
+    the factoring refusal is a refusal by name, held by no reader.
     """
     from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.outcome.exit_set import ExitSetFactoringGap
 
     first = arms[0].value
     if all(arm.value is first for arm in arms):
         return first
-    try:
-        factored = ExitSet(tuple(arms)).normalize().factor_completed()
-    except ExitSetFactoringGap:
+    joined = ExitSet(tuple(arms)).normalize()
+    if not joined.completed_face_factors():
         return None
+    factored = joined.factor_completed()
     (arm,) = factored.exits
     return arm.value
 

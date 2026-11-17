@@ -7,6 +7,8 @@ from dataclasses import dataclass, field as _dataclass_field
 from typing import Callable, Generic, TypeVar
 
 from sugar_lift_py_tests.effect import Effect, require_effect
+from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import Formula, _Connective, and_, not_, or_
 
 T = TypeVar("T")
@@ -66,11 +68,18 @@ def complement_guard(guard: Formula) -> Formula:
     return not_(guard)
 
 
-class ExitSetFactoringGap(ValueError):
+class ExitSetFactoringGap(ConstructionPanic):
     """A completed face that a guarded-value chain cannot faithfully carry.
 
-    Loud on contact, in the same shape as ``SourceCallBindingGap``: the message
-    names the two guards, why the collapse would lose an outcome, and the fix.
+    A refusal by name: the one refusal (``LifterRefusal``), in its
+    construction family (#7757).  It was a ``ValueError``, so a function
+    whose reduction met it was not refused by name: the error went past the
+    universe scan's one refusal rule (``lift_rpc._handle_enumerate``: a
+    refusal raised constructing or reducing a function is that function's
+    refused member) and ended the whole file's mint, every other function's
+    rows with it (the lane's ``mint-exit-1``).  As a refusal it is the
+    function's ``undecided`` member (step 8), with this owner and what it
+    observed, and the rest of the file is served.
 
     Carries the two refusing ARMS as well as the prose (#6356). A census that
     has to re-derive them from the message is parsing a repr, and the split
@@ -79,8 +88,31 @@ class ExitSetFactoringGap(ValueError):
     This is data on the exception, not a change to when it is raised.
     """
 
+    OWNER = "ExitSet.factor_completed"
+
     def __init__(self, message: str, left=None, right=None) -> None:
-        super().__init__(message)
+        super().__init__(
+            ConstructionGap(
+                owner=self.OWNER,
+                blame=self.OWNER,
+                observed=message,
+                requested=(
+                    "a completed face whose arms are provably pairwise "
+                    "exclusive: one producer's carried partition, or "
+                    "complementary guards"
+                ),
+                fix=(
+                    "if the producing sugar OWNS a split here, mint it with "
+                    "outcome.exit_set.partition(owner) and pass each face to "
+                    ".guarded(guard, face); if it owns no split, the arms are "
+                    "simultaneously reachable and the refusal is correct. "
+                    "Never re-materialize the product (#6309), never widen "
+                    "_are_exclusive to guess from guard spelling"
+                ),
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.REDUCE,
+            )
+        )
         self.left = left
         self.right = right
 
@@ -163,6 +195,40 @@ def partition_family(owner: object, sides: tuple) -> tuple[PartitionFace, ...]:
         )
     token = ("sugar.exit_set.partition", owner)
     return tuple(PartitionFace(token, side, len(sides)) for side in sides)
+
+
+def _overlapping_completed_pair(completed):
+    """The one admission of ``ExitSet.factor_completed``: ``None`` when the
+    completed arms are provably pairwise exclusive, else the first pair that
+    is not, ``(arm, other)``.
+
+    THE FAMILY ADMISSION (#6356). A producer that owns an n-way split and
+    says so -- one authenticated origin, distinct sides, the declared arity
+    covered exactly -- has proved pairwise exclusivity for the whole set in
+    one statement, and the pairwise scan below would have to re-derive it
+    from guard shape it may no longer be spelled in.
+
+    Admission needs the WHOLE family. An incomplete one is not a partition:
+    a missing face is an outcome nobody accounted for, and collapsing the
+    rest would drop it. Same destination TYPE is not part of the test and
+    must never become part of it -- two arms of one type from unrelated
+    producers share no origin, which is exactly the shape the measured
+    remaining-work rows have.
+
+    Otherwise each pair: carried testimony first (a producer that minted
+    the two as faces of ONE split already answered, and its answer does not
+    decay when the guards are merged or rewritten), then the shape-level
+    prover, the sound fallback for arms whose producer never claimed a
+    partition."""
+    if _complete_family(completed):
+        return None
+    for index, arm in enumerate(completed):
+        for other in completed[index + 1 :]:
+            if _faces_exclusive(arm.faces, other.faces):
+                continue
+            if not _are_exclusive(arm.guard, other.guard):
+                return arm, other
+    return None
 
 
 def _complete_family(arms) -> bool:
@@ -723,60 +789,35 @@ class ExitSet(Generic[T]):
         completed = [e for e in self.exits if isinstance(e, Completed)]
         if len(completed) <= 1:
             return self
-
-        # THE FAMILY ADMISSION (#6356). A producer that owns an n-way split and
-        # says so -- one authenticated origin, distinct sides, the declared
-        # arity covered exactly -- has proved pairwise exclusivity for the whole
-        # set in one statement, and the pairwise scan below would have to
-        # re-derive it from guard shape it may no longer be spelled in.
-        #
-        # Admission needs the WHOLE family. An incomplete one is not a
-        # partition: a missing face is an outcome nobody accounted for, and
-        # collapsing the rest would drop it. Same destination TYPE is not part
-        # of the test and must never become part of it -- two arms of one type
-        # from unrelated producers share no origin, which is exactly the shape
-        # the measured remaining-work rows have.
-        if _complete_family(completed):
-            return self._factored(completed)
-
-        for index, arm in enumerate(completed):
-            for other in completed[index + 1 :]:
-                # Carried testimony first: a producer that minted these as two
-                # faces of ONE split already answered this, and its answer does
-                # not decay when the guards are merged or rewritten. The
-                # shape-level prover stays as the sound fallback for arms whose
-                # producer never claimed a partition.
-                if _faces_exclusive(arm.faces, other.faces):
-                    continue
-                if not _are_exclusive(arm.guard, other.guard):
-                    raise ExitSetFactoringGap(
-                        "ExitSet.factor_completed cannot factor a completed face "
-                        "whose arms are not provably exclusive.\n"
-                        f"  owner: {type(arm.value).__name__} / "
-                        f"{type(other.value).__name__}\n"
-                        f"  arm A guard: {arm.guard!r}\n"
-                        f"  arm B guard: {other.guard!r}\n"
-                        "  why this is a gap: a GuardedValue chain selects ONE "
-                        "face, so it can only carry a partition. Overlapping "
-                        "arms with different values are two simultaneously "
-                        "reachable outcomes, and collapsing them would drop one.\n"
-                        "  fix: if the producing sugar OWNS a two-way split "
-                        "here, mint it with outcome.exit_set.partition(owner) "
-                        "and pass each face to .guarded(guard, face) — carried "
-                        "testimony survives merges and rewrites that guard "
-                        "shape does not. If it owns no split, these arms really "
-                        "are simultaneously reachable and this gap is correct: "
-                        "keep both at the exit level. Do NOT re-materialize the "
-                        "product (the m ** k blow-up #6309 removed), and do NOT "
-                        "widen _are_exclusive to guess exclusivity from how the "
-                        "formulas are spelled.\n"
-                        f"  arm A faces: {sorted(str(f) for f in arm.faces)}\n"
-                        f"  arm B faces: {sorted(str(f) for f in other.faces)}",
-                        arm,
-                        other,
-                    )
-
+        overlapping = _overlapping_completed_pair(completed)
+        if overlapping is not None:
+            # A GuardedValue chain selects ONE face, so it can only carry a
+            # partition: overlapping arms with different values are two
+            # simultaneously reachable outcomes, and collapsing them would
+            # drop one.  The two arms ride the refusal as data (#6356); their
+            # guards are never re-read from its prose.
+            arm, other = overlapping
+            raise ExitSetFactoringGap(
+                "ExitSet.factor_completed cannot factor a completed face whose "
+                "arms are not provably exclusive: "
+                f"{type(arm.value).__name__} / {type(other.value).__name__}",
+                arm,
+                other,
+            )
         return self._factored(completed)
+
+    def completed_face_factors(self) -> bool:
+        """Whether ``factor_completed`` admits this set's completed face: the
+        same admission (``_overlapping_completed_pair``), asked without the
+        refusal.
+
+        For the one reader to which two values on one path is an answer of
+        its own (``if_sugar._joined_evaluation``: the key the arms bound to
+        different values is then not bound, and its read is refused by name
+        where it is read), so no reader holds the refusal to read it as an
+        answer."""
+        completed = [e for e in self.exits if isinstance(e, Completed)]
+        return len(completed) <= 1 or _overlapping_completed_pair(completed) is None
 
     def _factored(self, completed) -> "ExitSet[T]":
         """Collapse an ADMITTED completed face into one guarded-value arm.

@@ -30,13 +30,15 @@ them into ``R_desugar`` produces a number whose denominator is a lie:
 The first two new collections make the final instrument exit RED. None of the
 three is ever added to ``R_desugar``.
 
-WHY THE FOURTH EXISTS. ``ExitSetFactoringGap`` is a ``ValueError``, so it landed
-in ``desugarDefects`` — twelve rows of the pandas board, every one classifying
-``isRemainingWork: False``, which is ``factor_completed`` doing exactly its job.
-Counting correct output as a defect is the same disease that made ``R_desugar``
-overstate its board by 7.6x, at smaller scale. The door is by DECLARED TYPE and
-nothing else: panics are panics; designed-gap taxonomy deleted
-would have been a cure worse than the disease.
+WHY THE FOURTH EXISTS. ``ExitSetFactoringGap`` was a ``ValueError``, so it
+landed in ``desugarDefects`` — twelve rows of the pandas board, every one
+classifying ``isRemainingWork: False``, which is ``factor_completed`` doing
+exactly its job. It is now a ``ConstructionPanic`` (#7757: a refusal by name, so
+the universe scan states it as the function's refused member instead of ending
+the file's mint), and it is counted in ``desugarConstructionPanics`` under its
+owner ``ExitSet.factor_completed``. The door is by DECLARED TYPE and nothing
+else: panics are panics; designed-gap taxonomy deleted would have been a cure
+worse than the disease.
 
 Row identity is the *effect occurrence*, not the enclosing function line. A
 function holding three distinct stores is three rows; the same occurrence
