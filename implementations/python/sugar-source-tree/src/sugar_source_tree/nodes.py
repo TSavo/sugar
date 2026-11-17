@@ -3650,6 +3650,7 @@ class SourceUnit:
         conditional: set[str] = set()
         conditional_defs: set[str] = set()
         conditional_def_sites: set = set()
+        conditional_def_statements: dict = {}
         # ``(node, nested)``: ``nested`` is whether ``node`` sits inside a
         # module statement that runs it on some routes only -- an ``if``, a
         # ``try``, a loop or a ``match``, whose routes the lexical import pass
@@ -3698,6 +3699,7 @@ class SourceUnit:
                 conditional.add(node.name)
                 conditional_defs.add(node.name)
                 conditional_def_sites.add((node.name, node.span.start, node.span.end))
+                conditional_def_statements.setdefault(node.name, []).append(node)
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
                 continue
             routed = nested or isinstance(
@@ -3720,6 +3722,7 @@ class SourceUnit:
             unthreaded = threaded
         else:
             unthreaded = threaded & writes
+        valued_defs = frozenset((conditional_defs - keyed - loop_bound) & threaded)
         object.__setattr__(
             self,
             "_module_global_rows_memo",
@@ -3729,8 +3732,15 @@ class SourceUnit:
                 unthreaded,
                 frozenset(unthreaded | writes),
                 frozenset(conditional & threaded),
-                frozenset((conditional_defs - keyed - loop_bound) & threaded),
+                valued_defs,
                 frozenset(conditional_def_sites),
+                {
+                    name: tuple(
+                        sorted(statements, key=lambda item: item.span.start)
+                    )
+                    for name, statements in conditional_def_statements.items()
+                    if name in valued_defs
+                },
             ),
         )
         return threaded, unthreaded
@@ -5053,6 +5063,54 @@ class SourceUnit:
         if self.module_execution_site(read) is not None:
             return None
         return definition
+
+    def definitions_a_call_joins(self, read: "Name") -> tuple:
+        """Each source ``def`` whose contract a call by the name ``read``,
+        made from a function body, is the edge to (#7757 step 5, "Edge, join
+        at prove"): the ``def`` whose ``global:`` inputs the call supplies
+        (``py.global``, ``lambda_callable.definition_edge_call``'s
+        ``signature``).  Empty for any other callee.
+
+        Read off the resolvers every such call already goes through, never a
+        second one:
+
+        - a module ``def`` bound to its function
+          (``function_definition_for_read``): that ``def``;
+        - a module ``class`` (``module_definition_denoted_by``): the ``def``
+          that states its constructor's signature
+          (``ClassDef.constructor_definition``), the signature the class
+          call's edge supplies inputs for
+          (``ClassDefinitionValue._constructor_edge_call``); none where no
+          source ``def`` states it;
+        - a plain ``def`` the module binds on some routes only
+          (``module_conditional_definition_names``: ``if HAS_PYARROW: def
+          g(): ...``): each such statement, since the call is the call of the
+          function value the route that ran bound
+          (``binds_conditional_definition_value``), whichever it is.
+
+        A read the module body itself runs, or of a name a parameter, local,
+        free or nonlocal of the function around it binds, joins none here, as
+        ``function_definition_for_read`` answers."""
+        definition = self.function_definition_for_read(read)
+        if definition is not None:
+            return (definition,)
+        if self.module_execution_site(read) is not None:
+            return ()
+        denoted = self.module_definition_denoted_by(read)
+        if isinstance(denoted, ClassDef):
+            constructor = denoted.constructor_definition()
+            return () if constructor is None else (constructor,)
+        if read.id not in self.module_conditional_definition_names():
+            return ()
+        _owner, symbol = self._function_symbol_at(read.id, read.line_col_span())
+        if symbol is not None and (
+            symbol.is_parameter()
+            or symbol.is_local()
+            or symbol.is_free()
+            or symbol.is_nonlocal()
+        ):
+            return ()
+        return self._module_global_rows_memo[7].get(read.id, ())
 
     @staticmethod
     def _module_statement_bound_names(statement: "Node") -> set[str]:
@@ -25396,8 +25454,9 @@ def _global_input_names(definition) -> frozenset:
       ``_module_globals_read`` and those of each ``def`` or lambda nested in
       it, which the call may run), and
     - for each same-file call it makes by name
-      (``SourceUnit.function_definition_for_read``), the callee
-      contract's own ``global:`` inputs: this same answer for the callee,
+      (``SourceUnit.definitions_a_call_joins``: a module ``def``, a module
+      class's constructor ``def``, a ``def`` bound on some routes only), the
+      callee contract's own ``global:`` inputs: this same answer for the callee,
       read off the callee's contract, never by walking the callee's body
       (the owner's ruling of 2026-11-15, "Edge, join at prove": what the
       caller needs from the callee is stated by the callee's contract).
@@ -25461,18 +25520,25 @@ def _own_global_reads(definition) -> frozenset:
 
 
 def _same_file_callees(definition) -> tuple:
-    """Each source ``def`` of this file ``definition``'s body calls by name
-    (``SourceUnit.function_definition_for_read``: the ``def`` its callee
-    name reads), in source order, once each; the definition itself is not
-    one.  A ``def`` nested in ``definition`` is no callee here: its reads are
-    ``definition``'s own (``_own_global_reads``)."""
+    """Each source ``def`` of this file whose contract a call by name in
+    ``definition``'s body is the edge to
+    (``SourceUnit.definitions_a_call_joins``: a module ``def`` its callee
+    name reads, the ``def`` stating a module class's constructor, each
+    ``def`` a module ``if``/``try`` binds the name to on its route), in
+    source order, once each; the definition itself is not one.  The edge
+    supplies every ``global:`` input of that contract (``py.global``), so
+    the caller's contract takes them: one the caller did not take was
+    supplied as a variable no contract binds, and ``ScopedFormula`` refused
+    the caller by it (``illegal free var(s): undecided:global:pa@...``,
+    #7757).  A ``def`` nested in ``definition`` is no callee here: its reads
+    are ``definition``'s own (``_own_global_reads``)."""
     unit = definition.unit
     callees: dict[int, object] = {}
     for node in definition.walk():
         if isinstance(node, Call) and isinstance(node.func, Name):
-            callee = unit.function_definition_for_read(node.func)
-            if callee is not None and callee is not definition:
-                callees.setdefault(id(callee), callee)
+            for callee in unit.definitions_a_call_joins(node.func):
+                if callee is not definition:
+                    callees.setdefault(id(callee), callee)
     return tuple(callees.values())
 
 
