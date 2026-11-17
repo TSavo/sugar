@@ -1359,6 +1359,45 @@ def class_universe_outcome(cls):
 # The formals of a constructor contract no lookup reads the signature of
 # (``_unread_constructor_signature``): ``(*args, **kwargs)``.
 _UNREAD_CONSTRUCTOR_FORMALS = ("args", "kwargs")
+# Their parameter kinds, as a frame states its own
+# (``SourceVisibleCallFrameV1.parameter_kinds``).
+_UNREAD_CONSTRUCTOR_KINDS = ("vararg", "kwarg")
+
+# A frame's variadic parameter kind (``parameter_kinds``, the reading a call
+# edge packs its actuals by: ``lambda_callable.variadic_formals``) as the
+# contract names it (``variadicFormals``, read by prove's one binder,
+# ``consistency::contract_binder_formals``).
+_FRAME_VARIADIC_KINDS = {"vararg": "positional", "kwarg": "keyword"}
+
+
+def _class_contract_variadic_formals(cls) -> tuple:
+    """``((kind, formal), ...)``: the ``*args`` and ``**kwargs`` among the
+    formals of ``cls``'s constructor contract (``_class_contract_signature``),
+    read off the parameter kinds of the frame a call of the class binds.
+
+    A call of the class is its coordinate and edge (``ClassDefinitionValue.
+    _constructor_edge_call``): it supplies each formal ``variadic_formals``
+    names packed, ``py.packed(<name>, <tuple|dict>)``.  Prove's one binder
+    takes a packed value only for a formal the contract states variadic, so
+    the contract states exactly those formals so, from the same frame.  A
+    formal coordinate of a ``def`` states its own kind
+    (``universe_value._stated_variadic_formals``); a frame minted on the class
+    statement does not -- the inherited exception constructor's ``(*args)``
+    (``ClassDef.source_visible_constructor_frame``) and the unread
+    constructor's ``(*args, **kwargs)`` (``_unread_constructor_signature``) --
+    and without this its contract stated ``args`` as one positional formal,
+    so ``raise Boom()`` (``py.packed("args", ())``) fit nothing and the join
+    refused every call of the class as ``import-signature-mismatch``."""
+    if not cls.constructor_is_read():
+        parameters, kinds = _UNREAD_CONSTRUCTOR_FORMALS, _UNREAD_CONSTRUCTOR_KINDS
+    else:
+        frame = cls.source_visible_constructor_frame()
+        parameters, kinds = tuple(frame.parameters), tuple(frame.parameter_kinds)
+    return tuple(
+        (_FRAME_VARIADIC_KINDS[kind], name)
+        for name, kind in zip(parameters, kinds, strict=False)
+        if kind in _FRAME_VARIADIC_KINDS
+    )
 
 
 def _unread_constructor_signature(cls) -> tuple:
@@ -1816,6 +1855,18 @@ def class_contract_rows(cls, file_rel: str):
         import dataclasses
 
         rows = [dataclasses.replace(row, input_values=stated) for row in rows]
+    # The ``*args`` and ``**kwargs`` the class's call packs, stated variadic
+    # on the contract that answers it (``_class_contract_variadic_formals``).
+    variadic = _class_contract_variadic_formals(cls)
+    if rows is not None and variadic:
+        import dataclasses
+
+        rows = [
+            dataclasses.replace(row, variadic_formals=variadic)
+            if row.kind == "function-contract"
+            else row
+            for row in rows
+        ]
     return memento, rows
 
 
