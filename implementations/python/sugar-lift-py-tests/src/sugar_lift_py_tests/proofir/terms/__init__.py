@@ -6,12 +6,15 @@ from typing import Any, Generic, Mapping, NoReturn, TypeVar
 from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.ir import (
     Term as IrTerm,
+    _Atomic,
+    _Connective,
     _ConstBool,
     _ConstInt,
     _ConstReal,
     _ConstStr,
     _Ctor,
     _Lambda,
+    _Quantifier,
     _Var,
     PrimitiveSort,
     bool_const,
@@ -229,14 +232,87 @@ def _const_sort_gap(value: object, sort: Sort) -> NoReturn:
     )
 
 
-def _free_vars_in_ir_term(ir_term: IrTerm) -> frozenset[str]:
-    if isinstance(ir_term, _Var):
-        return frozenset({ir_term.name})
-    if isinstance(ir_term, _Ctor):
-        return frozenset().union(*(_free_vars_in_ir_term(arg) for arg in ir_term.args))
-    if isinstance(ir_term, _Lambda):
-        return _free_vars_in_ir_term(ir_term.body) - {ir_term.param_name}
-    return frozenset()
+def _free_vars_in_ir_term(
+    ir_term: IrTerm, memo: "dict[int, frozenset[str]] | None" = None
+) -> frozenset[str]:
+    return free_vars_in_ir(ir_term, formula=False, memo=memo)
+
+
+def free_vars_in_ir(
+    root: object,
+    *,
+    formula: bool,
+    memo: "dict[int, frozenset[str]] | None" = None,
+) -> frozenset[str]:
+    """The one reader of an ir term's or formula's free variables.
+
+    Iterative post-order over the shared DAG: a formula a long body folds
+    (an ``and`` nested once per statement) is as deep as the body is long, so
+    a recursive walk ran out of Python stack and the file's mint died with
+    no proof. Memoized per node identity, because term-refs alias one
+    canonical row from many parents; the root pins every node alive for the
+    call, so ``id()`` keys are not reused. A node met again while its own
+    children are still open is a cycle, refused by name like any other
+    unknown shape.
+    """
+    if memo is None:
+        memo = {}
+    open_nodes: set[int] = set()
+    stack: list[tuple[object, bool, bool]] = [(root, formula, False)]
+    while stack:
+        node, in_formula, children_done = stack.pop()
+        key = id(node)
+        if not children_done and key in memo:
+            continue
+        if in_formula:
+            if isinstance(node, _Atomic):
+                children = tuple((arg, False) for arg in node.args)
+                bound: str | None = None
+            elif isinstance(node, _Connective):
+                children = tuple((operand, True) for operand in node.operands)
+                bound = None
+            elif isinstance(node, _Quantifier):
+                children = ((node.body, True),)
+                bound = node.name
+            else:
+                proofir_construction_gap(
+                    owner="proofir.formulas.formula_from_ir",
+                    observed=type(node).__name__,
+                    requested="known ir.Formula",
+                    fix="wrap only ir.py formula values in the ProofIR formula family",
+                )
+        elif isinstance(node, _Var):
+            memo[key] = frozenset({node.name})
+            continue
+        elif isinstance(node, _Ctor):
+            children = tuple((arg, False) for arg in node.args)
+            bound = None
+        elif isinstance(node, _Lambda):
+            children = ((node.body, False),)
+            bound = node.param_name
+        else:
+            memo[key] = frozenset()
+            continue
+        if children_done:
+            open_nodes.discard(key)
+            found = frozenset().union(*(memo[id(child)] for child, _ in children))
+            memo[key] = found - {bound} if bound is not None else found
+            continue
+        if key in open_nodes:
+            proofir_construction_gap(
+                owner="proofir.formulas.formula_from_ir",
+                observed=f"cyclic {type(node).__name__}",
+                requested="an acyclic ir term or formula",
+                fix="build ir values bottom-up; a node never contains itself",
+            )
+        open_nodes.add(key)
+        stack.append((node, in_formula, True))
+        stack.extend(
+            (child, child_in_formula, False)
+            for child, child_in_formula in reversed(children)
+            if id(child) not in memo
+        )
+    return memo[id(root)]
 
 
 def _merge_var_sorts(*maps: Mapping[str, Sort]) -> dict[str, Sort]:
