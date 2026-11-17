@@ -24,6 +24,8 @@ Nothing is decided that was not, and no halt is dropped.
 THE DISCRIMINATION: a head that is not uniquely import-bound (an optional
 import, a name that is not imported) still gets no row, inside a dict or
 not: the walk reaches more places, the law it applies there is unchanged.
+An optional import's read is the join the threading carries past its
+``try`` (the import, or a ``NameError`` halt), never the free name (#7757).
 """
 
 from __future__ import annotations
@@ -32,7 +34,6 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.import_binding import (
     AuthenticatedImportUseV1,
     authenticated_import_value_use_receipts,
@@ -172,12 +173,19 @@ def test_a_name_that_is_not_imported_gets_no_row_in_a_dict(tmp_path: Path) -> No
 
 
 def test_an_optional_import_gets_no_row_in_a_dict(tmp_path: Path) -> None:
+    # The read in the dict takes no row: ``pa`` is no unique import there.
+    # The one receipt is the binding's own read at its alias (line 2), which
+    # the join past the ``try`` enrolls so that the import's arm of the
+    # threading's join is the import, never the free name (#7757).
     receipts = _receipts(
         tmp_path,
         "try:\n    import pa\nexcept ImportError:\n    pass\n\n"
         "d = {'k': pa.array}\n",
     )
-    assert receipts == []
+    assert [receipt.use["useSite"]["startLine"] for receipt in receipts] == [2]
+    (receipt,) = receipts
+    assert receipt.target_symbol == "python:pa"
+    assert receipt.use["exportedMemberPath"] == []
 
 
 @pytest.mark.parametrize(
@@ -218,13 +226,16 @@ def test_a_store_through_an_import_member_is_scoped() -> None:
         assert scoped.formula.free_vars <= {"tz", "out"}
 
 
-def test_an_optional_import_in_a_dict_still_refuses_by_name() -> None:
-    # THE DISCRIMINATION: ``pa`` binds nothing the strict law accepts (the
-    # import may have failed), so its read stays the free name, and the scope
-    # law refuses it by name as it did outside a dict.
-    with pytest.raises(ConstructionPanic, match="illegal free var.*pa"):
-        _scoped_posts(
-            "try:\n    import pyarrow as pa\nexcept ImportError:\n    pass\n\n\n"
-            "def f():\n    return {'k': pa.array}\n",
-            (),
-        )
+def test_an_optional_import_in_a_dict_is_the_join_never_the_free_name() -> None:
+    # THE DISCRIMINATION is unchanged: ``pa`` binds nothing the strict law
+    # accepts (the import may have failed), so its read takes no row.  It is
+    # no longer the free name either: the read is the join the threading
+    # carries past the ``try`` (#7757, carry undecided), the import on the
+    # route that bound it and a ``NameError`` halt on the route that did not,
+    # so the scope law has nothing to refuse.
+    for scoped in _scoped_posts(
+        "try:\n    import pyarrow as pa\nexcept ImportError:\n    pass\n\n\n"
+        "def f():\n    return {'k': pa.array}\n",
+        (),
+    ):
+        assert scoped.formula.free_vars <= {"out"}

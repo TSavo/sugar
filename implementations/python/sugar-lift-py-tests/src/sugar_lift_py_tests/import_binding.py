@@ -651,6 +651,64 @@ class _Pass:
         # walked exactly where this lift evaluates them.
         self.postpones_annotations = postpones_annotations
         self.class_outer_states: dict[int, State] = {}
+        # The alias each import binding was made at, by the binding's CID
+        # (``_note_binding_alias``), and the bindings a join asked the own
+        # read of before the pass reached their statement
+        # (``_enroll_binding_read``).
+        self.binding_aliases: dict[str, Node] = {}
+        self._binding_reads_pending: dict[str, _ImportDef] = {}
+
+    def _joined(self, *states: State) -> State:
+        """The join of ``states`` (``_join``), with the own read of every
+        import binding that meets another binding, or none, there enrolled
+        at its alias (``_enroll_binding_read``).
+
+        Such a binding is no unique import where the join reaches (``if C:
+        import pyarrow as pa``, ``if TYPE_CHECKING: import numba`` / ``else:
+        numba = ...``, ``try: import m`` / ``except ImportError: pass``), so
+        no read past the join takes a row.  The threading carries the name
+        past it as the join of its routes (``If.substitute``,
+        ``Try.substitute``): the import's row (``ImportBindingRef``) in the
+        arm of the route that bound it, beside the other route's binding or
+        its ``NameError`` halt.  That arm is the import's value, read at the
+        alias as every read of the import is read at its own coordinate; its
+        receipt is enrolled here, under the one strict law (the alias is the
+        binding's own statement), so the arm is never the free name (#7757).
+        """
+        joined = _join(*states)
+        for reaching in joined.values():
+            if len(reaching) < 2:
+                continue
+            for definition in reaching:
+                if isinstance(definition, _ImportDef):
+                    self._enroll_binding_read(definition)
+        return joined
+
+    def _note_binding_alias(self, alias: Node, definition: _ImportDef) -> None:
+        """Remember the alias ``definition`` was made at, and enroll its own
+        read there if a join already asked for it."""
+        self.binding_aliases.setdefault(definition.cid, alias)
+        pending = self._binding_reads_pending.pop(definition.cid, None)
+        if pending is not None:
+            self._enroll_binding_read(pending)
+
+    def _enroll_binding_read(self, definition: _ImportDef) -> None:
+        """The value-use row of ``definition``'s own read at its alias: the
+        import's target with no member path, as a read of the name right
+        after the import statement takes it.  ``import a.b`` binds the
+        package ``a``, which the binding does not name: no row (as
+        ``_record_binding``).  Once per alias."""
+        if definition.submodule_tail:
+            return
+        alias = self.binding_aliases.get(definition.cid)
+        if alias is None:
+            self._binding_reads_pending.setdefault(definition.cid, definition)
+            return
+        span = alias.line_col_span()
+        key = (span.start_line, span.start_col, span.end_line, span.end_col)
+        if key in self.value_outcomes:
+            return
+        self._enroll_value_use(alias, definition, ())
 
     def module_import_target(self, name: str) -> str | None:
         """The target symbol an import binds the module-level ``name`` to at
@@ -698,7 +756,7 @@ class _Pass:
             body_out = body_in
             for statement in node.body:
                 body_out = self._state_only_statement(statement, body_out, scope)
-            widened = _join(state, body_out)
+            widened = self._joined(state, body_out)
             if widened == entry:
                 return entry
             entry = widened
@@ -1178,6 +1236,7 @@ class _Pass:
                     encode_jcs(_json_value(payload)),
                 )
                 self._record_binding(node, local, definition)
+                self._note_binding_alias(alias, definition)
                 state[local] = frozenset({definition})
             return state
         if node.kind == "Import":
@@ -1208,6 +1267,7 @@ class _Pass:
                     () if alias.asname else tuple(alias.name.split(".")[1:]),
                 )
                 self._record_binding(node, local, definition)
+                self._note_binding_alias(alias, definition)
                 state[local] = frozenset({definition})
             return state
         if node.kind in ("FunctionDef", "AsyncFunctionDef"):
@@ -1325,7 +1385,7 @@ class _Pass:
             return state
         if node.kind == "If":
             self.expression(node.test, state, scope)
-            return _join(
+            return self._joined(
                 self.statements(node.body, state, scope),
                 self.statements(node.orelse, state, scope),
             )
@@ -1338,10 +1398,10 @@ class _Pass:
                 for name in _bound_names(node.target):
                     body_in[name] = frozenset({_NON_IMPORT})
             body = self.statements(node.body, body_in, scope)
-            return _join(
+            return self._joined(
                 state,
                 body,
-                self.statements(node.orelse, _join(state, body), scope),
+                self.statements(node.orelse, self._joined(state, body), scope),
             )
         if node.kind in ("Try", "TryStar"):
             exceptional_prefixes = [dict(state)]
@@ -1349,7 +1409,7 @@ class _Pass:
             for statement in node.body:
                 prefix = self._state_only_statement(statement, prefix, scope)
                 exceptional_prefixes.append(prefix)
-            handler_entry = _join(*exceptional_prefixes)
+            handler_entry = self._joined(*exceptional_prefixes)
             paths = [self.statements(node.body, state, scope)]
             for handler in node.handlers:
                 # The except-TYPE expression is a value use on the exceptional
@@ -1363,7 +1423,7 @@ class _Pass:
                 if handler.name:
                     handler_state[handler.name] = frozenset({_NON_IMPORT})
                 paths.append(self.statements(handler.body, handler_state, scope))
-            joined = self._provider_gate(node, state, paths[0], _join(*paths))
+            joined = self._provider_gate(node, state, paths[0], self._joined(*paths))
             joined = self.statements(node.orelse, joined, scope)
             return self.statements(node.finalbody, joined, scope)
         if node.kind in ("With", "AsyncWith"):

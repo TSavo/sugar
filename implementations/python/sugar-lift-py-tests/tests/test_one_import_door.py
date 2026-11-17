@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.import_binding import authenticated_import_uses
 
 from test_import_bound_callee_is_closed import (
@@ -209,17 +208,40 @@ def test_one_module_under_two_aliases_is_one_value() -> None:
     assert first != other
 
 
-def test_an_optional_import_is_not_import_bound() -> None:
+def test_an_optional_import_is_not_import_bound(tmp_path) -> None:
     # One law: the strict one. ``try: import pa / except ImportError: pass``
-    # joins the import with unbound, so ``pa`` binds nothing -- no row, no
-    # closed call; the receiver stays the free name it is.
-    post = _post(
+    # joins the import with unbound, so the read of ``pa`` takes no row and
+    # its call no closed ``call:pyarrow.array``.  The read is the join the
+    # threading carries past the ``try`` (#7757, carry undecided): the import
+    # on the route that bound it, a ``NameError`` halt on the route that did
+    # not.  It is never the free name, so the scope law refuses nothing.
+    from sugar_lift_python_source.source_oracle import path_source
+
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.proofir.formulas import formula_from_ir
+    from sugar_lift_py_tests.proofir.scope import ScopedFormula
+    from sugar_lift_py_tests.proofir.sorts import UnknownSort
+
+    source = (
         "try:\n    import pyarrow as pa\nexcept ImportError:\n    pass\n\n\n"
         "def f():\n    return pa.array(1)\n"
     )
-    assert _application(post).name != "call:pyarrow.array"
-    with pytest.raises(ConstructionPanic, match="illegal free var.*pa"):
-        _scoped(post, ())
+    path = tmp_path / "m.py"
+    path.write_text(source)
+    text, _, cid = path_source(str(path))
+    rows, _ = authenticated_import_uses(tmp_path, path, text, cid)
+    assert "python:pyarrow.array" not in {row["targetSymbol"] for row in rows}
+    outcome = _function_outcome(source)
+    sort = UnknownSort(reason="lift is sort-silent; the compiler decides")
+    allowed = {"out": sort}
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome.exits
+    for face in completed:
+        scoped = ScopedFormula(
+            formula_from_ir(face.value.post(), var_sorts=allowed),
+            allowed_vars=allowed,
+        )
+        assert scoped.formula.free_vars <= {"out"}
 
 
 def test_the_call_spelling_is_the_demand_symbol(tmp_path) -> None:
