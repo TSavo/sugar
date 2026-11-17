@@ -174,13 +174,21 @@ def test_the_roster_covers_every_source_line() -> None:
     assert not (code_lines - covered)
 
 
-def test_discharge_produces_the_true_minority_written_vs_not() -> None:
+def test_discharge_produces_the_true_minority_written_vs_not(monkeypatch) -> None:
     # The whole loop: construction REGISTERS (constructor), discharge ANSWERS
     # present (template) or absent (abstract). A written function's nodes
     # discharge present; a construct refused by name (a spread over an
-    # ``await``, ``SugarNotWritten``) and its ancestors stay in the minority --
-    # red until written. ``del`` is written now (``DeleteSugar``): it answers.
+    # unwritten ``await``, ``SugarNotWritten``) and its ancestors stay in the
+    # minority -- red until written. ``del`` is written now (``DeleteSugar``):
+    # it answers.
     from sugar_source_tree.roll_call import discharge
+
+    # Every expression node constructs its sugar now (``Await`` too); the
+    # unwritten node is planted by giving ``Await`` back the abstract door
+    # every unwritten node inherits (``Node._construct_sugar``).
+    from sugar_source_tree.nodes import Await, Node
+
+    monkeypatch.setattr(Await, "_construct_sugar", Node._construct_sugar)
 
     r = CollectingReporter()
     report = discharge(

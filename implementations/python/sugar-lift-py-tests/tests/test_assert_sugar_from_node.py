@@ -80,29 +80,55 @@ def test_assert_support_retains_its_own_occurrence_not_a_foreign_site():
     assert left_support.site != right_support.site
 
 
-def test_an_unbuilt_message_refuses_the_assert_at_construction():
+def _unwrite_await(monkeypatch):
+    # Every expression node constructs its sugar now (``Await`` too, see
+    # below).  A node with no sugar written is planted by giving ``Await``
+    # back the abstract door every unwritten node inherits
+    # (``Node._construct_sugar``), which refuses by name.
+    from sugar_source_tree.nodes import Await, Node
+
+    monkeypatch.setattr(Await, "_construct_sugar", Node._construct_sugar)
+
+
+def test_an_unbuilt_message_refuses_the_assert_at_construction(monkeypatch):
     # The message is a child built with the statement: one with no sugar
-    # refuses the assert by name, even where the assert cannot fail. ``await``
-    # is a node with no sugar written (``Yield`` has one now, see below).
+    # refuses the assert by name, even where the assert cannot fail.
     import pytest
 
     from sugar_source_tree.panic import SugarNotWritten
 
+    _unwrite_await(monkeypatch)
     node = _assert_node("assert 1 == 1, (await 2)\n")
     with pytest.raises(SugarNotWritten) as refused:
         node.sugar()
     assert refused.value.owner == "Await.sugar"
 
 
-def test_unbuilt_condition_child_preserves_its_own_gap():
+def test_unbuilt_condition_child_preserves_its_own_gap(monkeypatch):
     import pytest
 
     from sugar_source_tree.panic import SugarNotWritten
 
+    _unwrite_await(monkeypatch)
     node = _assert_node("assert (await 1)\n")
     with pytest.raises(SugarNotWritten) as refused:
         node.sugar()
     assert refused.value.owner == "Await.sugar"
+
+
+def test_an_await_child_is_built_with_the_statement():
+    # ``Await`` constructs its own sugar (the operand, then the one undecided
+    # read), so an assert holding one as its message or its test is built
+    # whole: the child is the Await node's sugar.
+    from sugar_lift_py_tests.sugar.await_sugar import AwaitSugar
+
+    message = _assert_node("assert 3 == 3, (await 4)\n")
+    assert isinstance(message.sugar().message, AwaitSugar)
+    assert message.sugar().message == message.msg.sugar()
+
+    test = _assert_node("assert (await 5)\n")
+    assert isinstance(test.sugar().test, AwaitSugar)
+    assert test.sugar().test == test.test.sugar()
 
 
 def test_a_yield_child_is_built_with_the_statement():

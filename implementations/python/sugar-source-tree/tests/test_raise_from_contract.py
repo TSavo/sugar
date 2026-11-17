@@ -55,7 +55,13 @@ def test_explicit_from_none_is_a_constructed_none_cause() -> None:
     assert effect.cause_value is not None
 
 
-def test_unwritten_cause_expression_stays_loud_at_the_cause() -> None:
+def test_unwritten_cause_expression_stays_loud_at_the_cause(monkeypatch) -> None:
+    # Every expression node constructs its sugar now (``Await`` too); the
+    # unwritten node is planted by giving ``Await`` back the abstract door
+    # every unwritten node inherits (``Node._construct_sugar``).
+    from sugar_source_tree.nodes import Await, Node
+
+    monkeypatch.setattr(Await, "_construct_sugar", Node._construct_sugar)
     node = _raise(
         "async def f(cause):\n" "    raise ValueError('outer') from (await cause)\n"
     )

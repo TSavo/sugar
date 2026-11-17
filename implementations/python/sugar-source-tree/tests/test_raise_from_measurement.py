@@ -41,11 +41,19 @@ def test_measurement_observes_raise_from_direct_residue_drained(tmp_path) -> Non
     assert result["blocked_descendant"] == {}
 
 
-def test_measurement_counts_unwritten_cause_descendant_as_blocked(tmp_path) -> None:
+def test_measurement_counts_unwritten_cause_descendant_as_blocked(
+    tmp_path, monkeypatch
+) -> None:
     (tmp_path / "blocked.py").write_text(
         "async def blocked(cause):\n" "    raise ValueError() from (await cause)\n",
         encoding="utf-8",
     )
+    # Every expression node constructs its sugar now (``Await`` too); the
+    # unwritten descendant is planted by giving ``Await`` back the abstract
+    # door every unwritten node inherits, which refuses by name.
+    from sugar_source_tree.nodes import Await, Node
+
+    monkeypatch.setattr(Await, "_construct_sugar", Node._construct_sugar)
 
     result = _module().measure(tmp_path)
 

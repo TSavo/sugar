@@ -104,7 +104,15 @@ def test_dict_double_star_uses_none_key_entry_reference_shape() -> None:
         "async def f(xs):\n    return make(*(await xs))\n",
     ],
 )
-def test_spread_with_unwritten_inner_expression_stays_loud(body: str) -> None:
+def test_spread_with_unwritten_inner_expression_stays_loud(
+    body: str, monkeypatch
+) -> None:
+    # Every expression node constructs its sugar now (``Await`` too); the
+    # unwritten node is planted by giving ``Await`` back the abstract door
+    # every unwritten node inherits (``Node._construct_sugar``).
+    from sugar_source_tree.nodes import Await, Node
+
+    monkeypatch.setattr(Await, "_construct_sugar", Node._construct_sugar)
     with pytest.raises(SugarNotWritten):
         _function(body).sugar()
 

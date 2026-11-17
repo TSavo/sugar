@@ -11067,10 +11067,14 @@ class FunctionDef(Statement):
                         # What an ``__init__``'s receiver may hold where it
                         # leaves (#7757 B2).
                         receiver_holds=_receiver_holds(self),
-                        # A generator function: its call runs none of the
-                        # body, so its contract states no result and no halt
-                        # of the call (``UniverseValue.suspends``).
-                        suspends=FunctionDef._owns_yield(self.body),
+                        # A generator function or an ``async def``: its call
+                        # runs none of the body and returns the generator or
+                        # the coroutine, so its contract states no result and
+                        # no halt of the call (``UniverseValue.suspends``).
+                        suspends=(
+                            isinstance(self, AsyncFunctionDef)
+                            or FunctionDef._owns_yield(self.body)
+                        ),
                     )
         finally:
             _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
@@ -21865,6 +21869,13 @@ class Await(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def _construct_sugar(self):
+        """`await <awaitable>`: its operand, then the one undecided read of
+        what the awaited object's ``__await__`` hands back (``AwaitSugar``)."""
+        from sugar_lift_py_tests.sugar.await_sugar import AwaitSugar
+
+        return AwaitSugar(value=self.value.sugar(), site=self.fragment)
 
 
 class Yield(Expression):

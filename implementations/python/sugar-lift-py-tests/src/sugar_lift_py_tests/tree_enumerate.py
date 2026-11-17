@@ -1846,9 +1846,10 @@ def reduction_rows(outcome, *, owner, blame, def_memento, definition):
         stated = owner
         formals = tuple(owner.contract_formals())
         formal_coordinates = tuple(owner.contract_formal_coordinates())
-    # A generator function's call runs none of its body (``owner.suspends``):
-    # a halt of the body is taken where the generator is resumed, by the
-    # consumer's ``next``/``send``/``throw``/``close``, whose read of the
+    # A generator function's or an ``async def``'s call runs none of its
+    # body (``owner.suspends``): a halt of the body is taken where the
+    # generator is resumed or the coroutine awaited, by the consumer's
+    # ``next``/``send``/``throw``/``close``/``await``, whose read of the
     # call's result is the one undecided read, two faces, owed -- its halted
     # face covers every halt the body may take.  Stated as the call's panic
     # loci, prove would read the call as halting where they hold (``completes

@@ -1108,11 +1108,13 @@ class FunctionUniverseSugar(Sugar):
     #: the fields are stated only where each such call leaves every object it
     #: is handed (``UniverseValue.field_facts``, ``python:call_leaves``).
     leaving_calls: tuple = dataclass_field(default=(), compare=False)
-    #: Whether the body owns a suspension (``FunctionDef._owns_yield``): a
-    #: generator function, whose call runs none of the body and returns the
-    #: generator.  Its body is reduced as every body is, each ``yield`` the
-    #: two-faced resume (``YieldSuspensionSugar``), and its contract states
-    #: no result and no halt of the call (``UniverseValue.suspends``,
+    #: Whether the call runs none of the body: a generator function (the
+    #: body owns a suspension, ``FunctionDef._owns_yield``), whose call
+    #: returns the generator, or an ``async def``, whose call returns the
+    #: coroutine.  Its body is reduced as every body is, each ``yield`` the
+    #: two-faced resume (``YieldSuspensionSugar``), each ``await`` the one
+    #: undecided read (``AwaitSugar``), and its contract states no result
+    #: and no halt of the call (``UniverseValue.suspends``,
     #: ``tree_enumerate.reduction_rows``).
     suspends: bool = False
 
