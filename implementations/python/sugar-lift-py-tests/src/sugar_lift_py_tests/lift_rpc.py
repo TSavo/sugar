@@ -2252,6 +2252,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         calls = _unanswered.owed_calls(
                             _tree.owner_reduction(fn).outcome
                         )
+                        # Rows that cannot be stated inline within the
+                        # bound are the function's refusal by name, here,
+                        # by the rule below -- never the whole file's
+                        # response swapped at the transport.
+                        rows = _tree.stated_rows(rows, term_table, def_memento)
                     except BackendDefect:
                         # The backend or adapter is broken: not the function's
                         # refusal, and never recorded as one.
@@ -2298,6 +2303,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         calls = _unanswered.owed_calls(
                             _tree.owner_reduction(cls).outcome
                         )
+                        rows = _tree.stated_rows(rows, term_table, class_memento)
                     except BackendDefect:
                         raise
                     except LifterRefusal as refusal:
