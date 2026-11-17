@@ -38,6 +38,7 @@ from sugar_lift_py_tests.kit_rpc import (
     SuppressedAuditLocusDto,
 )
 from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
+from sugar_lift_py_tests import kit_sample_profile
 from sugar_lift_py_tests.source_provenance import (
     kit_source_provenance,
     loaded_python_source_identity,
@@ -867,6 +868,7 @@ def _send(obj: Dict[str, Any]) -> None:
 
 
 def _recv() -> Optional[Dict[str, Any]] | object:
+    kit_sample_profile.note_request(None)
     _TRANSPORT_LOG.info(
         "read_enter", extra={"direction": "cli_to_kit", "stage": "stdin.readline"}
     )
@@ -2430,11 +2432,12 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
     msg_id = msg.get("id")
     method = msg.get("method")
     params = msg.get("params", {})
+    suffix = ""
+    if method == ENUMERATE_RPC_METHOD and isinstance(params, dict):
+        suffix = f":{params.get('level', '')}"
+    kit_sample_profile.note_request(f"{method}{suffix}", msg_id)
     sequence_path = os.environ.get("SUGAR_RPC_SEQUENCE_LOG")
     if sequence_path:
-        suffix = ""
-        if method == ENUMERATE_RPC_METHOD and isinstance(params, dict):
-            suffix = f":{params.get('level', '')}"
         with Path(sequence_path).open("a", encoding="utf-8") as sequence_log:
             sequence_log.write(f"{method}{suffix}\n")
 
@@ -2602,6 +2605,10 @@ def _serve() -> None:
 
 def main(argv: Optional[List[str]] = None) -> None:
     _configure_transport_logging()
+    # Opt-in (SUGAR_KIT_PROFILE_DIR): a stack sampler whose aggregate is on
+    # disk every few seconds, so a request the CLI kills at its deadline
+    # still leaves a profile (#8416).
+    kit_sample_profile.start_from_env()
     if _profile_interval("SUGAR_KIT_MEMORY_PROFILE_EVERY") > 0:
         tracemalloc.start(1)
     argv = argv or []

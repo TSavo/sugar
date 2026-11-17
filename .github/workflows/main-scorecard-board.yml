@@ -122,6 +122,10 @@ env:
   LIFT_SEATS: "1"
   LIFT_WORKERS: "28"
   LIFT_SEAT_CAP_S: "5400"
+  # After prove, up to this many files whose mint stalled are minted once
+  # more with the kit's stack sampler on (instrument only: no row changes);
+  # the aggregates upload as pandas-lift-kit-profiles-<seat>.
+  LIFT_PROFILE_TIMEOUTS: "24"
   SCORECARD_ISSUE_TITLE: "Main scorecard"
   SCORECARD_MEASURES: "board,lift"
   # The lanes this workflow posts (main_scorecard_post.py --lane).
@@ -427,6 +431,7 @@ jobs:
               --workers "$LIFT_WORKERS" \
               --seat-budget "$LIFT_SEAT_CAP_S" \
               --prior lift-prior \
+              --profile-timeouts "$LIFT_PROFILE_TIMEOUTS" \
               > "$OUT/s$SEAT.log" 2>&1
           rc=$?
           echo "$rc" > "$OUT/s$SEAT.rc"
@@ -434,6 +439,12 @@ jobs:
           # is a few GB of .proof files, one run an hour): only the rows travel.
           rm -rf "$STATE/work" "$STATE/store"
           cp "$STATE/rows.jsonl" "$OUT/s$SEAT/rows.jsonl"
+          # The stalled files' kit stack profiles (small aggregates): their
+          # own artifact, so the timing prior and the join never read them.
+          mkdir -p "$GITHUB_WORKSPACE/lift-profiles/s$SEAT"
+          [ -f "$STATE/profiles.jsonl" ] && cp "$STATE/profiles.jsonl" "$GITHUB_WORKSPACE/lift-profiles/s$SEAT/"
+          [ -d "$STATE/profiles" ] && cp -r "$STATE/profiles" "$GITHUB_WORKSPACE/lift-profiles/s$SEAT/"
+          grep -E "^\[profile " "$OUT/s$SEAT.log" | tail -n 40
           echo "lift seat s$SEAT rc=$rc wall=$(( $(date +%s) - JOB_T0 ))s"
           grep -E "^pandas seat |^seat budget|^holding|^resuming|^retry" "$OUT/s$SEAT.log" | tail -n 40
           tail -n 5 "$OUT/s$SEAT.log"
@@ -449,6 +460,14 @@ jobs:
             lift/*.log
             lift/*.rc
           if-no-files-found: warn
+      - name: Upload the stalled files' kit profiles
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pandas-lift-kit-profiles-${{ matrix.seat }}
+          overwrite: true
+          path: lift-profiles/
+          if-no-files-found: ignore
 
   # Joins the seats, uploads the compact refusal list, posts the final row.
   lift-join:
