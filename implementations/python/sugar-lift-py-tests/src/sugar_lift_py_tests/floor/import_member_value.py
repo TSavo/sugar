@@ -349,15 +349,26 @@ def _import_member_head_term(receipt):
     from sugar_lift_py_tests.import_binding import (
         _authenticated_binding_target_symbol,
     )
-    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.ir import ctor
 
     bound = _authenticated_binding_target_symbol(receipt.import_binding).removeprefix(
         "python:"
     )
     target = receipt.import_binding.to_value().get("target")
     if isinstance(target, dict) and target.get("exportedPath") == []:
-        return ctor("python:module", (str_const(bound),))
+        return module_coordinate(bound)
     return ctor(f"ref:{bound}", [], symbol_kind="coordinate")
+
+
+def module_coordinate(module: str):
+    """``python:module(<module>)``: the module an import binds, as one
+    closed structural coordinate.  The one spelling of a module value: the
+    head of a dotted member read (``_import_member_head_term``), a read of a
+    name a plain ``import`` binds (``ImportModuleSugar``), and the ``import
+    a.b`` occurrence ``a.b`` (``AttributeSugar.project_attribute``)."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor("python:module", (str_const(module),))
 
 
 def _import_member_export_path(receipt) -> tuple[str, ...]:

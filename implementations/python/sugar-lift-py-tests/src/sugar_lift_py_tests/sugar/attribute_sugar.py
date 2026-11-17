@@ -158,18 +158,17 @@ class AttributeSugar(ConstructedTermSugar):
                     # receipt testifies that module, so the read completes as
                     # its structural module coordinate; ``a.b.x`` keeps its own
                     # member receipt at its own occurrence.
+                    from sugar_lift_py_tests.floor.import_member_value import (
+                        module_coordinate,
+                    )
                     from sugar_lift_py_tests.floor.symbolic_value import (
                         SymbolicValue,
                     )
-                    from sugar_lift_py_tests.ir import ctor, str_const
                     from sugar_lift_py_tests.outcome import ExitSet
 
                     return ExitSet.completed(
                         SymbolicValue(
-                            ctor(
-                                "python:module",
-                                (str_const(target.removeprefix("python:")),),
-                            )
+                            module_coordinate(target.removeprefix("python:"))
                         )
                     )
                 from sugar_lift_py_tests.sugar.import_member_sugar import (

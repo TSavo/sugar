@@ -87,3 +87,65 @@ class ImportMemberSugar(ConstructedTermSugar):
         )
 
         return _mint_import_member_value(self.receipt).to_term(owner=owner)
+
+
+@dataclass(frozen=True)
+class ImportModuleSugar(ConstructedTermSugar):
+    """A read of a name a plain ``import m`` (``import m as h``) binds: the
+    module ``m`` itself, the closed structural coordinate ``python:module(m)``.
+
+    The import statement bound the name to the module object; the read runs
+    nothing, so it is the one completed arm, as a name ``from m import x``
+    bound is (``ImportMemberSugar.desugar``).  It is no member of ``m`` and
+    names nothing in it: the lifter holds no module's namespace, so what is
+    done with the module (``getattr(operator, name)``) is that operation's
+    own undecided read.  The coordinate is the one ``python:module`` spelling
+    the import door gives a module everywhere (``module_coordinate``): the
+    head of a dotted member read, and the ``import a.b`` occurrence ``a.b``.
+    """
+
+    module: str
+    receipt: object = dataclass_field(compare=False, repr=False)
+    site: object = dataclass_field(compare=False)
+
+    @property
+    def preimage(self) -> dict[str, object]:
+        """Closed testimony projected from the authenticated import receipt."""
+        receipt = self.receipt
+        receipt.revalidate()
+        if receipt.target_symbol != f"python:{self.module}":
+            raise ValueError("ImportModuleSugar receipt target mismatch")
+        return {
+            "kind": "python-import-module-sugar",
+            "schemaVersion": "1",
+            "module": self.module,
+            "sourceCid": receipt.source_cid,
+            "importBindingCid": receipt.import_binding.cid,
+            "useCid": receipt.use["cid"],
+        }
+
+    @property
+    def cid(self) -> str:
+        return cid_of_json(self.preimage)
+
+    @classmethod
+    def witnesses(cls):
+        from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="SymbolicValue",
+            reason="projects one import-bound module coordinate from lexical authority",
+        )
+
+    def desugar(self, ctx: object = None) -> ExitSet:
+        del ctx
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        return ExitSet.completed(SymbolicValue(self.to_term(owner="ImportModuleSugar")))
+
+    def to_term(self, *, owner: str):
+        del owner
+        from sugar_lift_py_tests.floor.import_member_value import module_coordinate
+
+        return module_coordinate(self.module)

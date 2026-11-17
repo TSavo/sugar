@@ -23612,10 +23612,14 @@ def _name_read_sugar(node, name: str):
 
     A seated import value-use receipt at the coordinate (``from re import
     Pattern``) constructs the same ImportMemberSugar Attribute uses for
-    ``re.Pattern``.  A module-alias read (``import re``) has no member path,
-    and a coordinate the lexical pass enrolls no value use at has no receipt:
-    either stays a NameSugar, the name's free symbolic in the meaning layer,
-    so no empty-path import member is invented.
+    ``re.Pattern``.  A module-alias read (``import re``; ``import numpy as
+    np``) has no member path: it is no member, it is the module the import
+    bound, the closed coordinate ``python:module(<module>)``
+    (``ImportModuleSugar``), never the free name (#7757: ``getattr(operator,
+    name)`` refused its function by ``operator``).  A coordinate the lexical
+    pass enrolls no value use at has no receipt (an optional import, a
+    shadowed or rebound name): it stays a NameSugar, the name's free symbolic
+    in the meaning layer.
     """
     span = node.line_col_span()
     receipt = node.unit.import_value_use_receipt(
@@ -23672,6 +23676,24 @@ def _name_read_sugar(node, name: str):
                 receipt=receipt,
                 site=node.fragment,
             )
+        module = receipt.target_symbol
+        if not module.startswith("python:"):
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=node.fragment,
+                owner="Name._construct_sugar",
+                observed=f"target_symbol={module!r}",
+                requested="authenticated python: import target symbol",
+                fix="preserve the lexical receipt targetSymbol unchanged",
+            )
+        from sugar_lift_py_tests.sugar.import_member_sugar import ImportModuleSugar
+
+        return ImportModuleSugar(
+            module=module[len("python:") :],
+            receipt=receipt,
+            site=node.fragment,
+        )
 
     from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 

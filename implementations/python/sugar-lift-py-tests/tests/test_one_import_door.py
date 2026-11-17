@@ -6,7 +6,7 @@ by that reference's own coordinate, under ONE law (the strict one). Every call
 with a target symbol is spelled by it (``call:<target_symbol>``), never by the
 local alias, whatever the callee's shape; every import-member value read is a
 closed reference ``ref:<target_symbol>``, never a free variable. A bare module
-alias is not a member and keeps its name.
+alias is not a member: it is the module, ``python:module(<module>)``.
 
 A dotted read (``idn.CONST``) runs ``getattr`` where it is read and the lifter
 holds no module's namespace, so it is the two-faced undecided read: the
@@ -180,12 +180,33 @@ def test_two_reads_of_one_member_are_one_reference() -> None:
     assert first == second
 
 
-def test_a_bare_module_alias_is_not_a_member_and_keeps_its_name() -> None:
-    # THE DISCRIMINATION: a module alias read as a value is no import member,
-    # so it keeps NameSugar and the scope law still refuses the free name.
-    post = _post("import idn\n\n\ndef f():\n    return idn\n")
-    with pytest.raises(ConstructionPanic, match="illegal free var.*idn"):
-        _scoped(post, ())
+@pytest.mark.parametrize(
+    ("source", "module"),
+    [
+        ("import idn\n\n\ndef f():\n    return idn\n", "idn"),
+        ("import idn as q\n\n\ndef f():\n    return q\n", "idn"),
+        ("import idn.sub as s\n\n\ndef f():\n    return s\n", "idn.sub"),
+    ],
+    ids=["module", "module-alias", "dotted-module-alias"],
+)
+def test_a_bare_module_alias_is_the_module_never_a_free_name(source, module) -> None:
+    # A module alias read as a value is no import member: it is the module the
+    # import bound, the closed coordinate ``python:module(<module>)`` the
+    # door gives a module everywhere (#7757; it was the free name, and the
+    # scope law refused the function -- ``getattr(operator, name)``).  The
+    # read runs nothing, so it is the one completed arm.
+    post = _post(source)
+    assert _value(post).name == "python:module"
+    assert module in repr(_value(post))
+    assert _scoped(post, ()).formula.free_vars == {"out"}
+
+
+def test_one_module_under_two_aliases_is_one_value() -> None:
+    first = _value(_post("import idn\n\n\ndef f():\n    return idn\n"))
+    second = _value(_post("import idn as q\n\n\ndef g():\n    return q\n"))
+    other = _value(_post("import other\n\n\ndef h():\n    return other\n"))
+    assert first == second
+    assert first != other
 
 
 def test_an_optional_import_is_not_import_bound() -> None:
