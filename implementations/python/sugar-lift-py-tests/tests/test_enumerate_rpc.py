@@ -864,3 +864,57 @@ def test_callable_universe_identity_uses_content_and_qualified_spelling(
     # The qualified spelling is the definition's one symbol.
     assert module_a_once[1] == "python:module_a.add"
     assert module_b_once[1] == "python:module_b.add"
+
+
+def test_closed_enumerate_result_authenticates_a_lone_surrogate_str_const() -> None:
+    """TRUTHFUL. ``uval = "\\ud83d"`` (pandas ``tests/base/test_unique.py``)
+    is a str CPython holds: a lone surrogate no UTF-8 sequence spells. The
+    term table mints its CID from ``_rpc_canonical_bytes`` (the scalar the
+    wire carries); the response's closure check hashed the same canonical
+    text with a plain ``.encode("utf-8")`` and crashed the whole file's
+    mint. It now authenticates the CID from the same bytes it was minted
+    from, as a leaf and under a constructor."""
+    from sugar_lift_py_tests.ir import TermTableBuilder, ctor, str_const
+
+    table = TermTableBuilder()
+    leaf = table.reference(str_const("\ud83d"))
+    spine = table.reference(ctor("python:list", [str_const("\ud83d")] * 2))
+    nodes = [
+        {"memento": {"file": "demo.py"}, "audit": None, "payload": leaf},
+        {"memento": {"file": "demo.py"}, "audit": None, "payload": spine},
+    ]
+
+    result = lift_rpc._closed_enumerate_result(
+        nodes, [], term_tables=[dict(table.nodes)]
+    )
+
+    assert leaf["cid"] in result["termTable"]
+    assert spine["cid"] in result["termTable"]
+    assert result["termTable"][leaf["cid"]]["value"] == "\ud83d"
+
+
+def test_closed_enumerate_result_still_refuses_a_surrogate_row_under_another_cid() -> (
+    None
+):
+    """LYING. Reading the surrogate through the minting bytes must not make the
+    check blind: the row is keyed under the CID of a different string (the
+    escape spelled with a real backslash), so its content does not hash to
+    its key and the response is still refused by name."""
+    from sugar_lift_py_tests.ir import TermTableBuilder, str_const
+
+    honest = TermTableBuilder()
+    other = honest.reference(str_const("\\ud83d"))
+    row = dict(honest.nodes[other["cid"]])
+    row["value"] = "\ud83d"
+    nodes = [
+        {
+            "memento": {"file": "demo.py"},
+            "audit": None,
+            "payload": {"kind": "term-ref", "cid": other["cid"]},
+        }
+    ]
+
+    with pytest.raises(ValueError, match="term-table CID mismatch"):
+        lift_rpc._closed_enumerate_result(
+            nodes, [], term_tables=[{other["cid"]: row}]
+        )
