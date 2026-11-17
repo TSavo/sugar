@@ -17,8 +17,11 @@ name: Main scorecard numpy
 # (SourceTree.paths: every *.py, tests included).
 #
 # Every enrolled file goes through tools/nine_step_lift_lane.py, the one lane
-# script the pandas lane also runs: `sugar mint`, `sugar dump`, `sugar prove`
-# per file, LIFT_SEATS seats of --slice i/K on one runner, then the join.
+# script the pandas lane also runs: `sugar mint` and `sugar dump` per file,
+# then `sugar prove` per file with the numpy proofs it imports staged in
+# .sugar/imports/ (cross-module edges bind; see main-scorecard-board.yml,
+# CROSS-MODULE EDGES BIND), LIFT_SEATS seats of --slice i/K on one runner,
+# then the join.
 # A seat runs LIFT_WORKERS files at once, slowest first by the previous numpy
 # run's rows (order only, nothing carried), each inside the one 300 s
 # ceiling, and starts no file it could not finish inside LIFT_SEAT_CAP_S; its
@@ -178,7 +181,7 @@ jobs:
             rm -rf "numpy-prior/$id"
           done
           true
-      - name: Seats + join (sugar mint + sugar prove per file)
+      - name: Seats + join (sugar mint per file, then sugar prove with its imports)
         shell: bash
         env:
           NUMPY_CORPUS: ${{ steps.corpus.outputs.root }}
@@ -222,7 +225,7 @@ jobs:
           dirs=()
           for i in $(seq 0 $((K - 1))); do
             echo "numpy lift seat s$i rc=$(cat "$OUT/s$i.rc" 2>/dev/null || echo missing)"
-            rm -rf "$STATE/numpy-s$i/work"
+            rm -rf "$STATE/numpy-s$i/work" "$STATE/numpy-s$i/store"
             mkdir -p "$OUT/s$i"
             cp "$STATE/numpy-s$i/rows.jsonl" "$OUT/s$i/rows.jsonl"
             grep -E "^numpy seat |^seat budget|^holding|^resuming|^retry" "$OUT/s$i.log" | tail -n 20
@@ -232,6 +235,7 @@ jobs:
             python -u tools/nine_step_lift_lane.py --join "${dirs[@]}" \
               --label numpy --enrolled "$NUMPY_FILES" \
               --out "$OUT/summary.json" --refusals "$OUT/refusals.json" \
+              --edge-misses "$OUT/edge-misses.json" \
               > "$OUT/join.log" 2>&1
           echo "join rc=$?"
           cat "$OUT/join.log"
@@ -249,7 +253,9 @@ jobs:
         with:
           name: numpy-lift-refusals
           overwrite: true
-          path: numpy-lift/refusals.json
+          path: |
+            numpy-lift/refusals.json
+            numpy-lift/edge-misses.json
           if-no-files-found: warn
       - name: Upload seat logs and the join
         if: ${{ !cancelled() }}
