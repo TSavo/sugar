@@ -122,10 +122,11 @@ env:
   LIFT_SEATS: "1"
   LIFT_WORKERS: "28"
   LIFT_SEAT_CAP_S: "5400"
-  # After prove, up to this many files whose mint stalled are minted once
-  # more with the kit's stack sampler on (instrument only: no row changes);
-  # the aggregates upload as pandas-lift-kit-profiles-<seat>.
-  LIFT_PROFILE_TIMEOUTS: "24"
+  # Every mint runs with the kit's stack sampler on; up to this many files
+  # whose mint stalled keep that very mint's profile (instrument only: no
+  # row changes, no file minted twice); the aggregates upload as
+  # pandas-lift-kit-profiles-<seat>.
+  LIFT_PROFILE_TIMEOUTS: "128"
   SCORECARD_ISSUE_TITLE: "Main scorecard"
   SCORECARD_MEASURES: "board,lift"
   # The lanes this workflow posts (main_scorecard_post.py --lane).
@@ -444,7 +445,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/lift-profiles/s$SEAT"
           [ -f "$STATE/profiles.jsonl" ] && cp "$STATE/profiles.jsonl" "$GITHUB_WORKSPACE/lift-profiles/s$SEAT/"
           [ -d "$STATE/profiles" ] && cp -r "$STATE/profiles" "$GITHUB_WORKSPACE/lift-profiles/s$SEAT/"
-          grep -E "^\[profile " "$OUT/s$SEAT.log" | tail -n 40
+          grep -E "seat profiles: " "$OUT/s$SEAT.log" | tail -n 5
           echo "lift seat s$SEAT rc=$rc wall=$(( $(date +%s) - JOB_T0 ))s"
           grep -E "^pandas seat |^seat budget|^holding|^resuming|^retry" "$OUT/s$SEAT.log" | tail -n 40
           tail -n 5 "$OUT/s$SEAT.log"

@@ -65,15 +65,17 @@ left 822 of 1421 pandas files without a row):
   file ceiling. A file never minted has no row and is counted missing by the
   join (never invented). A file minted but never proved gets its row (its
   mint and members are real) with ``prove.error = "unreached"``.
-* ``--profile-timeouts N`` (instrument only): after phase 2, up to N files
-  whose mint stalled (the file ceiling, or the kit's response deadline) are
-  minted once more with the kit's stack sampler on (``SUGAR_KIT_PROFILE_DIR``,
-  ``sugar_lift_py_tests.kit_sample_profile``) and the CLI's response deadline
-  raised to the file ceiling. The kit writes its aggregated profile every few
-  seconds, so the profile survives the kill. Profiles land in
-  ``DIR/profiles/<file>/`` and one row per file in ``DIR/profiles.jsonl``
-  (rc, seconds, top frames); ``rows.jsonl`` and every count are untouched.
-  No profile run starts after phase 2's last start.
+* ``--profile-timeouts N`` (instrument only): every phase-1 mint runs with
+  the kit's stack sampler on (``SUGAR_KIT_PROFILE_DIR``,
+  ``sugar_lift_py_tests.kit_sample_profile``), which rewrites its aggregate
+  every few seconds, so the profile survives the kill at the kit's response
+  deadline or the file ceiling. Up to N files whose mint stalled keep theirs
+  in ``DIR/profiles/<file>/``, one row per file in ``DIR/profiles.jsonl``
+  (rc, seconds, top frames); every other file's profile is removed. The
+  profile is the very mint the row measures: no file is minted twice, so no
+  profile waits on the seat budget (the lane at 13e3413ad reached prove's
+  last start before a single re-mint, and uploaded none).
+  ``rows.jsonl`` and every count are untouched.
 
 Every row carries ``status``: ``lifted``, ``refused``, ``timeout`` (mint hit
 the file ceiling, or the kit's own plugin transport deadline), or ``crash``
@@ -192,10 +194,8 @@ WORKER_MEM_GB = 2.0  # assumed peak of one file, for the default worker count
 MAX_LOAD_DEFAULT = 1.25  # x CPUs: above this 1-minute load no new file starts
 OOM_SCORE_ADJ = 500  # the lane's files go before the runner under OOM
 KIT_DEADLINE_MARK = "transport stalled"  # the kit's own plugin deadline
-# The kit's opt-in stack sampler (sugar_lift_py_tests.kit_sample_profile) and
-# the CLI's response deadline (lift_plugin::response_deadline).
+# The kit's opt-in stack sampler (sugar_lift_py_tests.kit_sample_profile).
 KIT_PROFILE_DIR_ENV = "SUGAR_KIT_PROFILE_DIR"
-KIT_RESPONSE_DEADLINE_ENV = "SUGAR_LIFT_RESPONSE_TIMEOUT_SECS"
 PROFILE_TOP_FRAMES = 8
 OBSERVED_CHARS = 240
 ERROR_CHARS = 400
@@ -460,6 +460,24 @@ def last_line(text: str) -> str:
     return ""
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def error_block(text: str) -> str:
+    """The last error mint printed, whole and ANSI-stripped: from its last
+    line that opens with ``error`` to the end.
+
+    An error whose message spans lines (a kit's raw output or a decode
+    failure inside the path-execution wrapper) kept only its last line in
+    ``last_line``: the lane at 13e3413ad recorded 18 files as nothing but
+    ``; fix=Inspect the lift PathAlgebra step ...``, the cause cut away."""
+    lines = _ANSI.sub("", text).strip().splitlines()
+    for at in range(len(lines) - 1, -1, -1):
+        if lines[at].lstrip().lower().startswith("error"):
+            return "\n".join(lines[at:]).strip()
+    return "\n".join(lines).strip()
+
+
 def link_or_copy(source: Path, target: Path) -> None:
     """A hard link (the store and the projects share one filesystem), or a copy."""
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -630,8 +648,17 @@ def stage_source(root: Path, rel: str, project: Path) -> None:
 
 def mint_one(
     sugar_bin: str, root: Path, path: Path, work: Path, store: Path, cap: float,
-    corpus: CorpusModules,
+    corpus: CorpusModules, profiles: Path | None = None,
 ) -> dict:
+    """One file's mint: its row, its proof kept in ``store``.
+
+    ``profiles`` (``--profile-timeouts``): the kit runs with its stack
+    sampler on (``SUGAR_KIT_PROFILE_DIR`` = ``profiles/<rel slug>``), which
+    rewrites its aggregate every few seconds, so a mint the kit's response
+    deadline kills still leaves where its time went. The profile is kept
+    only when the mint stalled (``mint_stalled``); it is the very run the
+    row measures, never a second mint.
+    """
     rel = path.relative_to(root).as_posix()
     defs, def_names, parse_error = defs_in_source(path)
     row: dict = {
@@ -657,12 +684,18 @@ def mint_one(
     # One scratch directory per file: files of one seat run side by side.
     scratch = Path(tempfile.mkdtemp(prefix="mint-", dir=work))
     project = scratch / "project"
+    sampled = None
+    if profiles is not None:
+        sampled = profiles / profile_slug(rel)
+        shutil.rmtree(sampled, ignore_errors=True)
+        sampled.mkdir(parents=True, exist_ok=True)
     try:
         stage_source(root, rel, project)
         rc, out, err, secs = run(
             [sugar_bin, "mint", "--project", str(project), "--out", str(project), "--json"],
             cwd=project,
             timeout=cap,
+            env={KIT_PROFILE_DIR_ENV: str(sampled)} if sampled is not None else None,
         )
         receipt = first_object_with(out, "proofFile") if rc == 0 else None
         proof_file = receipt.get("proofFile") if receipt else None
@@ -678,6 +711,11 @@ def mint_one(
             if rc == 0:
                 owner = "mint-no-proof"
             diagnostic = mint_diagnostic(f"{err}\n{out}") if rc not in (0, None) else None
+            if diagnostic is None and rc not in (0, None):
+                # No kit error object: the error itself, whole (its last
+                # line alone can be the wrapper's ``fix=`` tail).
+                block = error_block(err or out)
+                diagnostic = {"message": _clip(block)} if block else None
             row["mint"]["diagnostic"] = diagnostic
             observed = row["mint"]["error"] or ""
             if diagnostic and diagnostic.get("owner"):
@@ -730,6 +768,8 @@ def mint_one(
         row["stored"] = stored.as_posix()
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+        if sampled is not None and not mint_stalled(row):
+            shutil.rmtree(sampled, ignore_errors=True)
     row["seconds"] = round(time.monotonic() - t0, 2)
     row["status"] = file_status(row)
     return row
@@ -772,44 +812,24 @@ def read_profile_summary(directory: Path) -> dict | None:
     }
 
 
-def profile_one(
-    sugar_bin: str, root: Path, rel: str, work: Path, profiles: Path, cap: float,
-) -> dict:
-    """Mint ``rel`` once more with the kit's stack sampler on (instrument only).
-
-    The kit writes ``profiles/<rel slug>/kit-profile-<pid>.json`` every few
-    seconds, so the file survives the kill. The CLI's response deadline is
-    raised to the file ceiling, so the kit runs as long as the lane lets one
-    file run and the profile covers the whole stall. The mint's result is
-    read for its rc and seconds only; no proof is kept and no row changes.
-    """
+def profile_row(row: dict, profiles: Path) -> dict:
+    """The profiles.jsonl row of a stalled file: its own mint's rc, seconds
+    and error, and the heaviest kit profile that very mint left in
+    ``profiles/<rel slug>/`` (instrument only: ``row`` is not changed)."""
+    rel = row["file"]
+    mint = row.get("mint") or {}
     target = profiles / profile_slug(rel)
-    shutil.rmtree(target, ignore_errors=True)
-    target.mkdir(parents=True, exist_ok=True)
-    scratch = Path(tempfile.mkdtemp(prefix="profile-", dir=work))
-    project = scratch / "project"
-    try:
-        stage_source(root, rel, project)
-        rc, out, err, secs = run(
-            [sugar_bin, "mint", "--project", str(project), "--out", str(project), "--json"],
-            cwd=project,
-            timeout=cap,
-            env={KIT_PROFILE_DIR_ENV: str(target), KIT_RESPONSE_DEADLINE_ENV: str(int(cap))},
-        )
-    finally:
-        shutil.rmtree(scratch, ignore_errors=True)
-    summary = read_profile_summary(target)
     return {
         "file": rel,
         "status": "profiled",
         "profile": {
-            "rc": rc,
-            "seconds": round(secs, 2),
-            "error": None if rc == 0 else ("timeout" if rc is None else last_line(err or out)),
+            "rc": mint.get("rc"),
+            "seconds": mint.get("seconds"),
+            "error": mint.get("error"),
             "dir": target.name,
-            "summary": summary,
+            "summary": read_profile_summary(target),
         },
-        "seconds": round(secs, 2),
+        "seconds": mint.get("seconds"),
     }
 
 
@@ -1329,10 +1349,14 @@ def seat(args: argparse.Namespace) -> int:
         flush=True,
     )
 
-    # Phase 1: every module mints its own proof.
+    # Phase 1: every module mints its own proof (the kit sampling its stack
+    # under --profile-timeouts, kept for the files whose mint stalls).
+    profiles_dir = (out_dir / "profiles").resolve() if args.profile_timeouts > 0 else None
+
     def mint(rel: str) -> dict:
         return guarded(rel, lambda: mint_one(
-            sugar_bin, root, root / rel, work_dir, store, args.file_cap, corpus))
+            sugar_bin, root, root / rel, work_dir, store, args.file_cap, corpus,
+            profiles_dir))
 
     never_minted = run_phase(
         args, phase="mint", rels=slowest_first(root, to_mint, prior_mint), work=mint,
@@ -1385,26 +1409,26 @@ def seat(args: argparse.Namespace) -> int:
         for rel in never_proved:
             sink.write(json.dumps(unproved_row(minted[rel], index, "unreached"), sort_keys=True) + "\n")
 
-    # Phase 3 (instrument only): the files whose mint stalled, minted once
-    # more with the kit's stack sampler on. Nothing here touches rows.jsonl.
-    if args.profile_timeouts > 0:
+    # Phase 3 (instrument only): the stalled files' profiles, left by their
+    # own mint in phase 1 (sampled, never minted again). Nothing here touches
+    # rows.jsonl.
+    if profiles_dir is not None:
         profiles_path = out_dir / "profiles.jsonl"
-        profiles_dir = (out_dir / "profiles").resolve()
         profiled = read_rows(profiles_path)
-        final = read_rows(rows_path)
         stalled = [
             rel for rel in slowest_first(root, mine, prior_mint)
-            if rel not in profiled and mint_stalled(final.get(rel) or {})
-        ][: max(0, args.profile_timeouts - len(profiled))]
-
-        def profile(rel: str) -> dict:
-            return guarded(rel, lambda: profile_one(
-                sugar_bin, root, rel, work_dir, profiles_dir, args.file_cap))
-
-        run_phase(
-            args, phase="profile", rels=stalled, work=profile, sink_path=profiles_path,
-            workers=workers, cpus=cpus, t0=t0, last_start=last_prove, total=len(stalled),
-        )
+            if rel in minted and mint_stalled(minted[rel])
+        ]
+        keep = [rel for rel in stalled if rel not in profiled][
+            : max(0, args.profile_timeouts - len(profiled))
+        ]
+        for rel in stalled:
+            if rel not in profiled and rel not in keep:
+                shutil.rmtree(profiles_dir / profile_slug(rel), ignore_errors=True)
+        with profiles_path.open("a", encoding="utf-8") as sink:
+            for rel in keep:
+                sink.write(json.dumps(profile_row(minted[rel], profiles_dir), sort_keys=True) + "\n")
+        print(f"{args.label} seat profiles: {len(keep)} stalled files profiled", flush=True)
     print(
         f"{args.label} seat {i}/{k} done in {time.monotonic() - t0:.0f}s: "
         f"minted={len(minted)} never_minted={len(never_minted)} "
@@ -1630,9 +1654,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--profile-timeouts", type=int, default=0, metavar="N",
-        help="after prove, mint up to N files whose mint stalled once more with "
-        f"the kit's stack sampler on ({KIT_PROFILE_DIR_ENV}); profiles land in "
-        "OUT_DIR/profiles/, rows in OUT_DIR/profiles.jsonl, never in rows.jsonl",
+        help="every mint runs with the kit's stack sampler on "
+        f"({KIT_PROFILE_DIR_ENV}); the profiles of up to N files whose mint "
+        "stalled are kept in OUT_DIR/profiles/, rows in OUT_DIR/profiles.jsonl, "
+        "never in rows.jsonl",
     )
     parser.add_argument("--count", action="store_true", help="print the enrolled file count")
     parser.add_argument("--join", nargs="+", metavar="DIR")
