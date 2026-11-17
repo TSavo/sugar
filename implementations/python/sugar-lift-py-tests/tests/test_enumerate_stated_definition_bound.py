@@ -161,3 +161,46 @@ def test_a_lone_surrogate_is_measured_as_the_bytes_the_wire_carries() -> None:
     assert measured == len(on_wire)
     escaped = expanded.replace("\ud83d", "\\ud83d").encode("utf-8")
     assert measured < len(escaped)
+
+
+def _memento(line: int):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        file="subject.py", span=SimpleNamespace(start_line=line, start_col=0)
+    )
+
+
+def test_a_definition_past_the_files_bound_is_refused_and_the_rest_served(
+    monkeypatch,
+) -> None:
+    """numpy ``ma/tests/test_core.py`` (lane at 13e3413ad): every definition
+    within its own bound, the file's response past the transport's, swapped
+    whole (``emitted `kind: ""```).  Now the definition that would carry the
+    file past ``STATED_FILE_BYTE_BOUND`` is refused by name, and a later one
+    that still fits is served: a refused definition states nothing, so it
+    spends none of the file's bound."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    table = TermTableBuilder()
+    big = [_Row(_doubled(6))]
+    one = tree_enumerate.stated_inline_bytes(
+        [row.to_rpc_with_term_table(table) for row in big], table.nodes
+    )
+    small = [_Row(make_var("y"))]
+    monkeypatch.setattr(tree_enumerate, "STATED_FILE_BYTE_BOUND", one + one // 2)
+    stated = tree_enumerate.StatedBytes()
+
+    served = tree_enumerate.stated_rows(big, table, _memento(1), stated)
+    assert len(served) == 1 and stated.total == one
+
+    try:
+        tree_enumerate.stated_rows(big, table, _memento(9), stated)
+    except SugarNotWritten as refusal:
+        assert "bound of one file" in refusal.observed
+    else:
+        raise AssertionError("the definition past the file's bound was served")
+    assert stated.total == one
+
+    assert len(tree_enumerate.stated_rows(small, table, _memento(20), stated)) == 1
+    assert one < stated.total <= tree_enumerate.STATED_FILE_BYTE_BOUND

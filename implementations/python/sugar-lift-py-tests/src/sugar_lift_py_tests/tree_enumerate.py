@@ -585,6 +585,25 @@ def function_def_memento(fn, file_rel: str):
 # Sixteen definitions at the bound still fit the transport's.
 STATED_DEFINITION_BYTE_BOUND = 16 * 1024 * 1024
 
+# What one file's rows may state inline together.  Each definition within
+# its own bound is not enough: a file of many definitions each stating a few
+# MiB still crossed the transport's 256 MiB and was swapped whole for the
+# marker (numpy ``ma/tests/test_core.py`` on the lane at 13e3413ad: ``plugin
+# for surface `python` emitted `kind: ""```, no proof at all).  A definition
+# whose rows would carry the file past this bound is refused by name by the
+# same rule; the headroom below the transport's is for everything else the
+# response carries (mementos, undecided rows).
+STATED_FILE_BYTE_BOUND = 192 * 1024 * 1024
+
+
+class StatedBytes:
+    """What one file's scan has stated inline so far (``stated_rows``)."""
+
+    __slots__ = ("total",)
+
+    def __init__(self):
+        self.total = 0
+
 
 class StatedRow:
     """One row already lowered through the scan's term table: what
@@ -599,11 +618,13 @@ class StatedRow:
         return self.wire
 
 
-def stated_rows(rows, term_table, memento):
+def stated_rows(rows, term_table, memento, file_stated=None):
     """``rows`` (one definition's contract rows, or None for an effect)
     lowered through ``term_table`` as the universe scan writes them, or the
     definition at ``memento`` refused by name when they state more than
-    ``STATED_DEFINITION_BYTE_BOUND`` bytes inline.
+    ``STATED_DEFINITION_BYTE_BOUND`` bytes inline, or would carry the file's
+    statement (``file_stated``, the scan's running total, counted only for
+    rows served) past ``STATED_FILE_BYTE_BOUND``.
 
     Raised inside the scan's one ``try`` for the definition, the refusal is
     its ``undecided`` row by the one rule (``refused_function_row``,
@@ -614,12 +635,35 @@ def stated_rows(rows, term_table, memento):
         return rows
     wire = [row.to_rpc_with_term_table(term_table) for row in rows]
     stated = stated_inline_bytes(wire, term_table.nodes)
+    so_far = 0 if file_stated is None else file_stated.total
     if stated <= STATED_DEFINITION_BYTE_BOUND:
-        return [StatedRow(row) for row in wire]
+        if so_far + stated <= STATED_FILE_BYTE_BOUND:
+            if file_stated is not None:
+                file_stated.total = so_far + stated
+            return [StatedRow(row) for row in wire]
     from types import SimpleNamespace
 
     from sugar_source_tree.panic import SugarNotWritten
 
+    if stated <= STATED_DEFINITION_BYTE_BOUND:
+        raise SugarNotWritten(
+            owner="tree_enumerate.stated_definition_bound",
+            blame=SimpleNamespace(
+                filename=memento.file,
+                line=memento.span.start_line,
+                col=memento.span.start_col,
+            ),
+            observed=(
+                f"rows stating {stated} bytes inline after {so_far} the file "
+                f"already states, past the {STATED_FILE_BYTE_BOUND}-byte "
+                "bound of one file"
+            ),
+            requested="a statement of the file's terms within the bound",
+            fix=(
+                "find the term the definitions' arms share and state it once "
+                "(a carried value, never a copy per arm); do not raise the bound"
+            ),
+        )
     raise SugarNotWritten(
         owner="tree_enumerate.stated_definition_bound",
         blame=SimpleNamespace(

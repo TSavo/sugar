@@ -2232,6 +2232,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     source_workspace_root=locus_root,
                 )
                 term_table = TermTableBuilder()
+                # What this file's served rows state inline, together: no
+                # file's response crosses the transport's bound whole.
+                file_stated = _tree.StatedBytes()
                 # Every row of every function's one reduction (#7766): the
                 # function-contract AND each assertion row.
                 scan_rows = []  # (memento_dict, dto)
@@ -2266,7 +2269,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         # bound are the function's refusal by name, here,
                         # by the rule below -- never the whole file's
                         # response swapped at the transport.
-                        rows = _tree.stated_rows(rows, term_table, def_memento)
+                        rows = _tree.stated_rows(
+                            rows, term_table, def_memento, file_stated
+                        )
                     except BackendDefect:
                         # The backend or adapter is broken: not the function's
                         # refusal, and never recorded as one.
@@ -2313,7 +2318,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         calls = _unanswered.owed_calls(
                             _tree.owner_reduction(cls).outcome
                         )
-                        rows = _tree.stated_rows(rows, term_table, class_memento)
+                        rows = _tree.stated_rows(
+                            rows, term_table, class_memento, file_stated
+                        )
                     except BackendDefect:
                         raise
                     except LifterRefusal as refusal:
