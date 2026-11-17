@@ -264,6 +264,16 @@ except BaseException as exc:
 except SugarNotWritten:
     row["status"] = "SugarNotWritten"
 """),
+            # The factoring refusal is a ConstructionPanic (#7757): counted
+            # on its own row with its carried arms' classification (#6356).
+            _canonical_handler("""
+except ExitSetFactoringGap as gap:
+    row["status"] = "ExitSetFactoringGap"
+    row["testimony"] = _testimony(gap)
+    classification = gap.classification()
+    if classification is not None:
+        row["factoringGap"] = classification.row()
+"""),
             _canonical_handler("""
 except ConstructionPanic as panic:
     row["status"] = "ConstructionPanic"

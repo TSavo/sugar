@@ -108,3 +108,65 @@ def test_backend_defect_leaves_by_name_as_typed_loud(tmp_path, monkeypatch) -> N
             "fix": defect.fix,
         },
     }
+
+
+def _overlapping_face():
+    """Two completed arms nothing proves exclusive: no carried partition,
+    guards of two unrelated atoms."""
+    from sugar_lift_py_tests.ir import atomic, make_var
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet
+
+    def guard(name):
+        return atomic(name, [make_var("state")])
+
+    return ExitSet((Completed(guard("p"), "one"), Completed(guard("q"), "two")))
+
+
+def test_the_factoring_refusal_is_the_functions_refused_member(
+    tmp_path, monkeypatch
+) -> None:
+    """``ExitSet.factor_completed``'s refusal is a refusal by name (#7757).
+
+    It was a ``ValueError``: a function whose reduction met it was not its
+    own refused member; the error went past the scan's one refusal rule and
+    ended the whole file's mint (the lane's ``mint-exit-1``: 50 pandas files
+    on d5dcbab5c).  Now the function states it, by its owner, and the file is
+    served.  The refusal here is the real one, raised by the real admission."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSetFactoringGap
+    from sugar_source_tree.panic import LifterRefusal
+
+    try:
+        _overlapping_face().factor_completed()
+    except ExitSetFactoringGap as raised:
+        gap = raised
+    else:  # pragma: no cover - the admission must refuse
+        raise AssertionError("overlapping arms were factored")
+    assert isinstance(gap, LifterRefusal)
+
+    response = _serve_universe(tmp_path, monkeypatch, gap)
+
+    assert "error" not in response, response
+    (node,) = response["result"]["nodes"]
+    audit = node["audit"]
+    assert audit["kind"] == "undecided"
+    assert audit["symbol"] == "python:subject.subject"
+    assert audit["reason"]["refused"]["owner"] == "ExitSet.factor_completed"
+    assert "not provably exclusive" in audit["reason"]["refused"]["observed"]
+
+
+def test_the_joined_key_asks_the_admission_and_never_holds_the_refusal() -> None:
+    """``if_sugar._joined_evaluation`` reads two values on one path as a key
+    not bound: it asks ``completed_face_factors``, the one admission
+    ``factor_completed`` refuses by, instead of catching the refusal."""
+    import inspect
+
+    from sugar_lift_py_tests.ir import atomic, make_var, not_
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet
+    from sugar_lift_py_tests.sugar import if_sugar
+
+    assert _overlapping_face().completed_face_factors() is False
+    guard = atomic("p", [make_var("state")])
+    partition = ExitSet((Completed(guard, "one"), Completed(not_(guard), "two")))
+    assert partition.completed_face_factors() is True
+    assert len(partition.factor_completed().exits) == 1
+    assert "except" not in inspect.getsource(if_sugar._joined_evaluation)
