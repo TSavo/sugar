@@ -233,6 +233,15 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
     module_run: object = field(
         default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
     )
+    # The key a module ``class`` statement's own application binds the class
+    # it built under, beside its name's (``class_cell_key``): the
+    # ``__class__`` cell every method of the class that reads ``super`` or
+    # ``__class__`` closes over (PEP 3135).  ``type.__new__`` fills the cell
+    # with the class the statement built, before any decorator runs, so
+    # whatever the decorators return, the cell holds that class
+    # (``_decorated``).  None on every other application
+    # (``nodes._decorated_statement_sugar``).
+    cell_evaluation: str | None = field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -329,7 +338,36 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
 
         return module_run_halts(self.module_run)
 
-    def _unbound_read(self, ctx):
+    def class_cell_read(self, ctx) -> ExitSet:
+        """The class a module ``class`` statement built, as the ``__class__``
+        cell of its methods holds it (PEP 3135), read where this read of the
+        statement's name stands: the value the statement bound under its
+        cell's key (``class_cell_key`` of the name's key, ``_decorated``),
+        read as the name's own key is (``_bound_by_statement``: the
+        reduction the read stands in, else the module's one run).  Never the
+        name's value: a decorator may bind the name to anything, and the
+        cell still holds the class ``type.__new__`` made.
+
+        Where nothing bound the cell's key, the read is the module run's
+        halts where that run completes on no arm, else refused by name as a
+        read of an unbound key, exactly as a read of the name is
+        (``desugar``)."""
+        if self.evaluation is None:
+            if self.refusal is not None:
+                _refuse(self.site, self.refusal)
+            self._unbound_read(ctx)
+        cell = class_cell_key(self.evaluation)
+        bound = self._bound_by_statement(ctx, evaluation=cell)
+        if bound is not None:
+            return bound
+        if self.refusal is not None:
+            _refuse(self.site, self.refusal)
+        halts = self._module_run_halts()
+        if halts:
+            return ExitSet(halts)
+        self._unbound_read(ctx, evaluation=cell)
+
+    def _unbound_read(self, ctx, *, evaluation=None):
         """A read of a ``class``'s or decorated ``def``'s name whose
         statement's key nothing bound
         where the read reduces: no reduction the read stands in ran the
@@ -341,22 +379,21 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         (``evaluation_ref_sugar.refuse_unbound_evaluation``): the function
         that reads it is undecided by that name
         (``tree_enumerate.refused_function_row``).  The statement is never
-        reduced, nor its decorators applied, in the read's place."""
+        reduced, nor its decorators applied, in the read's place.
+        ``evaluation``: the key read, where it is not the name's own (the
+        class's cell, ``class_cell_read``)."""
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
             evaluation_read_here,
             refuse_unbound_evaluation,
         )
 
+        read = self.evaluation if evaluation is None else evaluation
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
-        key = (
-            self.evaluation
-            if self.evaluation is None
-            else evaluation_read_here(temporal, self.evaluation)
-        )
+        key = read if read is None else evaluation_read_here(temporal, read)
         refuse_unbound_evaluation(
             name=self.definition_name,
             key=key,
-            evaluation=self.evaluation,
+            evaluation=read,
             site=self.site,
         )
 
@@ -378,7 +415,7 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
 
         return ExprStatementSugar(value=self, site=self.site)
 
-    def _bound_by_statement(self, ctx):
+    def _bound_by_statement(self, ctx, *, evaluation=None):
         """The read of the value the statement bound the name to under its
         evaluation key (``AssignSugar`` over the statement's own
         application): one completed arm owing what the read owes
@@ -397,8 +434,11 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         its refusal this read's, and every debt of those arms this read's:
         an imported decorator's application the run left unanswered is
         owed by every function that reads the name).  Empty while that run
-        is under way: the statement has not run where this read stands."""
-        if self.evaluation is None:
+        is under way: the statement has not run where this read stands.
+        ``evaluation``: the key read, where it is not the name's own (the
+        class's cell, ``class_cell_read``), read the same way."""
+        read = self.evaluation if evaluation is None else evaluation
+        if read is None:
             return None
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
         if temporal is not None:
@@ -406,16 +446,14 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
                 evaluation_read_here,
             )
 
-            bound = temporal.key_read(
-                evaluation_read_here(temporal, self.evaluation)
-            )
+            bound = temporal.key_read(evaluation_read_here(temporal, read))
             if bound is not None:
                 return bound
         if self.module_run is None:
             return None
         from sugar_lift_py_tests.sugar.call_site_sugar import ModuleFinalValue
 
-        return ModuleFinalValue(self.module_run, self.evaluation).read()
+        return ModuleFinalValue(self.module_run, read).read()
 
     def _evaluate(self, remaining: tuple, evaluated: tuple, ctx) -> ExitSet:
         # The decorator expressions, top to bottom, then the defaults, then
@@ -487,14 +525,37 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         ahead of the decorators' own, Python's order; a halt of a decorator
         carries them first in its record."""
         from sugar_lift_py_tests.floor.named_expression_value import (
+            NamedExpressionValue,
             consume_operands,
             written_by,
         )
 
         after = written_by(value, ctx)
-        return consume_operands(
-            lambda definition: self._apply(evaluated, definition, after), value
-        )
+
+        def applied(definition) -> ExitSet:
+            outcome = self._apply(evaluated, definition, after)
+            if self.cell_evaluation is None:
+                return outcome
+            # The class's ``__class__`` cell holds ``definition``, the class
+            # the statement built, whatever the decorators returned (PEP
+            # 3135: ``type.__new__`` fills the cell before any decorator
+            # runs).  It rides each completed result as a write under the
+            # cell's key, applied where the statement binds its name
+            # (``AssignSugar``, ``assigned_value._walrus_bound``), so the
+            # module's one run leaves both: the name the decorators'
+            # result, the cell the class (``class_cell_read``).
+            return outcome.and_then(
+                lambda result: ExitSet.completed(
+                    NamedExpressionValue.carrying(
+                        "__class__",
+                        definition,
+                        result,
+                        evaluation=self.cell_evaluation,
+                    )
+                )
+            )
+
+        return consume_operands(applied, value)
 
     def _apply(self, evaluated: tuple, value, ctx) -> ExitSet:
         # Innermost (last written) first.
@@ -504,6 +565,21 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         return step.applied(decorator, value, ctx).and_then(
             lambda result: self._apply(tuple(outer), result, ctx)
         )
+
+
+def class_cell_key(evaluation: str) -> str:
+    """The key a module ``class`` statement binds the class it built under
+    (``DecoratorApplicationSugar.cell_evaluation``): the ``__class__``
+    projection of ``evaluation``, the key it binds its name under
+    (``nodes._definition_evaluation_key``).  One statement evaluation, two
+    bindings, as Python makes them: the name holds what the decorators
+    returned, the cell (PEP 3135) the class ``type.__new__`` made.  The
+    statement's writer (``nodes._decorated_statement_sugar``) and every
+    reader (``DecoratorApplicationSugar.class_cell_read``) derive it from the
+    name's key here, so they name the same key."""
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+    return projection_key(evaluation, "__class__")
 
 
 def _returned(value, ctx) -> ExitSet:
