@@ -362,6 +362,25 @@ def test_a_chain_with_no_formula_beneath_it_names_the_bottom_value() -> None:
 # --------------------------------------------------------------------------
 
 
+def _seated_out(source: str):
+    """The function reduced through the one door a file is opened by, seated
+    in its own workspace: a loop that runs in hand grounds its iterator's
+    ``StopIteration`` at a workspace-relative locus, which the absolute
+    ``/tmp`` locus ``_out`` cites is refused for by name (``ground_exit``:
+    "route the source through the workspace-relative lift door")."""
+    from pathlib import Path
+
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+    directory = Path(tempfile.mkdtemp())
+    path = directory / "loop_prestate_twin.py"
+    path.write_text(source)
+    function = next(
+        open_source_file_for_construction(path, root=directory).functions()
+    )
+    return function.sugar().desugar()
+
+
 def test_a_second_loop_starts_from_the_read_of_its_guarded_name() -> None:
     """POSITIVE. pandas ``tests/frame/indexing/test_take.py``: ``for df in
     [frame]:`` twice. After the first loop ``df`` is bound on one arm of the
@@ -370,7 +389,7 @@ def test_a_second_loop_starts_from_the_read_of_its_guarded_name() -> None:
     itself, which has no ``desugar``, and the whole file crashed. The start
     is now the projection's read: the first loop ran in hand and decided its
     slot, so the second starts from the arm it took, and the function lifts."""
-    out = _out(
+    out = _seated_out(
         "def f(a):\n"
         " for d in [a]:\n"
         "  pass\n"
@@ -382,20 +401,26 @@ def test_a_second_loop_starts_from_the_read_of_its_guarded_name() -> None:
 
 
 def test_a_loop_entered_with_its_name_maybe_unbound_is_refused() -> None:
-    """DISCRIMINATING. Over iterables nothing holds, the first loop may run no
-    item, so the second loop is entered with ``d`` unbound on one path. Python
-    raises nothing there -- the header starts unbound -- so that arm is never
-    read as a ``NameError``: the enclosing function is refused by name (the
-    proof's refused member), never the file crashed and never a halt the loop
-    does not raise."""
+    """DISCRIMINATING. Over an iterable nothing holds, the first loop may run
+    no item, so the second loop -- which runs in hand and so starts its
+    header from the pre-loop value -- is entered with ``d`` unbound on one
+    path. Python raises nothing there -- the header starts unbound -- so
+    that arm is never read as a ``NameError``: the enclosing function is
+    refused by name (the proof's refused member), never the file crashed and
+    never a halt the loop does not raise.
+
+    The second loop runs in hand (``[a]``): a loop over an iterable nothing
+    holds runs as its recurrence, whose items begin with the recurrence's
+    value, never the pre-loop one (``LoopRecurrenceSugar._recurrence_starts``),
+    so it reads no start and has nothing to refuse."""
     from sugar_source_tree.panic import SugarNotWritten
 
     with pytest.raises(SugarNotWritten, match="PreLoopBindingReadSugar"):
-        _out(
-            "def f(xs, ys):\n"
+        _seated_out(
+            "def f(xs, a):\n"
             " for d in xs:\n"
             "  pass\n"
-            " for d in ys:\n"
+            " for d in [a]:\n"
             "  pass\n"
             " return 0\n"
         )
