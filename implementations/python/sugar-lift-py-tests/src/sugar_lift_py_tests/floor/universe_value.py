@@ -60,6 +60,11 @@ class UniverseValue(FloorValue):
     #: the fields hold only where each leaves every object it is handed
     #: (``field_facts``); None where one was not read (nothing is stated).
     leaving_calls: object = ()
+    #: A generator function's universe (``FunctionUniverseSugar.suspends``):
+    #: its call runs none of the body and returns the generator, so the body's
+    #: ``return`` (``StopIteration``'s value) and its fall-through are not the
+    #: call's result, and ``post`` states nothing of ``out``.
+    suspends: bool = False
 
     def guarded(self, formula):
         """Ride under a branch by guarding every body record entry.
@@ -93,6 +98,13 @@ class UniverseValue(FloorValue):
     def post(self) -> Formula:
         from sugar_lift_py_tests.ir import and_
 
+        if self.suspends:
+            # A generator's call returns the generator object, which nothing
+            # here decides; what the body returns is ``StopIteration``'s
+            # value, read by its consumer's ``next`` (the one undecided read),
+            # never the call's ``out``.  The empty conjunction: no claim
+            # about the call's result.
+            return and_([])
         exits = tuple(
             formula
             for entry in self.record.statements

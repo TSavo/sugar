@@ -1846,14 +1846,27 @@ def reduction_rows(outcome, *, owner, blame, def_memento, definition):
         stated = owner
         formals = tuple(owner.contract_formals())
         formal_coordinates = tuple(owner.contract_formal_coordinates())
-    halt_loci = tuple(
-        halt_locus(
-            arm,
-            formals=formals,
-            def_memento=def_memento,
-            blame=blame,
+    # A generator function's call runs none of its body (``owner.suspends``):
+    # a halt of the body is taken where the generator is resumed, by the
+    # consumer's ``next``/``send``/``throw``/``close``, whose read of the
+    # call's result is the one undecided read, two faces, owed -- its halted
+    # face covers every halt the body may take.  Stated as the call's panic
+    # loci, prove would read the call as halting where they hold (``completes
+    # <-> and(not guard)``, ``consistency::AmbientPost``), a halt Python never
+    # takes there.  The halted arms still decide the body's own assertion
+    # rows below (``halted_assertion_sites``, ``unreached_assertion_sites``).
+    halt_loci = (
+        ()
+        if owner.suspends
+        else tuple(
+            halt_locus(
+                arm,
+                formals=formals,
+                def_memento=def_memento,
+                blame=blame,
+            )
+            for arm in halted
         )
-        for arm in halted
     )
     unreached = ()
     if halted and not arms:

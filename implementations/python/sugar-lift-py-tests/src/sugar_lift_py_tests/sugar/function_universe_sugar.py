@@ -1108,6 +1108,13 @@ class FunctionUniverseSugar(Sugar):
     #: the fields are stated only where each such call leaves every object it
     #: is handed (``UniverseValue.field_facts``, ``python:call_leaves``).
     leaving_calls: tuple = dataclass_field(default=(), compare=False)
+    #: Whether the body owns a suspension (``FunctionDef._owns_yield``): a
+    #: generator function, whose call runs none of the body and returns the
+    #: generator.  Its body is reduced as every body is, each ``yield`` the
+    #: two-faced resume (``YieldSuspensionSugar``), and its contract states
+    #: no result and no halt of the call (``UniverseValue.suspends``,
+    #: ``tree_enumerate.reduction_rows``).
+    suspends: bool = False
 
     def contract_formals(self) -> tuple:
         """Every formal the contract states: the parameters, then each input
@@ -1182,6 +1189,7 @@ class FunctionUniverseSugar(Sugar):
                         fields_guard=self._fields_guard(state),
                         receiver_holds=self.receiver_holds,
                         leaving_calls=self._leaving_calls(state),
+                        suspends=self.suspends,
                     )
                 ),
             )
