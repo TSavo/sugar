@@ -6087,12 +6087,29 @@ def _annotations_postponed(unit) -> bool:
     """Whether the module ``unit`` postpones its annotations (``from
     __future__ import annotations``, PEP 563): no annotation in it is
     evaluated where it stands."""
+    return module_postpones_annotations(unit.typed_module)
+
+
+def module_postpones_annotations(module) -> bool:
+    """Whether the typed ``module`` postpones its annotations (``from
+    __future__ import annotations``, PEP 563).  The one law, read by the
+    meaning layer (``_annotations_postponed``) and by the lexical import pass,
+    which walks a ``def``'s annotations exactly where this lift evaluates
+    them (``annotation_evaluated``)."""
     return any(
         isinstance(statement, ImportFrom)
         and statement.module == "__future__"
         and any(alias.name == "annotations" for alias in statement.names)
-        for statement in unit.typed_module.body
+        for statement in module.body
     )
+
+
+def annotation_evaluated(annotation, *, postponed_module: bool) -> bool:
+    """Whether Python evaluates the ``def`` annotation ``annotation`` where
+    its statement runs, in a module that does (``postponed_module``) or does
+    not postpone its annotations: the complement of ``_annotation_postponed``,
+    stated over the module's own answer."""
+    return not (postponed_module or _string_annotation(annotation))
 
 
 def _postponed_annotations(definition) -> Tuple["Node", ...]:
@@ -6121,9 +6138,12 @@ def _annotation_postponed(unit, annotation) -> bool:
     anywhere.  Substitution leaves such an annotation as it stands
     (``Param.substitute``, ``FunctionDef._substituted_signature``): nothing
     reads it, so a read minted for it would be constructed by nothing."""
-    return (
-        isinstance(annotation, Constant) and isinstance(annotation.value, str)
-    ) or _annotations_postponed(unit)
+    return _string_annotation(annotation) or _annotations_postponed(unit)
+
+
+def _string_annotation(annotation) -> bool:
+    """A string annotation: Python never evaluates it where it stands."""
+    return isinstance(annotation, Constant) and isinstance(annotation.value, str)
 
 
 def _definition_annotations(definition) -> Tuple["Node", ...]:
