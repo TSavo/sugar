@@ -2215,6 +2215,41 @@ class SourceUnit:
         scope = self.scope_holding(span)
         return scope if isinstance(scope, ClassDef) else None
 
+    def class_body_reads_definition(self, definition) -> bool:
+        """Whether the ``def``/``class`` statement ``definition`` stands
+        directly in a class body that reads the name it binds: CPython's
+        class ``symtable`` holds the name local to that body and referenced
+        there (``class_body_holding``; never declared ``global`` or
+        ``nonlocal``), as ``@size.setter``, ``names = property(_get,
+        _set)``, ``getT = T.fget`` and ``c = coeffs`` read it.
+
+        Python runs a class body as a block: the statement binds the name in
+        the class namespace for the statements after it, and a read there
+        finds it first (``LOAD_NAME``), before any module binding of the
+        same spelling.  Such a statement binds its value under its
+        evaluation key for the rest of the body (``_local_definition_binding``),
+        as a function-local ``def`` does; a name the body never reads binds
+        nothing a read could observe, as a module name no reader reads is not
+        threaded (``_module_threads``).  False for a unit with no typed root
+        (no scope index to consult) and for a statement in any other scope.
+        """
+        if self.typed_module is None:
+            return False
+        holder = self.class_body_holding(definition.line_col_span())
+        if holder is None:
+            return False
+        table = self.class_symtable(holder.name, holder.line_col_span().start_line)
+        try:
+            symbol = table.lookup(definition.name)
+        except KeyError:
+            return False
+        return (
+            symbol.is_local()
+            and symbol.is_referenced()
+            and not symbol.is_declared_global()
+            and not symbol.is_nonlocal()
+        )
+
     def scope_holding(self, span) -> "Node | None":
         """The innermost class, function or lambda whose BODY the position
         ``span`` sits in, or None at module level.
@@ -26397,12 +26432,28 @@ def _local_definition_binding(definition, scope):
     reader reads the join over the routes (``GuardedBinding``), the value
     under the guard of the route that bound it and a ``NameError`` halt under
     the complement, and the statement never stands in an arm of it (#7757).
+
+    A ``def`` or ``class`` directly in a class body that body reads the name
+    of (``SourceUnit.class_body_reads_definition``: ``@size.setter``,
+    ``names = property(_get, _set)``, ``getT = T.fget``) binds its value
+    under its key for the rest of the class body, as a local ``def`` does:
+    Python's class body finds the name in its own namespace first
+    (``LOAD_NAME``).  Before, it bound nothing there, so the read stayed the
+    bare name -- the free name ``ScopedFormula`` refused the class by, or a
+    module binding of the same spelling, which the read never is (#7757).
     """
     lexical = scope.get(_LEXICALLY_BOUND_NAMES)
     local = isinstance(lexical, frozenset) and definition.name in lexical
-    if not (local or _module_threads(scope, definition.name)):
+    class_local = not local and definition.unit.class_body_reads_definition(
+        definition
+    )
+    if not (local or class_local or _module_threads(scope, definition.name)):
         return None
-    valued = local or definition.unit.binds_conditional_definition_value(definition)
+    valued = (
+        local
+        or class_local
+        or definition.unit.binds_conditional_definition_value(definition)
+    )
     if call_applies_own_frame(definition) and not (
         valued and _binds_function_value(definition)
     ):
