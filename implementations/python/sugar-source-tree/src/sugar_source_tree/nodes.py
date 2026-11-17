@@ -11128,8 +11128,10 @@ class ClassDef(Statement):
         ``__new__`` the one lookup decides (``new_entry``) and an MRO that
         constructs by the laws the lifter reads (``construction_order``)
         with an ``__init__`` the lookup decides (``initializer_entry``).
-        Where it is False the call is the one unanswered call and no
-        constructor contract is stated."""
+        Where it is False the call is the one unanswered call, and the
+        class's constructor contract states it so, over ``(*args,
+        **kwargs)``, undecided and owed
+        (``tree_enumerate._unread_constructor_outcome``)."""
         if self._dataclass_generated_init_fields() is not None:
             new_decided, own_new = self.dataclass_new_entry()
             return new_decided and own_new is None

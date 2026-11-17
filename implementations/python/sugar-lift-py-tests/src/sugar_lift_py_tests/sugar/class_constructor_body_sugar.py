@@ -784,3 +784,52 @@ class ConstructedInstanceSugar(Sugar):
                 else ConstructedInstanceValue(value)
             )
         )
+
+
+@dataclass(frozen=True)
+class UnreadConstructorCallSugar(Sugar):
+    """``Cls(*args, **kwargs)`` as the contract of a class whose constructor
+    is not read (``ClassDef.constructor_is_read``: an imported base, a
+    metaclass, a ``Protocol``/``Generic``/``ABC`` base, or a decorator the one
+    class-namespace lookup does not decide) returns it
+    (``tree_enumerate.class_universe_outcome``).
+
+    No lookup decides which ``__new__`` and ``__init__`` the call runs, nor
+    the signature it binds, so the contract takes every actual a call may
+    pass (``args``, ``kwargs``: its free formals, whose contents no frame
+    holds) and states the call through the one spread-call door
+    (``SpreadCallSugar._finish``) on ``class_value``, what the class
+    statement's key holds: with no exact roster it is the one unanswered
+    call (``UnknownCalleeCallV1``), two-faced and owed -- its result and its
+    halt both carried undecided, never a completion and never a refusal of
+    the class.  The same call a caller of the class makes
+    (``ClassDefinitionValue.callable_application_with``)."""
+
+    class_name: str
+    class_value: object = field(compare=False)
+    actuals: tuple = field(compare=False)
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="CallSiteValue",
+            reason="a class whose constructor is not read states its call unanswered",
+        )
+
+    def desugar(self, ctx: object = None) -> ExitSet:
+        from sugar_lift_py_tests.sugar.spread_sugar import SpreadCallSugar
+
+        call = SpreadCallSugar(
+            callee_name=self.class_name,
+            callee=None,
+            arguments=(("star", None, None), ("double-star", None, None)),
+            site=self.site,
+        )
+        # The actuals are already values (the contract's formals): the
+        # door's own finish, as ``SpreadCallSugar.desugar`` reaches it once
+        # its callee and operands are evaluated.
+        return call._finish(self.class_value, tuple(self.actuals), ctx)
