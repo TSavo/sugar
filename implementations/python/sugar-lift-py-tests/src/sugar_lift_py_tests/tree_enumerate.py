@@ -1241,7 +1241,12 @@ def class_universe_outcome(cls):
 
     The module globals the signature's ``def`` reads are free inputs, bound
     at the entry (``bind_global_inputs``) before the definition keys and
-    defaults (``with_module_final_globals``)."""
+    defaults (``with_module_final_globals``).
+
+    A class whose constructor no lookup reads (``ClassDef.
+    constructor_is_read``) states its call as the one unanswered call over
+    ``(*args, **kwargs)``, undecided and owed, its halt kept
+    (``_unread_constructor_outcome``): never a refusal of the class."""
     from dataclasses import replace
 
     from sugar_lift_py_tests.context import ReduceContext
@@ -1267,16 +1272,10 @@ def class_universe_outcome(cls):
     from sugar_source_tree.panic import SugarNotWritten
 
     if not cls.constructor_is_read():
-        # A call of the class is the one unanswered call
-        # (``ClassDefinitionValue.callable_application_with``): no contract
-        # states what it runs, so none is stated here.
-        raise SugarNotWritten(
-            owner="class_universe_outcome",
-            blame=cls.fragment,
-            observed=f"the constructor {cls.name}'s call runs is not read",
-            requested="a __new__ and __init__ the one class-namespace lookup decides",
-            fix="state the class's contract where its constructor is read",
-        )
+        # No lookup decides what a call of the class runs: the contract
+        # states the call as the one unanswered call, undecided and owed,
+        # never a refusal of the class (``_unread_constructor_outcome``).
+        return _unread_constructor_outcome(cls)
     frame = cls.source_visible_constructor_frame()
     constructor = cls.constructor_definition()
     readers = () if constructor is None else (constructor,)
@@ -1333,6 +1332,108 @@ def class_universe_outcome(cls):
             bridge_source_symbol=cls.bridge_source_symbol(),
             formal_coordinates=declared,
             inputs=cls.contract_inputs(),
+        )
+        return universe.desugar(entered)
+
+    return _class_statement_read(cls, entry).and_then(on_its_class)
+
+
+# The formals of a constructor contract no lookup reads the signature of
+# (``_unread_constructor_signature``): ``(*args, **kwargs)``.
+_UNREAD_CONSTRUCTOR_FORMALS = ("args", "kwargs")
+
+
+def _unread_constructor_signature(cls) -> tuple:
+    """``(parameters, coordinates)`` of the constructor contract of a class
+    whose constructor is not read (``ClassDef.constructor_is_read``): no
+    lookup decides which ``__new__`` and ``__init__`` a call runs, so no
+    signature is read, and the contract takes every actual a call may pass,
+    ``(*args, **kwargs)``.  Each formal's coordinate is minted on the class
+    statement, as the inherited-exception frame mints its ``args``
+    (``ClassDef.source_visible_constructor_frame``)."""
+    from sugar_source_tree.binding_provenance import BindingCoordinateV1
+
+    owner_cid = cls.fragment.seal().cid
+    return _UNREAD_CONSTRUCTOR_FORMALS, tuple(
+        BindingCoordinateV1.mint(
+            owner_cid, cls.fragment, ("unread-constructor-formal", index)
+        )
+        for index in range(len(_UNREAD_CONSTRUCTOR_FORMALS))
+    )
+
+
+def _class_contract_signature(cls) -> tuple:
+    """``(parameters, coordinates)``: the formals a class's constructor
+    contract states (``class_universe_outcome``, ``class_contract_rows``).
+    Where the constructor is read, the constructor frame's
+    (``ClassDef.source_visible_constructor_frame``,
+    ``_class_contract_formal_coordinates``); else ``(*args, **kwargs)``
+    (``_unread_constructor_signature``)."""
+    if not cls.constructor_is_read():
+        return _unread_constructor_signature(cls)
+    frame = cls.source_visible_constructor_frame()
+    return tuple(frame.parameters), _class_contract_formal_coordinates(cls, frame)
+
+
+def _unread_constructor_outcome(cls):
+    """The constructor contract of a class whose constructor is not read
+    (``ClassDef.constructor_is_read``: a base, a metaclass or a decorator
+    the one class-namespace lookup does not decide; 173 pandas classes on
+    the ``d5dcbab5c`` lane run): the universe of ``return Cls(*args,
+    **kwargs)``, ``Cls`` read as every reader after import reads the class
+    statement (``_class_statement_read``), the call through the one
+    spread-call door (``UnreadConstructorCallSugar``).  Nothing decides what
+    it runs, so its one completed face is the call's own result and its halt
+    the call's undetermined raise, both owed (``UnknownCalleeCallV1``): the
+    class's call carried undecided, its halt kept, instead of the whole class
+    refused.  It is the call a caller of the class makes
+    (``ClassDefinitionValue.callable_application_with``); no ``__init__`` or
+    ``__new__`` body is read, so the contract takes no input."""
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor.call_site_value import _ctx_with_curried_args
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.sugar.call_site_sugar import with_module_final_globals
+    from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
+        UnreadConstructorCallSugar,
+    )
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        FunctionUniverseSugar,
+    )
+    from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
+    from sugar_source_tree.nodes import current_module_execution_site
+
+    parameters, declared = _unread_constructor_signature(cls)
+    entry = with_module_final_globals(
+        ReduceContext.root(owner="class_universe_outcome"),
+        (),
+        site=current_module_execution_site(),
+    )
+    formals = tuple(SymbolicValue(make_var(name)) for name in parameters)
+    entered = _ctx_with_curried_args(
+        entry,
+        parameters,
+        formals,
+        tuple(coordinate.cid for coordinate in declared),
+    )
+    site = cls.fragment
+
+    def on_its_class(read):
+        universe = FunctionUniverseSugar(
+            name=cls.contract_name(),
+            formals=parameters,
+            statements=(
+                ReturnSugar(
+                    value=UnreadConstructorCallSugar(
+                        cls.name, peel_walrus_binds(read)[1], formals, site=site
+                    ),
+                    site=site,
+                ),
+            ),
+            site=site,
+            bridge_source_symbol=cls.bridge_source_symbol(),
+            formal_coordinates=declared,
         )
         return universe.desugar(entered)
 
@@ -1660,17 +1761,17 @@ def class_contract_rows(cls, file_rel: str):
         FunctionUniverseSugar,
     )
 
-    frame = cls.source_visible_constructor_frame()
-    memento = class_memento(cls, file_rel, tuple(frame.parameters))
+    parameters, coordinates = _class_contract_signature(cls)
+    memento = class_memento(cls, file_rel, parameters)
     # What the row states its name, formals and symbol by when no arm of the
     # construction completes (``reduction_rows``' ``owner``).
     stated_by = FunctionUniverseSugar(
         name=cls.contract_name(),
-        formals=tuple(frame.parameters),
+        formals=parameters,
         statements=(),
         site=cls.fragment,
         bridge_source_symbol=cls.bridge_source_symbol(),
-        formal_coordinates=_class_contract_formal_coordinates(cls, frame),
+        formal_coordinates=coordinates,
     )
     # No ``definition``: the class statement's own body runs where the class
     # statement stands, never at a call of the class, so none of its
@@ -1684,7 +1785,12 @@ def class_contract_rows(cls, file_rel: str):
         def_memento=memento,
         definition=None,
     )
-    constructor = cls.constructor_definition()
+    # A contract whose constructor is not read reads no ``def``'s body, so
+    # it takes no input and states no global value
+    # (``_unread_constructor_outcome``).
+    constructor = (
+        cls.constructor_definition() if cls.constructor_is_read() else None
+    )
     from sugar_lift_py_tests.sugar.call_site_sugar import stated_global_values
 
     stated = () if constructor is None else stated_global_values(constructor)
