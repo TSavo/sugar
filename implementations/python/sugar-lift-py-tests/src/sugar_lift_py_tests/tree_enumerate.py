@@ -9,6 +9,7 @@ universe seek by a call-site cue had no driver and are deleted (#7757).
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from sugar_source_tree.construction_cache import AmbientSet
@@ -536,6 +537,158 @@ def function_def_memento(fn, file_rel: str):
         source_function_name=LAMBDA_NAME if isinstance(fn, Lambda) else fn.name,
         param_names=[p.name for p in fn.params],
     )
+
+
+# What one definition's rows may state inline, in serialized bytes.  A proof
+# states every term inline (#7843): the fold resolves every term-ref a row
+# carries into its term before mint (``tree::decode_enumerate_result``), so a
+# row whose term DAG is small can state a term many times its DAG's size --
+# a subterm shared by every arm is written out once per arm.  Past the
+# transport's finite-or-refuse bound (256 MiB, ``kit_path::lift_plugin``)
+# the WHOLE file's response is swapped for a marker that is no lift response
+# at all, and mint ended the file on it (``lift response missing `kind`
+# field``: pandas ``core/interchange/utils.py``, ``io/formats/style_render.py``,
+# run 43960179946).  The definition that cannot be stated is the one
+# refused, by name, inside the file's proof; the rest of the file is served.
+# Sixteen definitions at the bound still fit the transport's.
+STATED_DEFINITION_BYTE_BOUND = 16 * 1024 * 1024
+
+
+class StatedRow:
+    """One row already lowered through the scan's term table: what
+    ``stated_rows`` measured is what the wire carries, lowered once."""
+
+    __slots__ = ("wire",)
+
+    def __init__(self, wire):
+        self.wire = wire
+
+    def to_rpc_with_term_table(self, _table):
+        return self.wire
+
+
+def stated_rows(rows, term_table, memento):
+    """``rows`` (one definition's contract rows, or None for an effect)
+    lowered through ``term_table`` as the universe scan writes them, or the
+    definition at ``memento`` refused by name when they state more than
+    ``STATED_DEFINITION_BYTE_BOUND`` bytes inline.
+
+    Raised inside the scan's one ``try`` for the definition, the refusal is
+    its ``undecided`` row by the one rule (``refused_function_row``,
+    ``refused_class_row``); nothing is truncated and no row is dropped.  The
+    size is the inline statement's, read off the DAG once per term
+    (``stated_inline_bytes``), never by expanding it."""
+    if not rows:
+        return rows
+    wire = [row.to_rpc_with_term_table(term_table) for row in rows]
+    stated = stated_inline_bytes(wire, term_table.nodes)
+    if stated <= STATED_DEFINITION_BYTE_BOUND:
+        return [StatedRow(row) for row in wire]
+    from types import SimpleNamespace
+
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        owner="tree_enumerate.stated_definition_bound",
+        blame=SimpleNamespace(
+            filename=memento.file,
+            line=memento.span.start_line,
+            col=memento.span.start_col,
+        ),
+        observed=(
+            f"rows stating {stated} bytes inline, past the "
+            f"{STATED_DEFINITION_BYTE_BOUND}-byte bound of one definition"
+        ),
+        requested="a statement of the definition's terms within the bound",
+        fix=(
+            "find the term the definition's arms share and state it once "
+            "(a carried value, never a copy per arm); do not raise the bound"
+        ),
+    )
+
+
+def stated_inline_bytes(value, nodes) -> int:
+    """Bytes of ``value`` serialized compactly with every term-ref replaced by
+    the term it names (``nodes``: a ``TermTableBuilder``'s CID-keyed rows),
+    as the fold resolves it.
+
+    Each term's size is counted once and read from its CID thereafter, on an
+    explicit worklist: the DAG is walked, the expansion never built, and a
+    deep term spine does not lean on the call stack.  A CID ``nodes`` lacks
+    is counted as the reference itself; the fold's decode is what refuses a
+    dangling reference."""
+    sizes: dict[str, int] = {}
+
+    def scalar(item) -> int:
+        return len(
+            json.dumps(item, separators=(",", ":"), ensure_ascii=False).encode(
+                "utf-8"
+            )
+        )
+
+    def term_ref_cid(item):
+        if (
+            isinstance(item, dict)
+            and item.get("kind") == "term-ref"
+            and isinstance(item.get("cid"), str)
+        ):
+            return item["cid"]
+        return None
+
+    def refs_in(item) -> list:
+        found = []
+        pending = [item]
+        while pending:
+            current = pending.pop()
+            cid = term_ref_cid(current)
+            if cid is not None:
+                found.append(cid)
+            elif isinstance(current, dict):
+                pending.extend(current.values())
+            elif isinstance(current, (list, tuple)):
+                pending.extend(current)
+        return found
+
+    def measure(item) -> int:
+        # Every term-ref ``item`` holds is already sized.
+        total = 0
+        pending = [item]
+        while pending:
+            current = pending.pop()
+            cid = term_ref_cid(current)
+            if cid is not None and cid in sizes:
+                total += sizes[cid]
+            elif isinstance(current, dict):
+                total += 2 + max(len(current) - 1, 0)
+                for key, child in current.items():
+                    total += scalar(str(key)) + 1
+                    pending.append(child)
+            elif isinstance(current, (list, tuple)):
+                total += 2 + max(len(current) - 1, 0)
+                pending.extend(current)
+            else:
+                total += scalar(current)
+        return total
+
+    entered: set[str] = set()
+    work = [(cid, False) for cid in refs_in(value)]
+    while work:
+        cid, ready = work.pop()
+        if cid in sizes:
+            continue
+        node = nodes.get(cid)
+        if node is None or (not ready and cid in entered):
+            # Dangling, or a cycle no content address can make: counted as
+            # the reference, left for the fold's decode to refuse.
+            sizes[cid] = scalar({"kind": "term-ref", "cid": cid})
+            continue
+        if not ready:
+            entered.add(cid)
+            work.append((cid, True))
+            work.extend((child, False) for child in refs_in(node) if child not in sizes)
+            continue
+        sizes[cid] = measure(node)
+    return measure(value)
 
 
 class UndecidedRow:
