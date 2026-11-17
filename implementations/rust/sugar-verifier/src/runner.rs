@@ -1195,9 +1195,9 @@ fn fold_callsite_results(
     report: &mut Report,
 ) -> usize {
     let mut violations = 0usize;
+    let mut ownership = CallsiteOwnership::new(pool);
     for (cs, verdict, reason, method, body_tier) in per_results {
-        if callsite_row_is_owned_by_consistency(&cs, pool)
-            || callsite_row_is_owned_by_self_post(&cs, pool)
+        if ownership.owned_by_consistency(&cs) || callsite_row_is_owned_by_self_post(&cs, pool)
         {
             debug!(
                 bridge = %cs.bridge_ir_name,
@@ -1305,19 +1305,67 @@ fn fold_consistency_results(
 /// The one rule the report fold and the link surface
 /// (`sugar_compiler::linker_inputs`) both read.
 pub fn callsite_row_is_owned_by_consistency(cs: &CallSite, pool: &MementoPool) -> bool {
-    let Some(property_cid) = cs.property_cid.as_ref() else {
-        return false;
-    };
-    let Some(body) = pool.contract_body_by_cid(property_cid) else {
-        return false;
-    };
-    // A consistency candidate with linked body posts is a pool-level EUF
-    // composition problem, not a set of independent per-callsite obligations.
-    // Body-discharge can reduce one local view to `call:h(5) == 6`, but only
-    // consistency owns the sibling facts/posts that define `call:h(5)`. Delegate
-    // every local row for that property, regardless of its local verdict; the
-    // consistency row below will add the authoritative pass or violation.
-    crate::consistency::linked_post_instance_count(pool, &body) > 0
+    CallsiteOwnership::new(pool).owned_by_consistency(cs)
+}
+
+/// `callsite_row_is_owned_by_consistency` for every callsite of one pool:
+/// the join's members are collected once for the pool (`PoolJoin`), and each
+/// contract is asked once, however many callsites it has.
+///
+/// The answer is a pure function of the callsite's contract (`property_cid`)
+/// over the one pool, so reading it once per contract is the same answer
+/// for every row. Asked per row instead, each callsite decoded the whole pool
+/// (`collect_ambient_posts`) and re-ran the join over its contract: the
+/// report fold and the link surface each paid callsites x pool.
+pub struct CallsiteOwnership<'p> {
+    pool: &'p MementoPool,
+    join: Option<crate::consistency::PoolJoin>,
+    by_property: HashMap<String, bool>,
+}
+
+impl<'p> CallsiteOwnership<'p> {
+    pub fn new(pool: &'p MementoPool) -> Self {
+        Self {
+            pool,
+            join: None,
+            by_property: HashMap::new(),
+        }
+    }
+
+    /// Is this callsite's row the consistency row's (step 9)?
+    pub fn owned_by_consistency(&mut self, cs: &CallSite) -> bool {
+        let Some(property_cid) = cs.property_cid.as_ref() else {
+            return false;
+        };
+        let key = property_cid.to_string();
+        if let Some(owned) = self.by_property.get(&key) {
+            return *owned;
+        }
+        let owned = self.decide(property_cid);
+        self.by_property.insert(key, owned);
+        owned
+    }
+
+    fn decide(&mut self, property_cid: &MementoCid) -> bool {
+        let pool = self.pool;
+        let Some(body) = pool.contract_body_by_cid(property_cid) else {
+            return false;
+        };
+        // A consistency candidate with linked body posts is a pool-level EUF
+        // composition problem, not a set of independent per-callsite
+        // obligations. Body-discharge can reduce one local view to
+        // `call:h(5) == 6`, but only consistency owns the sibling facts/posts
+        // that define `call:h(5)`. Delegate every local row for that
+        // property, regardless of its local verdict; the consistency row
+        // below will add the authoritative pass or violation.
+        if !crate::consistency::is_consistency_candidate(&body) {
+            return false;
+        }
+        self.join
+            .get_or_insert_with(|| crate::consistency::PoolJoin::of(pool))
+            .linked_post_instance_count(&body)
+            > 0
+    }
 }
 
 fn callsite_row_is_owned_by_self_post(cs: &CallSite, pool: &MementoPool) -> bool {
@@ -2240,6 +2288,45 @@ mod consistency_owned_callsite_tests {
         pool.bridges_by_symbol.clear();
         pool.mementos.remove(&bridge_cid);
         assert!(!callsite_row_is_owned_by_consistency(&cs, &pool));
+    }
+
+    /// Benchmark-shaped regression: a contract read by many callsite rows is
+    /// asked once, over one collection of the pool's joined members, and every
+    /// row gets the answer the per-row rule gives. Before, each row decoded
+    /// the whole pool again (`collect_ambient_posts`): callsites x pool.
+    #[test]
+    fn ownership_is_decided_once_per_contract_over_one_pool_join() {
+        let (pool, cs, _) = linked_pool_and_callsite();
+        let unattributed = CallSite {
+            property_cid: None,
+            ..cs.clone()
+        };
+        let mut ownership = CallsiteOwnership::new(&pool);
+        assert!(ownership.join.is_none(), "nothing is collected before a row asks");
+        for _ in 0..500 {
+            assert_eq!(
+                ownership.owned_by_consistency(&cs),
+                callsite_row_is_owned_by_consistency(&cs, &pool)
+            );
+            assert!(!ownership.owned_by_consistency(&unattributed));
+        }
+        assert!(ownership.join.is_some(), "one join serves every row of the pool");
+        assert_eq!(
+            ownership.by_property.len(),
+            1,
+            "500 rows of one contract are one decision"
+        );
+    }
+
+    #[test]
+    fn ownership_over_one_pool_join_keeps_an_unlinked_row_visible() {
+        let (mut pool, cs, bridge_cid) = linked_pool_and_callsite();
+        pool.bridges_by_symbol.clear();
+        pool.mementos.remove(&bridge_cid);
+        let mut ownership = CallsiteOwnership::new(&pool);
+        for _ in 0..3 {
+            assert!(!ownership.owned_by_consistency(&cs));
+        }
     }
 
     fn make_unique_cache_dir(label: &str) -> PathBuf {

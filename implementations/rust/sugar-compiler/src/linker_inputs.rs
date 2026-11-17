@@ -189,11 +189,14 @@ pub fn derive_linker_inputs(pool: &MementoPool) -> Result<LinkerInputs, Malforme
     // is that import's state, never this project's edge. A callsite of a
     // contract the join binds has no row of its own: the consistency row
     // decides it, the joined contract's halts included.
+    // Ownership is read once per contract over the one pool
+    // (`CallsiteOwnership`), never the pool decoded again per callsite.
+    let mut ownership = sugar_verifier::runner::CallsiteOwnership::new(pool);
     let call_edges: Vec<LinkerCallEdge> = enumerate_callsites::run(pool)
         .into_iter()
         .filter(|cs| {
             !sugar_verifier::report::callsite_is_imported(cs, pool)
-                && !sugar_verifier::runner::callsite_row_is_owned_by_consistency(cs, pool)
+                && !ownership.owned_by_consistency(cs)
         })
         .map(|cs| {
             // A callsite with NO attributed contract body must still derive
