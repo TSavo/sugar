@@ -323,14 +323,14 @@ fn canonical_object_path(parent: &str, key: &str) -> String {
     }
 }
 
-/// True when `value` holds a `{kind: "term-ref", cid}` node anywhere (#7843).
+/// True when `value` holds a `{kind: "term-ref", cid}` node anywhere.
 ///
-/// A term reference is the kit's wire form: a DAG edge into the response's
-/// `termTable`, resolved at the boundary that decodes the response. A proof
-/// states every term inline, so a term reference past that boundary has
-/// nothing to resolve against. This is the one test of that law: the
-/// enumeration decoder requires a table for it, mint refuses to write it, and
-/// the verifier refuses a proof that holds it.
+/// A term reference is an edge into a term graph (#7757): on the wire it
+/// names a row of the response's `termTable`; in a proof it names a term-row
+/// atom of the same catalog (a row's atom CID is its term CID). The
+/// enumeration decoder requires a table for it, mint refuses one whose row is
+/// absent, and the verifier refuses a proof holding one that names no atom of
+/// that proof.
 pub fn contains_term_ref(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Array(values) => values.iter().any(contains_term_ref),
@@ -339,6 +339,33 @@ pub fn contains_term_ref(value: &serde_json::Value) -> bool {
                 || values.values().any(contains_term_ref)
         }
         _ => false,
+    }
+}
+
+/// Every CID a `{kind: "term-ref", cid}` node in `value` names (#7757). A
+/// term-ref with no CID string is collected as the empty CID, which names
+/// nothing and is refused wherever the names are checked.
+pub fn collect_term_ref_cids(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for item in values {
+                collect_term_ref_cids(item, out);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            if values.get("kind").and_then(serde_json::Value::as_str) == Some("term-ref") {
+                let cid = values
+                    .get("cid")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                out.push(cid.to_string());
+                return;
+            }
+            for item in values.values() {
+                collect_term_ref_cids(item, out);
+            }
+        }
+        _ => {}
     }
 }
 

@@ -99,18 +99,28 @@ def test_jcs_encoded_terms_keep_their_cids():
         )
 
 
-def test_term_table_cid_equals_oracle_hash_of_expanded_jcs():
-    """Typed door: table CID is blake3(_rpc_canonical_bytes(encode_jcs(term)))."""
+def test_term_table_cid_equals_oracle_merkle_hash_of_each_row():
+    """Typed door: a row's CID is blake3(_rpc_canonical_bytes(encode_jcs(row)))
+    where a ctor row names its children by their CIDs (Merkle, #7757)."""
     leaf = make_var("leaf")
     spine = leaf
+    canonical = encode_jcs(term_to_value(leaf))
+    expected = blake3_512_of(_oracle_rpc_canonical_bytes(canonical))
     for index in range(40):
         spine = _Ctor(f"ssa:{index}", (spine,))
+        canonical = (
+            '{"args":[{"cid":'
+            + encode_jcs(vstr(expected))
+            + ',"kind":"term-ref"}],"kind":"ctor","name":'
+            + encode_jcs(vstr(f"ssa:{index}"))
+            + "}"
+        )
+        expected = blake3_512_of(_oracle_rpc_canonical_bytes(canonical))
     table = TermTableBuilder()
     cid = table._cid(spine)
-    canonical = encode_jcs(term_to_value(spine))
-    expected = blake3_512_of(_oracle_rpc_canonical_bytes(canonical))
     assert cid == expected
     assert cid == blake3_512_of(_rpc_canonical_bytes(canonical))
+    assert encode_jcs(IR._json_like_to_value(table.nodes[cid])) == canonical
 
 
 _ALPHABET = (

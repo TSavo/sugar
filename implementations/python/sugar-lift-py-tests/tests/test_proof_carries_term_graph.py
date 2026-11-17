@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-"""A proof states every term inline (#7843).
+"""A proof carries the term graph it states (#7757).
 
-A function that enrolls a parameter-contract link unit gets its contract from
-the resume answer. That answer stated its terms by reference into a term table
-it never sent, so the minted post was ``=(term-ref, term-ref)``: a post nothing
-could read. The resume answer now closes over its own table, the one decoder
-resolves it, mint refuses a term-ref it cannot resolve, and the verifier
-refuses a proof that holds one.
+A formula atom states each term by ``{kind: term-ref, cid}``, naming a term
+row that is an atom of the same proof (a row's atom CID is its term CID), so
+a term shared by both arms of a conditional is stated once, never written out
+per arm. Mint refuses a term-ref whose row the ir-document lacks, the verifier
+refuses a proof holding one that names no term row of its own, and every mint
+through the harness is checked (``assert_proofs_carry_their_terms``). The posts
+below are read written out from the proof's own rows.
 """
 
 from __future__ import annotations
@@ -21,13 +22,14 @@ from sugar_lift_py_tests.witness_harness import (
     TERM_REF_BYTES,
     _stage_cli_project,
     mint_project,
+    write_out_terms,
 )
 
 
-def _contract_posts(project: Path) -> dict[str, dict]:
+def _stated_contract_posts(project: Path) -> dict[str, dict]:
+    """Each contract's post as its proof states it: terms by reference."""
     (proof,) = sorted(project.glob("blake3-512_*.proof"))
     raw = proof.read_bytes()
-    assert TERM_REF_BYTES not in raw
     doc = cbor2.loads(raw)
 
     def decode(value):
@@ -42,8 +44,16 @@ def _contract_posts(project: Path) -> dict[str, dict]:
             continue
         slots = bodies[header["bodyCid"]]["body"]
         if "post" in slots:
-            posts[header["name"]] = atoms[slots["post"]["atomCid"]]
+            posts[header["name"]] = (atoms[slots["post"]["atomCid"]], atoms)
     return posts
+
+
+def _contract_posts(project: Path) -> dict[str, dict]:
+    """Each contract's post written out from its proof's own term rows."""
+    return {
+        name: write_out_terms(post, atoms)
+        for name, (post, atoms) in _stated_contract_posts(project).items()
+    }
 
 
 def _var(name: str) -> dict:
@@ -82,7 +92,7 @@ def _out_equation(post: dict) -> dict:
     return equation
 
 
-def test_the_identity_post_is_stated_inline(tmp_path: Path) -> None:
+def test_the_identity_post_reads_from_its_term_rows(tmp_path: Path) -> None:
     vendor = tmp_path / "vendor"
     _stage_cli_project(vendor, "def ident(x):\n    return x\n")
     (vendor / "test_witness.py").rename(vendor / "idn.py")
@@ -100,7 +110,7 @@ def test_the_identity_post_is_stated_inline(tmp_path: Path) -> None:
     }
 
 
-def test_a_compound_post_is_stated_inline(tmp_path: Path) -> None:
+def test_a_compound_post_is_stated_by_reference_to_its_rows(tmp_path: Path) -> None:
     # No operation on a formal: a parameter in any operand of a subscript
     # (``xs[0]``, ``[1, 2][i]``) is the undecided read, owed, and states no
     # value of its own.  A container
@@ -114,7 +124,10 @@ def test_a_compound_post_is_stated_inline(tmp_path: Path) -> None:
     mint = mint_project(project)
     assert mint.returncode == 0, mint.stderr
 
+    stated, _atoms = _stated_contract_posts(project)["python:test_witness.consume"]
+    # The proof states the post's terms by reference to its own rows.
+    assert TERM_REF_BYTES in json.dumps(stated, separators=(",", ":")).encode()
     post = _contract_posts(project)["python:test_witness.consume"]
     assert TERM_REF_BYTES not in json.dumps(post, separators=(",", ":")).encode()
-    # The post states ``out`` inline, as a compound term over the formal.
+    # Written out, ``out`` is a compound term over the formal.
     assert _out_equation(post)["args"][1] != _var("x")

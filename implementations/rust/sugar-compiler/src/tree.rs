@@ -556,7 +556,7 @@ fn enumerate_rpc(
     level: Level,
     at: Option<Value>,
     seek: bool,
-) -> Result<(Vec<WireNode>, Vec<GapInfo>), EnumerateError> {
+) -> Result<EnumerateAnswer, EnumerateError> {
     enumerate_rpc_with_extra(conn, level, at, seek, &[])
 }
 
@@ -593,7 +593,7 @@ fn resume_rpc(
             reason: "resume response missing nodes array".into(),
         });
     }
-    let (nodes, _gaps) = decode_enumerate_result(&plugin, &result)?;
+    let (nodes, _gaps, _terms) = decode_enumerate_result(&plugin, &result)?;
     if !nodes.is_empty() {
         return Err(EnumerateError::Malformed {
             plugin,
@@ -612,7 +612,7 @@ fn enumerate_rpc_with_extra(
     at: Option<Value>,
     seek: bool,
     extra_options: &[(&str, Value)],
-) -> Result<(Vec<WireNode>, Vec<GapInfo>), EnumerateError> {
+) -> Result<EnumerateAnswer, EnumerateError> {
     let plugin = conn.surface.clone();
     if conn.command.is_empty() {
         return Err(EnumerateError::Unavailable {
@@ -641,13 +641,43 @@ fn enumerate_rpc_with_extra(
     decode_enumerate_result(&plugin, &result)
 }
 
-/// Decode one enumeration result: resolve its term DAG through the result's
-/// own `termTable` (a term-ref with no table is malformed), then decode nodes
-/// and gaps. Every kit answer that carries terms goes through here.
+/// One decoded enumeration answer: its nodes, its gaps, and the term graph
+/// its nodes' term-refs name (#7757). The nodes keep their term-refs; the
+/// graph travels beside them and is never written out.
+type EnumerateAnswer = (Vec<WireNode>, Vec<GapInfo>, Option<LiftTermTable>);
+
+/// Every `{kind: term-ref, cid}` CID in `value`.
+fn collect_term_ref_cids(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_term_ref_cids(item, out);
+            }
+        }
+        Value::Object(fields) => {
+            if fields.get("kind").and_then(Value::as_str) == Some("term-ref") {
+                if let Some(cid) = fields.get("cid").and_then(Value::as_str) {
+                    out.push(cid.to_string());
+                }
+                return;
+            }
+            for item in fields.values() {
+                collect_term_ref_cids(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Decode one enumeration result: check its term graph (the result's own
+/// `termTable`; a term-ref with no table, or naming a row the table lacks, is
+/// malformed), then decode nodes and gaps. The nodes keep their term-refs and
+/// the checked graph is returned beside them: the term is never written out
+/// (#7757). Every kit answer that carries terms goes through here.
 fn decode_enumerate_result(
     plugin: &str,
     result: &Value,
-) -> Result<(Vec<WireNode>, Vec<GapInfo>), EnumerateError> {
+) -> Result<EnumerateAnswer, EnumerateError> {
     let plugin = plugin.to_string();
     let raw_nodes = result.get("nodes").and_then(Value::as_array);
     let response_has_term_refs = raw_nodes.is_some_and(|nodes| nodes.iter().any(contains_term_ref))
@@ -669,19 +699,25 @@ fn decode_enumerate_result(
     } else {
         None
     };
+    if let Some(table) = &term_table {
+        let mut named = Vec::new();
+        if let Some(nodes) = raw_nodes {
+            for node in nodes {
+                collect_term_ref_cids(node, &mut named);
+            }
+        }
+        if let Some(gaps) = result.get("gaps") {
+            collect_term_ref_cids(gaps, &mut named);
+        }
+        if let Some(missing) = named.iter().find(|cid| table.get(cid).is_none()) {
+            return Err(EnumerateError::Malformed {
+                plugin: plugin.clone(),
+                reason: format!("enumeration response names missing term-table CID `{missing}`"),
+            });
+        }
+    }
     let nodes = raw_nodes
-        .map(|arr| {
-            arr.iter()
-                .map(|value| {
-                    let resolved = if let Some(table) = &term_table {
-                        table.resolve_value(value)?
-                    } else {
-                        value.clone()
-                    };
-                    decode_node(&resolved)
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })
+        .map(|arr| arr.iter().map(decode_node).collect::<Result<Vec<_>, _>>())
         .unwrap_or_else(|| Ok(Vec::new()))
         .map_err(|reason| EnumerateError::MalformedNode {
             plugin: plugin.clone(),
@@ -692,7 +728,7 @@ fn decode_enumerate_result(
         .and_then(Value::as_array)
         .map(|arr| arr.iter().map(decode_gap).collect())
         .unwrap_or_default();
-    Ok((nodes, gaps))
+    Ok((nodes, gaps, term_table))
 }
 
 fn preconstruction_rows_rpc(conn: &KitConn, level: Level) -> Result<Vec<Value>, EnumerateError> {
@@ -748,7 +784,7 @@ fn enumerate_result_from_response(plugin: &str, response: Value) -> Result<Value
 /// method `"lift"`.
 pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Value, KitError> {
     let conn = kit.enumerate_conn(workspace_root);
-    let (files, source_gaps) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
+    let (files, source_gaps, _terms) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
     if !source_gaps.is_empty() {
         return Err(EnumerateError::Malformed {
             plugin: conn.surface.clone(),
@@ -764,6 +800,10 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
     // and synthesizes bridges from it. Absent is NOT the same as empty --
     // absent means mint synthesizes no bridge and the run still completes.
     let mut call_edges = CallEdgeHarvest::default();
+    // The term graph the routed rows name (#7757): every file's checked
+    // `termTable` rows, keyed by their content CID, passed to mint as the
+    // ir-document's `termTable`. A term is never written out here.
+    let mut term_rows: Map<String, Value> = Map::new();
 
     // Phase 2/3: over the COMPLETELY enumerated project, discharge every enrolled
     // parameter-contract link unit (fold), then RESUME each retained link unit
@@ -820,8 +860,12 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
 
     for file in files {
         source_mementos.push(file.memento.to_json());
-        let (nodes, gaps) =
+        let (nodes, gaps, file_terms) =
             enumerate_rpc(&conn, Level::Universe, Some(file.memento.to_json()), false)?;
+        if let Some(Value::Object(rows)) = file_terms.map(|table| table.wire_value()) {
+            // Content-addressed: a CID two files share names one checked row.
+            term_rows.extend(rows);
+        }
         for gap in gaps {
             let item = gap
                 .memento
@@ -843,7 +887,7 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
     }
     let call_edge_walk = call_edges.walk_counters();
     let call_edge_count = call_edges.edges.len();
-    Ok(json!({
+    let mut document = json!({
         "kind": "ir-document",
         "ir": ir,
         "callEdges": call_edges.edges,
@@ -856,7 +900,11 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
             "undecided": ir.iter().filter(|row| is_undecided_row(row)).count(),
             "call_edges": call_edge_count,
         },
-    }))
+    });
+    if !term_rows.is_empty() {
+        document["termTable"] = Value::Object(term_rows);
+    }
+    Ok(document)
 }
 
 impl Kit {
@@ -865,7 +913,7 @@ impl Kit {
     /// errors, never silently omitted exports.
     pub fn exports(&self, workspace_root: &Path) -> Result<Vec<ExportedSymbol>, KitError> {
         let conn = self.enumerate_conn(workspace_root);
-        let (nodes, _gaps) = enumerate_rpc(&conn, Level::Exports, None, false)?;
+        let (nodes, _gaps, _terms) = enumerate_rpc(&conn, Level::Exports, None, false)?;
         nodes
             .into_iter()
             .map(|node| {
@@ -889,7 +937,7 @@ impl Kit {
         symbol: &str,
     ) -> Result<Option<ExportedSymbol>, KitError> {
         let conn = self.enumerate_conn(workspace_root);
-        let (nodes, gaps) =
+        let (nodes, gaps, _terms) =
             enumerate_rpc(&conn, Level::Exports, Some(json!({"symbol": symbol})), true)?;
         let Some(node) = nodes.into_iter().next() else {
             if gaps.is_empty() {
@@ -1001,35 +1049,44 @@ mod tests {
         assert_eq!(result["nodes"][0]["memento"]["file"], "src/lib.rs");
     }
 
-    /// #7843: an answer whose audits state terms by reference is resolved
-    /// through its own `termTable` into inline terms; without the table it is
-    /// malformed, never passed on with the references in it.
+    /// #7757: an answer whose audits state terms by reference keeps the
+    /// references, and its checked `termTable` travels beside the nodes; the
+    /// term is never written out. Without the table, or naming a row the
+    /// table lacks, the answer is malformed.
     #[test]
-    fn an_answer_with_term_refs_resolves_through_its_own_table() {
+    fn an_answer_with_term_refs_keeps_them_beside_its_own_table() {
         let out = json!({"kind": "var", "name": "out"});
         let cid = sugar_canonicalizer::jcs_cid_of_json(&out);
+        let reference = json!({"kind": "term-ref", "cid": cid.clone()});
         let node = json!({
             "memento": {"file": "idn.py"},
-            "audit": {"post": {"kind": "atomic", "name": "=", "args": [
-                {"kind": "term-ref", "cid": cid}
-            ]}}
+            "audit": {"post": {"kind": "atomic", "name": "=", "args": [reference.clone()]}}
         });
-        let (nodes, _) = decode_enumerate_result(
+        let (nodes, _, table) = decode_enumerate_result(
             "fixture-kit",
             &json!({"nodes": [node.clone()], "gaps": [], "termTable": {(cid.clone()): out}}),
         )
         .expect("closed answer decodes");
         let audit = nodes[0].audit.as_ref().expect("audit");
-        assert_eq!(
-            audit["post"]["args"][0],
-            json!({"kind": "var", "name": "out"})
-        );
-        assert!(!sugar_proof_envelope::contains_term_ref(audit));
+        assert_eq!(audit["post"]["args"][0], reference);
+        let table = table.expect("the answer's term graph travels beside its nodes");
+        assert!(table.get(&cid).is_some());
 
-        let refused = decode_enumerate_result("fixture-kit", &json!({"nodes": [node], "gaps": []}));
+        let refused = decode_enumerate_result("fixture-kit", &json!({"nodes": [node.clone()], "gaps": []}));
         assert!(
             matches!(refused, Err(EnumerateError::Malformed { .. })),
             "a term-ref without its table is malformed"
+        );
+
+        let other = json!({"kind": "var", "name": "other"});
+        let other_cid = sugar_canonicalizer::jcs_cid_of_json(&other);
+        let dangling = decode_enumerate_result(
+            "fixture-kit",
+            &json!({"nodes": [node], "gaps": [], "termTable": {(other_cid): other}}),
+        );
+        assert!(
+            matches!(dangling, Err(EnumerateError::Malformed { .. })),
+            "a term-ref naming a row the table lacks is malformed"
         );
     }
 

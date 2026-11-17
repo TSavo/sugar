@@ -16409,15 +16409,17 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let root = serde_json::json!({
             "kind": "ctor", "name": "call:normalize", "args": [leaf]
         });
-        let root_cid = sugar_canonicalizer::jcs_cid_of_json(&root);
+        // Merkle (#7757): the root's CID hashes its own row, the leaf by CID.
+        let root_row = serde_json::json!({
+            "kind": "ctor",
+            "name": "call:normalize",
+            "args": [{"kind": "term-ref", "cid": leaf_cid.clone()}]
+        });
+        let root_cid = sugar_canonicalizer::jcs_cid_of_json(&root_row);
         let response = serde_json::json!({
             "termTable": {
                 leaf_cid.clone(): {"kind": "var", "name": "x"},
-                root_cid.clone(): {
-                    "kind": "ctor",
-                    "name": "call:normalize",
-                    "args": [{"kind": "term-ref", "cid": leaf_cid}]
-                }
+                root_cid.clone(): root_row
             }
         });
         let table = LiftTermTable::decode(&response).expect("valid term table");
@@ -16516,7 +16518,6 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     fn visual_fol_term_table_deep_repeated_subtree_still_elides() {
         let leaf = serde_json::json!({"kind": "var", "name": "month"});
         let mut child_cid = sugar_canonicalizer::jcs_cid_of_json(&leaf);
-        let mut resolved_child = leaf.clone();
         let mut nodes = serde_json::Map::from_iter([(child_cid.clone(), leaf)]);
         for depth in 0..24 {
             let node = serde_json::json!({
@@ -16524,13 +16525,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "name": format!("call:calendar_layer_{depth}"),
                 "args": [{"kind": "term-ref", "cid": child_cid}]
             });
-            let resolved = serde_json::json!({
-                "kind": "ctor",
-                "name": format!("call:calendar_layer_{depth}"),
-                "args": [resolved_child]
-            });
-            child_cid = sugar_canonicalizer::jcs_cid_of_json(&resolved);
-            resolved_child = resolved;
+            // Merkle (#7757): each row's CID hashes the row itself.
+            child_cid = sugar_canonicalizer::jcs_cid_of_json(&node);
             nodes.insert(child_cid.clone(), node);
         }
         let response = serde_json::json!({"termTable": nodes});

@@ -3546,6 +3546,13 @@ fn mint_ir_document_with_source_and_plan_mementos(
     }
 
     let mut proof_graph = ProofGraph::new();
+    // The ir-document's term graph (#7757): the rows a formula slot names are
+    // written into the proof as atoms, each once.
+    let term_rows: serde_json::Map<String, Value> = match term_table.map(LiftTermTable::wire_value) {
+        Some(Value::Object(rows)) => rows,
+        _ => serde_json::Map::new(),
+    };
+    let mut written_term_rows: BTreeSet<String> = BTreeSet::new();
     let mut proof_member_cids: BTreeSet<String> = BTreeSet::new();
     macro_rules! push_graph_memento {
         ($type:ident, $push:ident, $expected_cid:expr, $bytes:expr) => {{
@@ -3940,7 +3947,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
             let inv = inv_val.expect("inv_val is_some checked above");
 
             // Compute a canonical key for this operand to dedup byte-identical invs.
-            let operand_key = encode_jcs(json_to_cvalue_with_terms(inv, term_table)?.as_ref());
+            let operand_key = encode_jcs(json_to_cvalue_stating_term_refs(inv, term_table, &mut BTreeSet::new())?.as_ref());
 
             if let Some(group) = inv_only_groups.get_mut(&name) {
                 // Add this operand only if it is not already present (dedup by canonical bytes).
@@ -3994,7 +4001,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                                 };
                                 for child in children {
                                     let key = encode_jcs(
-                                        json_to_cvalue_with_terms(&child, term_table)?.as_ref(),
+                                        json_to_cvalue_stating_term_refs(&child, term_table, &mut BTreeSet::new())?.as_ref(),
                                     );
                                     if !flat_keys.iter().any(|k| k == &key) {
                                         flat_keys.push(key);
@@ -4066,18 +4073,21 @@ fn mint_ir_document_with_source_and_plan_mementos(
         let pre_decl = decl.get("pre").or_else(|| decl.get("precondition"));
         let pre_body = pre_decl.cloned();
         let has_nontrivial_pre = pre_decl.is_some_and(has_nontrivial_pre_json);
+        // The formula slots state their terms by reference into the proof's
+        // own term rows (#7757); the term is never written out.
+        let mut named_terms: BTreeSet<String> = BTreeSet::new();
         let pre = pre_decl
-            .map(|value| json_to_cvalue_with_terms(value, term_table))
+            .map(|value| json_to_cvalue_stating_term_refs(value, term_table, &mut named_terms))
             .transpose()?;
         let post_decl = decl.get("post").or_else(|| decl.get("postcondition"));
         let post_body = post_decl.cloned();
         let post = post_decl
-            .map(|value| json_to_cvalue_with_terms(value, term_table))
+            .map(|value| json_to_cvalue_stating_term_refs(value, term_table, &mut named_terms))
             .transpose()?;
         let inv = decl
             .get("inv")
             .or_else(|| decl.get("invariant"))
-            .map(|value| json_to_cvalue_with_terms(value, term_table))
+            .map(|value| json_to_cvalue_stating_term_refs(value, term_table, &mut named_terms))
             .transpose()?;
 
         if pre.is_none() && post.is_none() && inv.is_none() {
@@ -4287,6 +4297,13 @@ fn mint_ir_document_with_source_and_plan_mementos(
         });
 
         let register_body_started = Instant::now();
+        register_term_rows(
+            &mut proof_graph,
+            &term_rows,
+            &named_terms,
+            &mut written_term_rows,
+        )
+        .map_err(|e| format!("contract `{name}`: {e}"))?;
         let contract_body = register_contract_body_graph(
             &mut proof_graph,
             pre.as_ref(),
@@ -5422,6 +5439,11 @@ fn json_to_cvalue(j: &Value) -> Arc<CValue> {
     })
 }
 
+/// A contract header field (`panicLoci`, `inputValues`, `classShapes`,
+/// `sourceWarrants`, `evidence`) with its terms written out from the table.
+/// Header fields are read member by member as typed views, so they stay
+/// written out; the formula slots carry the term graph instead
+/// (`json_to_cvalue_stating_term_refs`, #7757).
 fn json_to_cvalue_with_terms(
     value: &Value,
     term_table: Option<&LiftTermTable>,
@@ -5431,7 +5453,7 @@ fn json_to_cvalue_with_terms(
     }
     // Anywhere in the value, not only at its root: a term-ref nested inside a
     // formula would otherwise be written into the proof as an opaque node
-    // that nothing can resolve (#7843). A proof states every term inline.
+    // that nothing can resolve (#7843).
     if sugar_proof_envelope::contains_term_ref(value) {
         return Err(
             "term-ref arrived without the required ir-document termTable; inline term compatibility is forbidden"
@@ -5439,6 +5461,99 @@ fn json_to_cvalue_with_terms(
         );
     }
     Ok(json_to_cvalue(value))
+}
+
+/// Every `{kind: term-ref, cid}` CID in `value`; a term-ref without a CID
+/// string is refused.
+fn collect_term_ref_cids(value: &Value, out: &mut Vec<String>) -> Result<(), String> {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_term_ref_cids(item, out)?;
+            }
+        }
+        Value::Object(fields) => {
+            if fields.get("kind").and_then(Value::as_str) == Some("term-ref") {
+                let cid = fields
+                    .get("cid")
+                    .and_then(Value::as_str)
+                    .ok_or("term position must be a `{kind: term-ref, cid}` object")?;
+                out.push(cid.to_string());
+                return Ok(());
+            }
+            for item in fields.values() {
+                collect_term_ref_cids(item, out)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// A formula slot as the proof states it (#7757): every term-ref stays a
+/// `{kind: term-ref, cid}` node, never written out, and its CID is recorded
+/// in `named` so its row and every row beneath it are written into the proof
+/// as atoms (`register_term_rows`). A term-ref naming a row the ir-document's
+/// `termTable` lacks is refused (#7844); one with no table at all is refused.
+fn json_to_cvalue_stating_term_refs(
+    value: &Value,
+    term_table: Option<&LiftTermTable>,
+    named: &mut BTreeSet<String>,
+) -> Result<Arc<CValue>, String> {
+    let Some(table) = term_table else {
+        return json_to_cvalue_with_terms(value, None);
+    };
+    let mut cids = Vec::new();
+    collect_term_ref_cids(value, &mut cids)?;
+    for cid in cids {
+        if table.get(&cid).is_none() {
+            return Err(format!(
+                "term-ref names term-table CID `{cid}` the ir-document termTable lacks"
+            ));
+        }
+        named.insert(cid);
+    }
+    Ok(json_to_cvalue(value))
+}
+
+/// Write every term row `named` reaches into the proof as an atom (#7757):
+/// the proof carries its term graph, each row once. A row's atom CID is the
+/// blake3-512 of its JCS bytes, which is its term CID (a Merkle hash), so a
+/// formula atom's `{kind: term-ref, cid}` names an atom of the same proof. A
+/// row whose atom CID is not the CID naming it is refused, as is a CID the
+/// table lacks.
+fn register_term_rows(
+    proof_graph: &mut ProofGraph,
+    rows: &serde_json::Map<String, Value>,
+    named: &BTreeSet<String>,
+    written: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let mut pending: Vec<String> = named.iter().cloned().collect();
+    while let Some(cid) = pending.pop() {
+        if written.contains(&cid) {
+            continue;
+        }
+        let row = rows.get(&cid).ok_or_else(|| {
+            format!("term-ref names term-table CID `{cid}` the ir-document termTable lacks")
+        })?;
+        let atom = FlatAtom::new(json_to_cvalue(row));
+        if atom.cid().as_str() != cid {
+            return Err(format!(
+                "term row `{cid}` hashes to atom `{}`; a term row is addressed by its own bytes",
+                atom.cid().as_str()
+            ));
+        }
+        proof_graph.register_atom(atom);
+        written.insert(cid);
+        if let Some(args) = row.get("args").and_then(Value::as_array) {
+            for arg in args {
+                if let Some(child) = arg.get("cid").and_then(Value::as_str) {
+                    pending.push(child.to_string());
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -6853,6 +6968,66 @@ mod tests {
             encode_jcs(first.as_ref()),
             encode_jcs(json_to_cvalue(&expanded).as_ref())
         );
+    }
+
+    /// #7757: a formula slot keeps its term-refs and the proof carries the
+    /// rows they name as atoms, each once, addressed by its own bytes. A
+    /// doubling chain of 40 conditionals (2^40 copies of `x` written out)
+    /// states in 121 rows.
+    #[test]
+    fn mint_states_term_refs_and_writes_their_rows_as_atoms() {
+        let leaf = json!({"kind": "var", "name": "x"});
+        let mut below = sugar_canonicalizer::jcs_cid_of_json(&leaf);
+        let mut rows = serde_json::Map::new();
+        rows.insert(below.clone(), leaf);
+        for level in 0..40 {
+            let guard = json!({"kind": "var", "name": format!("g{level}")});
+            let guard_cid = sugar_canonicalizer::jcs_cid_of_json(&guard);
+            rows.insert(guard_cid.clone(), guard);
+            let row = json!({"kind": "ctor", "name": "py.conditional", "args": [
+                {"kind": "term-ref", "cid": guard_cid},
+                {"kind": "term-ref", "cid": below.clone()},
+                {"kind": "term-ref", "cid": below.clone()}
+            ]});
+            below = sugar_canonicalizer::jcs_cid_of_json(&row);
+            rows.insert(below.clone(), row);
+        }
+        let table = LiftTermTable::decode(&json!({"termTable": rows})).expect("valid chain");
+        let post = json!({"kind": "atomic", "name": "=", "args": [
+            {"kind": "var", "name": "out"},
+            {"kind": "term-ref", "cid": below.clone()}
+        ]});
+
+        let mut named = BTreeSet::new();
+        let stated = json_to_cvalue_stating_term_refs(&post, Some(&table), &mut named)
+            .expect("the slot states its reference");
+        assert!(
+            encode_jcs(stated.as_ref()).len() < 1024,
+            "the slot states a reference, never the term written out"
+        );
+        let mut graph = ProofGraph::new();
+        let mut written = BTreeSet::new();
+        register_term_rows(&mut graph, &rows, &named, &mut written).expect("rows written");
+        assert_eq!(written.len(), 2 * 40 + 1);
+
+        let dangling = json!({"kind": "atomic", "name": "=", "args": [
+            {"kind": "term-ref", "cid": "blake3-512:00"}
+        ]});
+        let refused = json_to_cvalue_stating_term_refs(&dangling, Some(&table), &mut BTreeSet::new())
+            .expect_err("a dangling term-ref is refused");
+        assert!(refused.contains("lacks"), "{refused}");
+
+        let mut forged = serde_json::Map::new();
+        forged.insert(below.clone(), json!({"kind": "var", "name": "not-the-row"}));
+        let only_root = BTreeSet::from([below]);
+        let refused = register_term_rows(
+            &mut ProofGraph::new(),
+            &forged,
+            &only_root,
+            &mut BTreeSet::new(),
+        )
+        .expect_err("a row not addressed by its own bytes is refused");
+        assert!(refused.contains("addressed by its own bytes"), "{refused}");
     }
 
     #[test]

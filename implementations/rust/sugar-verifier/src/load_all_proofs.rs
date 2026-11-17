@@ -421,6 +421,57 @@ pub(crate) fn load_bytes_into_pool(
     }
 }
 
+/// The first term-ref in `graph` that names no term-row atom of `graph`
+/// (#7757), as a load-error reason; `None` when the catalog carries every
+/// term it states. A term row is a `var`, `const` or `ctor` atom; a ctor
+/// row's children are term-refs themselves, so the check closes over the
+/// whole graph.
+fn dangling_term_ref(graph: &ProofGraph) -> Option<String> {
+    let atoms: std::collections::BTreeMap<&str, &sugar_proof_envelope::FlatAtom> = graph
+        .atoms()
+        .map(|atom| (atom.cid().as_str(), atom))
+        .collect();
+    let mut named: Vec<(String, String)> = Vec::new();
+    for atom in graph.atoms() {
+        // Byte prefilter: only an atom whose bytes spell `term-ref` can hold one.
+        if !atom.bytes().windows(8).any(|w| w == b"term-ref") {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_slice::<Json>(atom.bytes()) {
+            let mut cids = Vec::new();
+            sugar_proof_envelope::collect_term_ref_cids(&value, &mut cids);
+            let holder = atom.cid().as_str();
+            named.extend(cids.into_iter().map(|cid| (holder.to_string(), cid)));
+        }
+    }
+    let mut is_term_row: std::collections::BTreeMap<String, bool> =
+        std::collections::BTreeMap::new();
+    for (holder, cid) in named {
+        let row_ok = match is_term_row.get(&cid) {
+            Some(known) => *known,
+            None => {
+                let ok = atoms.get(cid.as_str()).is_some_and(|row| {
+                    serde_json::from_slice::<Json>(row.bytes()).is_ok_and(|value| {
+                        matches!(
+                            value.get("kind").and_then(Json::as_str),
+                            Some("var") | Some("const") | Some("ctor")
+                        )
+                    })
+                });
+                is_term_row.insert(cid.clone(), ok);
+                ok
+            }
+        };
+        if !row_ok {
+            return Some(format!(
+                "atom {holder}: term-ref `{cid}` names no term row of this proof; \
+                 a proof carries every term it states"
+            ));
+        }
+    }
+    None
+}
+
 fn load_catalog_bytes(
     source_label: String,
     expected_cid: &MementoCid,
@@ -464,26 +515,18 @@ fn load_catalog_bytes(
     // hold a `ProofGraph` directly breaks that Sync bound; fixing it (e.g.
     // swapping the cache to a `Sync`-safe cell) is a real design change, not
     // a lift-and-shift, so it is out of scope for this seam.
-    // A proof states every term inline (#7843). An atom holding a
-    // `{kind: term-ref}` node names a term the proof does not state, so the
-    // whole catalog is refused by name, as for a CID mismatch above.
-    for atom in graph.atoms() {
-        // Byte prefilter (no parse for the atoms that cannot hold one), then
-        // the structural test decides.
-        let by_reference = atom.bytes().windows(8).any(|w| w == b"term-ref")
-            && serde_json::from_slice::<Json>(atom.bytes())
-                .is_ok_and(|value| sugar_proof_envelope::contains_term_ref(&value));
-        if by_reference {
-            pool.load_errors.push(LoadError {
-                proof_path: source_label,
-                reason: format!(
-                    "atom {}: a term stated by reference (term-ref), not inline; \
-                     a proof states every term inline",
-                    atom.cid().as_str()
-                ),
-            });
-            return Ok(());
-        }
+    // A proof carries its term graph (#7757). A formula atom states a term
+    // by `{kind: term-ref, cid}`, naming a term-row atom of this same catalog
+    // (a row's atom CID is its term CID, so the read above already checked
+    // every row's bytes against its name). A term-ref that names no term row
+    // here names a term the proof does not state, so the whole catalog is
+    // refused by name, as for a CID mismatch above.
+    if let Some(reason) = dangling_term_ref(&graph) {
+        pool.load_errors.push(LoadError {
+            proof_path: source_label,
+            reason,
+        });
+        return Ok(());
     }
     for atom in graph.atoms() {
         let atom_cid = computed_atom_cid(atom.cid().as_str().to_string());
@@ -972,9 +1015,20 @@ mod tests {
 
     /// One contract whose post is `=(<first>, <second>)`, as a loadable proof.
     fn contract_proof(first: std::sync::Arc<sugar_canonicalizer::Value>) -> ProofBytes {
+        contract_proof_with_rows(first, Vec::new())
+    }
+
+    /// `contract_proof`, carrying `rows` as atoms of the same catalog.
+    fn contract_proof_with_rows(
+        first: std::sync::Arc<sugar_canonicalizer::Value>,
+        rows: Vec<std::sync::Arc<sugar_canonicalizer::Value>>,
+    ) -> ProofBytes {
         use sugar_canonicalizer::Value as C;
         use sugar_proof_envelope::{ContractBody, ContractMemento, FlatAtom};
         let mut graph = ProofGraph::new();
+        for row in rows {
+            graph.register_atom(FlatAtom::new(row));
+        }
         let post = graph.register_atom(FlatAtom::new(C::object([
             ("kind", C::string("atomic")),
             ("name", C::string("=")),
@@ -1018,15 +1072,14 @@ mod tests {
     fn term_ref_refusals(pool: &MementoPool) -> Vec<&LoadError> {
         pool.load_errors
             .iter()
-            .filter(|error| error.reason.contains("a term stated by reference"))
+            .filter(|error| error.reason.contains("names no term row"))
             .collect()
     }
 
-    /// #7843: a proof states every term inline. A post that names a term by
-    /// reference (the kit's wire form) is refused by name, whole catalog; the
-    /// same post stated inline loads.
+    /// #7757: a proof carries its term graph. A post naming a term row the
+    /// proof does not carry is refused by name, whole catalog.
     #[test]
-    fn a_proof_that_states_a_term_by_reference_is_refused_by_name() {
+    fn a_proof_naming_a_term_row_it_does_not_carry_is_refused_by_name() {
         use sugar_canonicalizer::Value as C;
         let reference = C::object([
             ("cid", C::string("blake3-512:0000")),
@@ -1049,6 +1102,57 @@ mod tests {
             pool.load_errors
         );
         assert!(pool.contract_members_with_bodies().next().is_some());
+    }
+
+    /// #7757: a post naming term rows the same proof carries loads, and its
+    /// body reads exactly as the post the written-out proof states: the
+    /// verifier is handed the same formula either way, so every verdict on it
+    /// is the same.
+    #[test]
+    fn a_proof_carrying_its_term_rows_reads_as_the_written_out_proof() {
+        use sugar_canonicalizer::Value as C;
+        use sugar_proof_envelope::FlatAtom;
+        let leaf = C::object([("kind", C::string("var")), ("name", C::string("out"))]);
+        let leaf_cid = FlatAtom::new(leaf.clone()).cid().as_str().to_string();
+        let leaf_ref = C::object([
+            ("cid", C::string(leaf_cid)),
+            ("kind", C::string("term-ref")),
+        ]);
+        let row = C::object([
+            ("kind", C::string("ctor")),
+            ("name", C::string("py.box")),
+            ("args", C::array(vec![leaf_ref.clone(), leaf_ref])),
+        ]);
+        let row_cid = FlatAtom::new(row.clone()).cid().as_str().to_string();
+        let reference = C::object([("cid", C::string(row_cid)), ("kind", C::string("term-ref"))]);
+        let mut shared = MementoPool::default();
+        load_proof_bytes_into_pool(
+            &[contract_proof_with_rows(reference, vec![leaf.clone(), row])],
+            &mut shared,
+        );
+        assert!(term_ref_refusals(&shared).is_empty(), "{:#?}", shared.load_errors);
+
+        let written = C::object([
+            ("kind", C::string("ctor")),
+            ("name", C::string("py.box")),
+            ("args", C::array(vec![leaf.clone(), leaf])),
+        ]);
+        let mut inline = MementoPool::default();
+        load_proof_bytes_into_pool(&[contract_proof(written)], &mut inline);
+        assert!(term_ref_refusals(&inline).is_empty(), "{:#?}", inline.load_errors);
+
+        let shared_body = shared
+            .contract_members_with_bodies()
+            .next()
+            .map(|(_, body)| body)
+            .expect("the shared proof's contract has a body");
+        let inline_body = inline
+            .contract_members_with_bodies()
+            .next()
+            .map(|(_, body)| body)
+            .expect("the written-out proof's contract has a body");
+        assert_eq!(shared_body["post"], inline_body["post"]);
+        assert!(!sugar_proof_envelope::contains_term_ref(&shared_body["post"]));
     }
 
     /// A string that merely spells `term-ref` is data, not a reference.

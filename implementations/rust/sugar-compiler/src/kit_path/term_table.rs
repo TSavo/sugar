@@ -82,20 +82,6 @@ impl LiftTermNode {
             }),
         }
     }
-
-    fn resolved_value(&self) -> Value {
-        match &self.kind {
-            LiftTermKind::Var { name } => serde_json::json!({"kind": "var", "name": name}),
-            LiftTermKind::Const { value, sort } => {
-                serde_json::json!({"kind": "const", "value": value, "sort": sort})
-            }
-            LiftTermKind::Ctor { name, args } => serde_json::json!({
-                "kind": "ctor",
-                "name": name,
-                "args": args.iter().map(|arg| arg.resolved_value()).collect::<Vec<_>>()
-            }),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -115,10 +101,14 @@ impl LiftTermTable {
         for cid in raw.keys() {
             decode_node(cid, raw, &mut nodes, &mut active)?;
         }
+        // Merkle (#7757): a row's CID is the hash of the row itself, its
+        // children named by their CIDs. Each row is hashed once, so checking
+        // the table costs the graph's size; the term written out (which
+        // doubles per conditional whose arms share a subterm) is never built.
         for (cid, node) in &nodes {
-            let actual = sugar_canonicalizer::blake3_512_of(
-                sugar_canonicalizer::encode_jcs(node.canonical().as_ref()).as_bytes(),
-            );
+            let row = json_to_canonical(&node.wire_value());
+            let bytes = sugar_canonicalizer::encode_jcs(row.as_ref());
+            let actual = sugar_canonicalizer::blake3_512_of(bytes.as_bytes());
             if actual != *cid {
                 return Err(format!(
                     "term-table CID mismatch: key `{cid}` resolves to `{actual}`"
@@ -186,32 +176,6 @@ impl LiftTermTable {
                     .map(|(key, value)| Ok((key.clone(), self.canonical_value(value)?)))
                     .collect::<Result<Vec<_>, String>>()?,
             )),
-        }
-    }
-
-    /// Resolve every term-ref in an arbitrary response-owned JSON value.
-    ///
-    /// Enumeration stays DAG-only on the wire; this projection exists solely
-    /// at the typed consumer boundary, where `IrFormula` expects recursive
-    /// term values. A missing ref remains a loud validator error.
-    pub fn resolve_value(&self, value: &Value) -> Result<Value, String> {
-        if value.get("kind").and_then(Value::as_str) == Some("term-ref") {
-            return Ok(self.resolve_reference(value)?.resolved_value());
-        }
-        match value {
-            Value::Array(values) => Ok(Value::Array(
-                values
-                    .iter()
-                    .map(|value| self.resolve_value(value))
-                    .collect::<Result<Vec<_>, _>>()?,
-            )),
-            Value::Object(values) => Ok(Value::Object(
-                values
-                    .iter()
-                    .map(|(key, value)| Ok((key.clone(), self.resolve_value(value)?)))
-                    .collect::<Result<serde_json::Map<_, _>, String>>()?,
-            )),
-            scalar => Ok(scalar.clone()),
         }
     }
 }
@@ -391,17 +355,19 @@ mod tests {
         let resolved_parent = json!({
             "kind": "ctor", "name": "call:pair", "args": [leaf.clone(), leaf.clone()]
         });
-        let parent_cid = cid(&resolved_parent);
+        // Merkle (#7757): the parent's CID hashes its own row.
+        let parent_row = json!({
+            "kind": "ctor", "name": "call:pair",
+            "args": [
+                {"kind": "term-ref", "cid": leaf_cid.clone()},
+                {"kind": "term-ref", "cid": leaf_cid.clone()}
+            ]
+        });
+        let parent_cid = cid(&parent_row);
         let payload = json!({
             "termTable": {
                 (leaf_cid.clone()): leaf,
-                (parent_cid.clone()): {
-                    "kind": "ctor", "name": "call:pair",
-                    "args": [
-                        {"kind": "term-ref", "cid": leaf_cid.clone()},
-                        {"kind": "term-ref", "cid": leaf_cid.clone()}
-                    ]
-                }
+                (parent_cid.clone()): parent_row
             }
         });
         let table = LiftTermTable::decode(&payload).expect("valid shared DAG");
@@ -409,15 +375,72 @@ mod tests {
         let args = parent.args().expect("ctor args");
         assert!(Arc::ptr_eq(&args[0], &args[1]));
 
-        let formula = json!({
-            "kind": "atomic", "name": "same",
-            "args": [
-                {"kind": "term-ref", "cid": parent_cid.clone()},
-                {"kind": "term-ref", "cid": parent_cid}
-            ]
+        // The table is the graph: a term is reached by its CID and its
+        // written-out canonical value is the parent's, never re-stated.
+        let reference = json!({"kind": "term-ref", "cid": parent_cid});
+        let canonical = table.canonical_value(&reference).expect("ref resolves");
+        assert_eq!(
+            sugar_canonicalizer::encode_jcs(canonical.as_ref()),
+            sugar_canonicalizer::encode_jcs(json_to_canonical(&resolved_parent).as_ref())
+        );
+    }
+
+    /// `py.conditional(guard, a, b)` with `a` containing `b` doubles the term
+    /// written out per level: 2^40 copies of `x` here. The table holds three
+    /// rows per level and decode checks every CID from the rows alone, so
+    /// this finishes at once (#7757).
+    #[test]
+    fn a_doubling_chain_of_forty_conditionals_decodes_in_graph_size() {
+        let leaf = json!({"kind": "var", "name": "x"});
+        let mut below = cid(&leaf);
+        let mut rows = serde_json::Map::new();
+        rows.insert(below.clone(), leaf);
+        for level in 0..40 {
+            let guard = json!({"kind": "var", "name": format!("g{level}")});
+            let guard_cid = cid(&guard);
+            rows.insert(guard_cid.clone(), guard);
+            let boxed = json!({
+                "kind": "ctor", "name": "py.box",
+                "args": [{"kind": "term-ref", "cid": below.clone()}]
+            });
+            let boxed_cid = cid(&boxed);
+            rows.insert(boxed_cid.clone(), boxed);
+            let conditional = json!({
+                "kind": "ctor", "name": "py.conditional",
+                "args": [
+                    {"kind": "term-ref", "cid": guard_cid},
+                    {"kind": "term-ref", "cid": boxed_cid},
+                    {"kind": "term-ref", "cid": below.clone()}
+                ]
+            });
+            below = cid(&conditional);
+            rows.insert(below.clone(), conditional);
+        }
+        assert_eq!(rows.len(), 3 * 40 + 1);
+        let table = LiftTermTable::decode(&json!({"termTable": rows})).expect("valid chain");
+        let root = table.get(&below).expect("root row");
+        let args = root.args().expect("ctor args");
+        let inner = args[1].args().expect("boxed args");
+        assert!(Arc::ptr_eq(&inner[0], &args[2]));
+        assert_eq!(table.wire_value().as_object().map(|rows| rows.len()), Some(121));
+    }
+
+    #[test]
+    fn a_row_keyed_by_its_written_out_hash_is_a_cid_mismatch() {
+        let leaf = json!({"kind": "var", "name": "x"});
+        let leaf_cid = cid(&leaf);
+        let written_out = cid(&json!({"kind": "ctor", "name": "f", "args": [leaf.clone()]}));
+        let payload = json!({
+            "termTable": {
+                (leaf_cid.clone()): leaf,
+                (written_out): {
+                    "kind": "ctor", "name": "f",
+                    "args": [{"kind": "term-ref", "cid": leaf_cid}]
+                }
+            }
         });
-        let resolved = table.resolve_value(&formula).expect("formula refs resolve");
-        assert_eq!(resolved["args"][0], resolved_parent);
-        assert_eq!(resolved["args"][0], resolved["args"][1]);
+        assert!(LiftTermTable::decode(&payload)
+            .unwrap_err()
+            .contains("term-table CID mismatch"));
     }
 }

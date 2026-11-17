@@ -384,28 +384,82 @@ def run_sugar_cli(
     )
     if args[:1] == ["mint"] and completed.returncode == 0:
         out = args[args.index("--out") + 1] if "--out" in args else "."
-        assert_proofs_state_terms_inline(project / out)
+        assert_proofs_carry_their_terms(project / out)
     return completed
 
 
 TERM_REF_BYTES = b'"kind":"term-ref"'
 
+_TERM_ROW_KINDS = frozenset({"var", "const", "ctor"})
 
-def assert_proofs_state_terms_inline(directory: Path) -> None:
-    """Every proof mint wrote states every term inline (#7843).
 
-    A ``{kind: term-ref}`` node is the kit's wire form, resolved through the
-    answer's ``termTable`` at the boundary that decodes it; in a proof it names
-    a term the proof does not state. Atoms are JCS JSON inside the CBOR
-    catalog, where an unescaped ``"kind":"term-ref"`` can only be that node (a
-    string that spells it is escaped). Every mint through the one door is
-    checked, so every twin is a test of the law.
+def _term_ref_cids(value):
+    """Every CID a ``{kind: term-ref, cid}`` node in ``value`` names."""
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            if current.get("kind") == "term-ref":
+                yield current.get("cid")
+                continue
+            pending.extend(current.values())
+        elif isinstance(current, list):
+            pending.extend(current)
+
+
+def proof_atoms(raw: bytes) -> dict:
+    """A proof's atoms, CID to decoded JSON."""
+    import cbor2
+
+    doc = cbor2.loads(raw)
+    return {
+        cid: json.loads(value) if isinstance(value, (bytes, bytearray)) else value
+        for cid, value in doc["atoms"].items()
+    }
+
+
+def write_out_terms(value, atoms: dict):
+    """``value`` with every term-ref written out from the proof's own term
+    rows (``atoms``): for tests that read a small post, never for a proof's
+    statement, which carries the graph (#7757)."""
+    if isinstance(value, dict):
+        if value.get("kind") == "term-ref":
+            row = atoms[value["cid"]]
+            if row.get("kind") == "ctor":
+                return {
+                    "kind": "ctor",
+                    "name": row["name"],
+                    "args": [write_out_terms(arg, atoms) for arg in row["args"]],
+                }
+            return row
+        return {key: write_out_terms(item, atoms) for key, item in value.items()}
+    if isinstance(value, list):
+        return [write_out_terms(item, atoms) for item in value]
+    return value
+
+
+def assert_proofs_carry_their_terms(directory: Path) -> None:
+    """Every proof mint wrote carries every term it states (#7757).
+
+    A formula atom states a term by ``{kind: term-ref, cid}``, naming a term
+    row (``var``, ``const`` or ``ctor``) that is an atom of the same proof; a
+    ctor row names its children the same way. A term-ref naming no term row of
+    its own proof names a term the proof does not state. Every mint through
+    the one door is checked, so every twin is a test of the law.
     """
     for proof in sorted(Path(directory).glob("*.proof")):
-        if TERM_REF_BYTES in proof.read_bytes():
-            raise WitnessPipelineError(
-                f"{proof} states a term by reference (term-ref), not inline (#7843)"
-            )
+        raw = proof.read_bytes()
+        if TERM_REF_BYTES not in raw:
+            continue
+        atoms = proof_atoms(raw)
+        for holder, atom in atoms.items():
+            for cid in _term_ref_cids(atom):
+                row = atoms.get(cid)
+                if not isinstance(row, dict) or row.get("kind") not in _TERM_ROW_KINDS:
+                    raise WitnessPipelineError(
+                        f"{proof}: atom {holder} names term row {cid!r} the "
+                        "proof does not carry (#7757)"
+                    )
 
 
 def mint_project(

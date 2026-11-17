@@ -1397,78 +1397,93 @@ def _closed_enumerate_result(
     from sugar_lift_py_tests.ir import _json_like_to_value, _rpc_canonical_bytes
 
     reachable: Dict[str, Dict[str, Any]] = {}
-    resolved: Dict[str, Dict[str, Any]] = {}
     active: set[str] = set()
 
-    def resolve(cid: str) -> Dict[str, Any]:
-        cached = resolved.get(cid)
-        if cached is not None:
-            return cached
-        if cid in active:
-            raise ValueError(f"cyclic term-table reference at CID `{cid}`")
-        node = merged.get(cid)
-        if not isinstance(node, dict):
-            raise ValueError(f"missing term-table CID `{cid}`")
-        active.add(cid)
+    def child_cids(cid: str, node: Dict[str, Any]) -> List[str]:
+        if node.get("kind") != "ctor":
+            return []
+        args = node.get("args")
+        if not isinstance(args, list):
+            raise ValueError(f"term-table CID `{cid}` missing ctor args")
+        children = []
+        for reference in args:
+            if not isinstance(reference, dict) or reference.get("kind") != "term-ref":
+                raise ValueError(
+                    f"term-table CID `{cid}` has invalid child: expected kind `term-ref`"
+                )
+            child_cid = reference.get("cid")
+            if not isinstance(child_cid, str) or not child_cid:
+                raise ValueError(f"term-table CID `{cid}` has invalid term-ref")
+            children.append(child_cid)
+        return children
+
+    def canonical_row(cid: str, node: Dict[str, Any]) -> Dict[str, Any]:
         kind = node.get("kind")
         if kind == "var":
             if not isinstance(node.get("name"), str):
                 raise ValueError(f"term-table CID `{cid}` missing `name`")
-            canonical = {"kind": "var", "name": node["name"]}
-        elif kind == "const":
+            return {"kind": "var", "name": node["name"]}
+        if kind == "const":
             if "value" not in node or "sort" not in node:
                 raise ValueError(f"term-table CID `{cid}` missing const value or sort")
-            canonical = {
-                "kind": "const",
-                "value": node["value"],
-                "sort": node["sort"],
-            }
-        elif kind == "ctor":
+            return {"kind": "const", "value": node["value"], "sort": node["sort"]}
+        if kind == "ctor":
             if not isinstance(node.get("name"), str):
                 raise ValueError(f"term-table CID `{cid}` missing `name`")
-            args = node.get("args")
-            if not isinstance(args, list):
-                raise ValueError(f"term-table CID `{cid}` missing ctor args")
-            resolved_args = []
-            for reference in args:
-                if (
-                    not isinstance(reference, dict)
-                    or reference.get("kind") != "term-ref"
-                ):
-                    raise ValueError(
-                        f"term-table CID `{cid}` has invalid child: expected kind `term-ref`"
-                    )
-                child_cid = reference.get("cid")
-                if not isinstance(child_cid, str) or not child_cid:
-                    raise ValueError(f"term-table CID `{cid}` has invalid term-ref")
-                resolved_args.append(resolve(child_cid))
-            canonical = {
+            return {
                 "kind": "ctor",
                 "name": node["name"],
-                "args": resolved_args,
+                "args": [
+                    {"kind": "term-ref", "cid": child}
+                    for child in child_cids(cid, node)
+                ],
             }
-        else:
-            raise ValueError(f"term-table CID `{cid}` has unknown kind `{kind}`")
-        active.remove(cid)
-        # The same bytes the term table minted the CID from
-        # (``TermTableBuilder``: ``_rpc_canonical_bytes`` of the canonical
-        # text), never a second encoding of them. A str a value holds may be
-        # a lone surrogate (``"\ud83d"`` in pandas tests), which has no UTF-8
-        # bytes; the term table hashes it as the scalar the wire carries, and
-        # a plain ``.encode("utf-8")`` here crashed the whole file's mint.
-        actual = blake3_512_of(
-            _rpc_canonical_bytes(encode_jcs(_json_like_to_value(canonical)))
-        )
-        if actual != cid:
-            raise ValueError(
-                f"term-table CID mismatch: key `{cid}` resolves to `{actual}`"
+        raise ValueError(f"term-table CID `{cid}` has unknown kind `{kind}`")
+
+    def verify(root: str) -> None:
+        # Merkle (#7757): a row's CID is the hash of the row itself, its
+        # children named by their CIDs, so each reachable row is hashed once
+        # and the term is never written out. Children are verified before the
+        # row that names them, on an explicit worklist.
+        work: List[tuple[str, bool]] = [(root, False)]
+        while work:
+            cid, finishing = work.pop()
+            if cid in reachable:
+                continue
+            node = merged.get(cid)
+            if not isinstance(node, dict):
+                raise ValueError(f"missing term-table CID `{cid}`")
+            if not finishing:
+                if cid in active:
+                    raise ValueError(f"cyclic term-table reference at CID `{cid}`")
+                active.add(cid)
+                work.append((cid, True))
+                work.extend(
+                    (child, False)
+                    for child in reversed(child_cids(cid, node))
+                    if child not in reachable
+                )
+                continue
+            canonical = canonical_row(cid, node)
+            active.discard(cid)
+            # The same bytes the term table minted the CID from
+            # (``TermTableBuilder``: ``_rpc_canonical_bytes`` of the row's
+            # canonical text), never a second encoding of them. A str a value
+            # holds may be a lone surrogate (``"\ud83d"`` in pandas tests),
+            # which has no UTF-8 bytes; the term table hashes it as the scalar
+            # the wire carries, and a plain ``.encode("utf-8")`` here crashed
+            # the whole file's mint.
+            actual = blake3_512_of(
+                _rpc_canonical_bytes(encode_jcs(_json_like_to_value(canonical)))
             )
-        resolved[cid] = canonical
-        reachable[cid] = node
-        return canonical
+            if actual != cid:
+                raise ValueError(
+                    f"term-table CID mismatch: key `{cid}` resolves to `{actual}`"
+                )
+            reachable[cid] = node
 
     for root in roots:
-        resolve(root)
+        verify(root)
     result["termTable"] = reachable
     return result
 
