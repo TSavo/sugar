@@ -40,7 +40,14 @@ So the last `stableZero` term is not a wiring omission. It is either an arm
 whose guard is under-constrained upstream of the merge, or a genuinely
 non-exclusive face — and the fix belongs to whoever produces that arm, before
 it merges. Do not close it by minting faces, by widening `_are_exclusive` to
-reason about disjunctions, or by weakening the refusal.
+guess about disjunctions, or by weakening the refusal.
+
+Since #7757 (the lane at 13e3413ad), `_are_exclusive` DECIDES the guards'
+boolean structure (every atom an opaque proposition): a merged `g or X` is
+exclusive with a sibling exactly when every contributor's guard was, which
+the literal reading could not see once the merge had spelled it as a
+disjunction. That is a proof, not a guess: the pair pinned below, with `X`
+free, still holds together and is still not exclusive.
 """
 
 from __future__ import annotations
