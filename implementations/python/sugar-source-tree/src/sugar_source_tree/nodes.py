@@ -2047,7 +2047,8 @@ class SourceUnit:
     _dynamic_global_writer_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
-    # ``(typed module, threaded names, unthreaded names)``
+    # ``(typed module, threaded names, unthreaded names, rebindable names,
+    # conditional names, conditional definition names)``
     # (``module_threaded_names``) and ``(module, refusal, statements,
     # ModuleBindingStatesV1)``: the module body's one run (``module_run``),
     # which the module block constructs from and every reader outside the
@@ -3594,7 +3595,13 @@ class SourceUnit:
         A name bound only by an undecorated ``def`` (or a ``contextmanager``
         generator, whose call applies its own frame) or an ``import``
         statement (which bind no key) is not one: its reader resolves the
-        definition or the import.  Every other statement that binds a threaded name
+        definition or the import -- unless such a statement binds it on some
+        routes only (``module_conditional_names``: ``if C: import m``,
+        ``try: import m``, ``if C: def g(): ...``), where no one statement
+        binds it on every route, or only a function or class body binds it,
+        through a ``global`` declaration; each of those is threaded, and its
+        reader reads the join, or the undecided global, never the free name
+        (#7757).  Every other statement that binds a threaded name
         carries its binding in the threading too (``module_binding_states``):
         a ``def`` or ``class`` binds the definition, an ``import`` the one
         import table's row for that binding (``import_binding_reference``),
@@ -3640,9 +3647,17 @@ class SourceUnit:
             return memo[1], memo[2]
         keyed: set[str] = set()
         loop_bound: set[str] = set()
-        stack: list[Node] = list(module.body)
+        conditional: set[str] = set()
+        conditional_defs: set[str] = set()
+        conditional_def_sites: set = set()
+        # ``(node, nested)``: ``nested`` is whether ``node`` sits inside a
+        # module statement that runs it on some routes only -- an ``if``, a
+        # ``try``, a loop or a ``match``, whose routes the lexical import pass
+        # joins too (``_Pass._joined``).  A ``with`` body runs straight on,
+        # as that pass reads it.
+        stack: list = [(statement, False) for statement in module.body]
         while stack:
-            node = stack.pop()
+            node, nested = stack.pop()
             if isinstance(
                 node, (Assign, AugAssign, NamedExpr, MatchAs, MatchStar, MatchMapping)
             ) or (isinstance(node, AnnAssign) and node.value is not None):
@@ -3660,11 +3675,44 @@ class SourceUnit:
                 # as an assignment binds its target: every read of the name
                 # is that key's read.
                 keyed.add(node.name)
+            elif nested and isinstance(node, (Import, ImportFrom)):
+                # An import a compound statement runs on some routes only
+                # (``if HAS_PYARROW: import pyarrow as pa``; ``try: import m``
+                # / ``except ImportError: pass``): no one import binds the
+                # name on every route, so no reader resolves the name by the
+                # import alone.  The threading carries it as it carries every
+                # other binding, and a reader reads the join it builds: the
+                # import under the guard of the routes that bound it, a
+                # ``NameError`` halt on the routes that did not (#7757).
+                conditional.update(
+                    name
+                    for alias in node.names
+                    for name in alias.names_bound_here()
+                    if name != "*"
+                )
+            elif nested and isinstance(node, (FunctionDef, AsyncFunctionDef)):
+                # The same for a ``def`` bound to its own function on one route
+                # of a compound statement (``if C: def g(): ...``): its
+                # binding is the function value under that route's guard
+                # (``_local_definition_binding``).
+                conditional.add(node.name)
+                conditional_defs.add(node.name)
+                conditional_def_sites.add((node.name, node.span.start, node.span.end))
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
                 continue
-            stack.extend(child for _name, _index, child in node._child_edges())
+            routed = nested or isinstance(
+                node, (If, Try, TryStar, For, AsyncFor, While, Match)
+            )
+            stack.extend(
+                (child, routed) for _name, _index, child in node._child_edges()
+            )
         reads, writes = self._nested_scope_global_rows()
-        threaded = frozenset((keyed | loop_bound) & reads)
+        # A name only a function or class body binds, through a ``global``
+        # declaration (``global QApplication`` then ``from qtpy.QtWidgets
+        # import QApplication``), is threaded too: such a body writes it, so
+        # every reader reads it undecided (``module_unthreaded_names``), never
+        # as the free name.
+        threaded = frozenset((keyed | loop_bound | conditional | writes) & reads)
         # A star import is a binding statement like any other: the threading
         # binds what it may bind from that statement on
         # (``_module_import_binding``), never every name at every site.
@@ -3675,18 +3723,70 @@ class SourceUnit:
         object.__setattr__(
             self,
             "_module_global_rows_memo",
-            (module, threaded, unthreaded, frozenset(unthreaded | writes)),
+            (
+                module,
+                threaded,
+                unthreaded,
+                frozenset(unthreaded | writes),
+                frozenset(conditional & threaded),
+                frozenset((conditional_defs - keyed - loop_bound) & threaded),
+                frozenset(conditional_def_sites),
+            ),
         )
         return threaded, unthreaded
+
+    def module_conditional_names(self) -> frozenset:
+        """The ``module_threaded_names`` an ``import`` or a ``def`` binds
+        inside a module statement that runs it on some routes only (an
+        ``if``, ``try``, loop or ``match``): bound on the routes that ran it and
+        unbound on the others, unless another statement binds them.  The
+        module run starts each unbound (``module_run``), as a function frame
+        starts each local (``FunctionDef._body_scope``), so a route that never
+        bound the name leaves it unbound and a reader reads the join: the
+        binding under the guard of the routes that bound it, a ``NameError``
+        halt under its complement (``GuardedBinding``), never the free name
+        (#7757).  Memoized with the rows."""
+        self._module_global_rows()
+        return self._module_global_rows_memo[4]
+
+    def module_conditional_definition_names(self) -> frozenset:
+        """The ``module_conditional_names`` a plain ``def`` (one whose call
+        applies its own frame) binds inside a compound module statement, and
+        no assignment, loop target, ``class`` or decorated ``def`` binds
+        anywhere in the module body: such a statement binds the function
+        value under its evaluation key (``_local_definition_binding``), as a
+        local ``def`` does, so that a join over routes reads the value, never
+        the statement; and the name is a definition
+        (``module_definition_names``), never a ``global:`` input.  Memoized
+        with the rows."""
+        self._module_global_rows()
+        return self._module_global_rows_memo[5]
+
+    def binds_conditional_definition_value(self, definition) -> bool:
+        """Whether the module ``def`` statement ``definition`` is one that
+        binds its name on some routes only, inside a compound module
+        statement, a name in ``module_conditional_definition_names``: its
+        statement binds the function value under its evaluation key
+        (``_local_definition_binding``).  A method of the same name in a
+        class body, or a ``def`` in a function body, is never one."""
+        if definition.name not in self.module_conditional_definition_names():
+            return False
+        return (
+            definition.name,
+            definition.span.start,
+            definition.span.end,
+        ) in self._module_global_rows_memo[6]
 
     def module_definition_names(self) -> frozenset:
         """The module names a definition binds through its statement's key: a
         ``class`` statement, decorated or not, and a decorated ``def`` (the
         statements ``_module_global_rows`` keys, ``call_applies_own_frame``
-        aside).  Such a name is a definition, as a plain ``def``'s or an
-        import's is: a function reads it at the value the module's run left,
-        and its contract never states it as a ``global:`` input (#7757 step
-        5, decision (c)).  Read off the typed tree as
+        aside), and a plain ``def`` bound on some routes only
+        (``module_conditional_definition_names``), which binds its function
+        value under its key too.  Such a name is a definition, as a plain
+        ``def``'s or an import's is: a function reads it at the value the
+        module's run left, and its contract never states it as a ``global:``
+        input (#7757 step 5, decision (c)).  Read off the typed tree as
         ``_module_global_rows`` reads it."""
         module = self._require_typed_module(
             "SourceUnit.module_definition_names", blame=self.filename
@@ -3702,7 +3802,7 @@ class SourceUnit:
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
                 continue
             stack.extend(child for _name, _index, child in node._child_edges())
-        return frozenset(names)
+        return frozenset(names) | self.module_conditional_definition_names()
 
     def _nested_scope_global_rows(self) -> Tuple[frozenset, frozenset]:
         """``(globals some nested scope reads, globals some nested scope
@@ -3786,12 +3886,26 @@ class SourceUnit:
             "_module_run_memo",
             (module, None, None, ModuleBindingStatesV1(at=record.at, final=None)),
         )
+        # A name an ``import`` or a ``def`` binds on some routes only
+        # (``module_conditional_names``) starts the run unbound, as a function
+        # frame starts each local (``FunctionDef._body_scope``) and a live
+        # loop's header starts a module name nothing bound before
+        # (``_loop_header_start``): the join over a route that never bound it
+        # is that binding under its route's guard and a ``NameError`` halt
+        # under the complement (``join_binding_state``), never a name the
+        # join drops.  A builtin of the same spelling answers a read before
+        # any binding, so such a name is not started unbound.
+        entry = {_MODULE_STATEMENT_STATES: record}
+        for name in sorted(self.module_conditional_names()):
+            if hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
+                continue
+            entry[name] = UnboundBinding(name=name, cause=module.fragment)
         site_token = _MODULE_EXECUTION_SITE.set(None)
         threading_token = _MODULE_THREADING.set(object())
         try:
             statements, _changed, final = module._substitute_body_tracked(
                 module.body,
-                {_MODULE_STATEMENT_STATES: record},
+                entry,
             )
         except (SourceTreePanic, ConstructionPanic) as refusal:
             object.__setattr__(
@@ -7533,13 +7647,27 @@ def _evaluation_reference_kind(node) -> Optional[str]:
     reference it refines (``EvaluationRefSugar``): a reference to that
     evaluation, ``"evaluation"``.  Read as anything else, every module
     global bound to a call (``_dtype_obj = np.dtype(object)``) was cited
-    undecided wherever a function read it."""
+    undecided wherever a function read it.
+
+    The function value a module ``def`` bound on some routes only binds its
+    name to (``DecoratedDefinitionRef`` under the statement's evaluation key,
+    ``SourceUnit.binds_conditional_definition_value``) is such a reference
+    too: it is read through that key, as an assignment's target is."""
     if isinstance(node, EvaluationRef):
         return "member" if getattr(node, "member", False) else "evaluation"
     if isinstance(node, OpaqueObjectStateV1):
         return "evaluation"
     if isinstance(node, ImportBindingRef):
         return "import"
+    if isinstance(node, DecoratedDefinitionRef):
+        definition = getattr(node, "definition", None)
+        if (
+            isinstance(getattr(node, "evaluation", None), str)
+            and isinstance(definition, (FunctionDef, AsyncFunctionDef))
+            and definition.unit.binds_conditional_definition_value(definition)
+        ):
+            return "evaluation"
+        return None
     if not (isinstance(node, IfExp) and isinstance(node.test, BranchResultRef)):
         return None
     kinds = [
@@ -26159,7 +26287,15 @@ class ImportBindingRef(Expression):
     at its own coordinate (``Name.substitute`` keeps the name).  Anywhere
     else -- an arm of a phi, a read the table does not row -- the row is the
     read: it constructs exactly as an ordinary read of the name does
-    (``_name_read_sugar``), at the row's coordinate.
+    (``_name_read_sugar``), at the row's coordinate, the import alias.  The
+    lexical pass enrolls the binding's own read there wherever the binding
+    meets another one, or none, at a join (``_Pass._joined``:
+    ``if C: import pyarrow as pa``, ``if TYPE_CHECKING: import numba`` /
+    ``else: numba = ...``), so the arm is the import's value -- the module
+    ``python:module(<m>)``, or the member ``from m import x`` names -- the
+    one completed arm a read of a unique import is, under the guard of the
+    route that bound it.  Before, no receipt stood at the alias, and every
+    such arm was the free name, refusing its reader (#7757).
     """
 
     name: str
@@ -26255,14 +26391,20 @@ def _local_definition_binding(definition, scope):
     (``Call._function_value_call``), as every call of a module ``def`` is.
     A module ``def`` a reader threads, whose name is bound to itself
     (``call_applies_own_frame``), still binds itself; its call by name is its
-    value's all the same (``Call._named_function_value``).
+    value's all the same (``Call._named_function_value``).  One bound on some
+    routes only (``SourceUnit.module_conditional_definition_names``: ``if C:
+    def g(): ...``) binds its function value, as a local ``def`` does: a
+    reader reads the join over the routes (``GuardedBinding``), the value
+    under the guard of the route that bound it and a ``NameError`` halt under
+    the complement, and the statement never stands in an arm of it (#7757).
     """
     lexical = scope.get(_LEXICALLY_BOUND_NAMES)
     local = isinstance(lexical, frozenset) and definition.name in lexical
     if not (local or _module_threads(scope, definition.name)):
         return None
+    valued = local or definition.unit.binds_conditional_definition_value(definition)
     if call_applies_own_frame(definition) and not (
-        local and _binds_function_value(definition)
+        valued and _binds_function_value(definition)
     ):
         return {definition.name: definition}
     return {

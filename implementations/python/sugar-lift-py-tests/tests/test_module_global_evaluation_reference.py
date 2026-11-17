@@ -49,10 +49,8 @@ from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
 )
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import read_binding
-from sugar_lift_py_tests.sugar.import_member_sugar import ImportModuleSugar
 from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 from sugar_lift_py_tests.sugar.match_sugar import MatchSugar
-from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
@@ -367,28 +365,24 @@ def test_an_import_after_an_assignment_reads_the_import_table() -> None:
     assert final.target_symbol == "python:json"
 
 
-def test_the_import_arm_constructs_through_the_name_read_door() -> None:
-    # The import table's row is the read: it constructs through the one door
-    # a read of ``json`` does (``_name_read_sugar``), at the row's own
-    # coordinate, and reduces, never refused.  A plain ``import json`` read
-    # carries its value-use receipt there and is the module itself,
-    # ``python:module(json)`` (``ImportModuleSugar``, #9134).  The optional
-    # import's arm has no value use enrolled at its coordinate, so it stays
-    # the free name (#9134: an optional import keeps the free name, refused
-    # by name downstream).
+def test_the_import_arm_constructs_as_an_ordinary_read_of_the_name() -> None:
+    # The import table's row is the read: it constructs exactly as a read of
+    # ``json`` does (``_name_read_sugar``), the module ``python:module(json)``
+    # (#9134), and reduces, never refused.  The lexical pass enrolls the
+    # binding's own read at its alias where the binding meets the handler's
+    # ``json = None`` at the join (#7757): before, the arm had no receipt and
+    # was the free name.
+    from sugar_lift_py_tests.sugar.import_member_sugar import ImportModuleSugar
+
     read = _returned(_function(_source(TRY_IMPORT_FALLBACK)))
     arm = read.orelse.sugar()
     plain = _source("import json\ndef f():\n    return json\n")
     ordinary = _returned(_function(plain))
     assert isinstance(ordinary, Name)
-    assert type(arm) is NameSugar
-    assert arm.name == "json"
-    module = ordinary.sugar()
-    assert type(module) is ImportModuleSugar
-    assert module.module == "json"
-    for sugar in (arm, module):
-        exits = sugar.desugar(None).exits
-        assert len(exits) == 1 and isinstance(exits[0], Completed), exits
+    assert type(arm) is type(ordinary.sugar()) is ImportModuleSugar
+    assert arm.module == ordinary.sugar().module == "json"
+    exits = arm.desugar(None).exits
+    assert len(exits) == 1 and isinstance(exits[0], Completed), exits
 
 
 def test_a_from_import_arm_reduces_too() -> None:
