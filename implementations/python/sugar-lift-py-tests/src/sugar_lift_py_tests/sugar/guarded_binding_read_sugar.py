@@ -130,14 +130,18 @@ def decided_loop_exit(state: LoopGuardedProjection, ctx):
 
 
 def _read_loop_projection(
-    state: LoopGuardedProjection, *, read_name: str, read_site, ctx
+    state: LoopGuardedProjection, *, read_name: str, read_site, ctx, unbound=None
 ) -> ExitSet:
     left_by = decided_loop_exit(state, ctx)
     if left_by is not None:
         # The loop ran in hand on this path and left by this face: the read
         # is its binding, whole (``decided_loop_exit``).
         return _read_arm(
-            left_by.state, read_name=read_name, read_site=read_site, ctx=ctx
+            left_by.state,
+            read_name=read_name,
+            read_site=read_site,
+            ctx=ctx,
+            unbound=unbound,
         )
     by_kind = _loop_exit_faces(state)
     exits = ExitSet(())
@@ -148,6 +152,7 @@ def _read_loop_projection(
                 read_name=read_name,
                 read_site=read_site,
                 ctx=ctx,
+                unbound=unbound,
             ).guarded(
                 face.guard_formula,
                 None if by_kind is None else by_kind[face.completion_kind],
@@ -156,7 +161,7 @@ def _read_loop_projection(
     return exits.normalize()
 
 
-def _read_arm(state, *, read_name: str, read_site, ctx) -> ExitSet:
+def _read_arm(state, *, read_name: str, read_site, ctx, unbound=None) -> ExitSet:
     """One arm of a projection, joined with its peers under its own face.
 
     A join reads the arm's exits, so anything but exits there is refused
@@ -165,7 +170,13 @@ def _read_arm(state, *, read_name: str, read_site, ctx) -> ExitSet:
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
     return _require_exit_set(
-        read_binding(state, read_name=read_name, read_site=read_site, ctx=ctx),
+        read_binding(
+            state,
+            read_name=read_name,
+            read_site=read_site,
+            ctx=ctx,
+            unbound=unbound,
+        ),
         owner="GuardedBindingReadSugar.read_binding",
     )
 
@@ -195,15 +206,28 @@ def _decided_arm(state: GuardedProjection, ctx):
     return None
 
 
-def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
+def read_binding(state, *, read_name: str, read_site, ctx, unbound=None) -> ExitSet:
+    """The read of a binding projection: each arm the path may take, under
+    its own guard and face, the arm a decided slot selects whole.
+
+    ``unbound``: what an arm on which the name is unbound answers, for a
+    reader that is not a read of the name (``PreLoopBindingReadSugar``: a
+    loop's pre-loop value, which Python never reads); ``None`` for a read,
+    where that arm is the ``NameError`` Python raises."""
     if isinstance(state, Sugar):
         # The whole read: the reaching value's own desugar.
         return state.desugar(ctx)
     if isinstance(state, UnboundProjection):
+        if unbound is not None:
+            return unbound(state)
         return ExitSet.halted(NameErrorEffect.at(name=read_name, site=read_site))
     if isinstance(state, LoopGuardedProjection):
         return _read_loop_projection(
-            state, read_name=read_name, read_site=read_site, ctx=ctx
+            state,
+            read_name=read_name,
+            read_site=read_site,
+            ctx=ctx,
+            unbound=unbound,
         )
     if not isinstance(state, GuardedProjection):
         from sugar_lift_py_tests.sugar.delete_name_sugar import _unhandled_projection
@@ -215,7 +239,13 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
         # The reduction decided the slot on this path (a ground ``if``, a
         # live loop's write slot: ``BranchResultDecision``): the read is that
         # arm's, whole; the other arm is not taken here.
-        return read_binding(decided, read_name=read_name, read_site=read_site, ctx=ctx)
+        return read_binding(
+            decided,
+            read_name=read_name,
+            read_site=read_site,
+            ctx=ctx,
+            unbound=unbound,
+        )
     guard, undecided = _projection_guard(state, ctx, read_site)
     true_face, false_face = _guarded_projection_faces(state)
     joined = (
@@ -224,6 +254,7 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
             read_name=read_name,
             read_site=read_site,
             ctx=ctx,
+            unbound=unbound,
         )
         .guarded(guard, true_face)
         .union(
@@ -232,6 +263,7 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
                 read_name=read_name,
                 read_site=read_site,
                 ctx=ctx,
+                unbound=unbound,
             ).guarded(not_(guard), false_face)
         )
     )
@@ -369,4 +401,57 @@ class GuardedBindingReadSugar(ConstructedTermSugar):
                 _projection_term(self.state, owner=owner),
             ),
             symbol_kind="coordinate",
+        )
+
+
+@dataclass(frozen=True)
+class PreLoopBindingReadSugar(GuardedBindingReadSugar):
+    """The value a live loop's header starts with for a carried name whose
+    pre-loop binding is a projection (bound on one arm of an ``if`` or an
+    earlier loop, unbound on another: ``GuardedProjection``), read through
+    the one read (``read_binding``) as a ``LoopProjectedBinding``'s product
+    is (``LoopRecurrenceSugar._start``): each arm under its own guard, the
+    arm a decided slot selects whole.
+
+    The loop does not read the name: ``for x in xs:`` after ``if c: x = 1``
+    raises nothing where ``c`` was false; the header starts unbound there.
+    So an arm the read takes on which the name is unbound is never the
+    ``NameError`` a read is: no start unbound on one arm and bound on
+    another is stated here yet, so that arm is refused by name and the
+    enclosing function is the proof's refused member, never the file
+    crashed (``'GuardedProjection' object has no attribute 'desugar'``,
+    #7757) and never a halt Python does not raise.  An arm the path does
+    not take (a slot the reduction decided, a loop that ran in hand) is
+    never read."""
+
+    def desugar(self, ctx: object = None) -> ExitSet:
+        return read_binding(
+            self.state,
+            read_name=self.name,
+            read_site=self.site,
+            ctx=ctx,
+            unbound=self._starts_unbound,
+        )
+
+    def _starts_unbound(self, state: UnboundProjection) -> ExitSet:
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            owner="PreLoopBindingReadSugar",
+            blame=self.site,
+            observed=(
+                f"`{self.name}` is unbound before the loop on a path the "
+                f"loop is entered by (`{state.name}` unbound there): the "
+                "loop's header starts unbound on that path and bound on "
+                "another"
+            ),
+            requested=(
+                "a loop header started unbound on the arm where its pre-loop "
+                "binding is unbound, bound on the others"
+            ),
+            fix=(
+                "start the header unbound on that arm "
+                "(LoopRecurrenceSugar._start), never a NameError the loop "
+                "does not raise"
+            ),
         )

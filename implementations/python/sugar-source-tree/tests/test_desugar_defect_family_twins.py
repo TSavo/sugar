@@ -12,6 +12,7 @@ The families, by the census kind string they used to produce:
 - ``AttributeError: 'SourceFragment' has no attribute 'compare_left'``
 - ``AssertionError:`` (bare)
 - ``NotImplementedError: condition folded without a symbolic formula: NamedExpressionValue``
+- ``AttributeError: 'GuardedProjection' object has no attribute 'desugar'``
 """
 
 from __future__ import annotations
@@ -291,6 +292,50 @@ def test_a_condition_with_no_formula_at_all_is_still_loud() -> None:
 
     with pytest.raises(NotImplementedError, match="TermValue"):
         predicate_formula(_Walrus(), site="twin")
+
+
+# --------------------------------------------------------------------------
+# Family: AttributeError: 'GuardedProjection' object has no attribute 'desugar'
+# --------------------------------------------------------------------------
+
+
+def test_a_second_loop_starts_from_the_read_of_its_guarded_name() -> None:
+    """POSITIVE. pandas ``tests/frame/indexing/test_take.py``: ``for df in
+    [frame]:`` twice. After the first loop ``df`` is bound on one arm of the
+    loop's write slot and unbound on the other (a ``GuardedBinding``); the
+    second loop carries ``df`` and started its header from the projection
+    itself, which has no ``desugar``, and the whole file crashed. The start
+    is now the projection's read: the first loop ran in hand and decided its
+    slot, so the second starts from the arm it took, and the function lifts."""
+    out = _out(
+        "def f(a):\n"
+        " for d in [a]:\n"
+        "  pass\n"
+        " for d in [a]:\n"
+        "  pass\n"
+        " return d\n"
+    )
+    assert _statements(out)
+
+
+def test_a_loop_entered_with_its_name_maybe_unbound_is_refused() -> None:
+    """DISCRIMINATING. Over iterables nothing holds, the first loop may run no
+    item, so the second loop is entered with ``d`` unbound on one path. Python
+    raises nothing there -- the header starts unbound -- so that arm is never
+    read as a ``NameError``: the enclosing function is refused by name (the
+    proof's refused member), never the file crashed and never a halt the loop
+    does not raise."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(SugarNotWritten, match="PreLoopBindingReadSugar"):
+        _out(
+            "def f(xs, ys):\n"
+            " for d in xs:\n"
+            "  pass\n"
+            " for d in ys:\n"
+            "  pass\n"
+            " return 0\n"
+        )
 
 
 # --------------------------------------------------------------------------
