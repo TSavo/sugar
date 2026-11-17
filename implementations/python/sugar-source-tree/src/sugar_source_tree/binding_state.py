@@ -144,6 +144,20 @@ def match_route_site(match_node: Node) -> str:
     )
 
 
+def with_route_site(exit_face_id: str) -> str:
+    """The one address every route slot of a ``with`` hangs off.
+
+    A ``with`` goes on after itself by exactly one of two routes, as a
+    ``try`` does: its body completed and ``__exit__`` ran, or ``__exit__``
+    suppressed a halt of its body (``ExitSet.and_exit_truthiness``,
+    ``resume=``).  The suppression route is slot ``with-route:<face>:0``
+    (``route_slot``), the body route that slot false; the halt edges of its
+    body are ``try_edge_slot`` slots of the same address, as a ``try``
+    body's are.  Keyed by the item's exit face (``WithItem._exit_face_id``),
+    one per evaluation of the ``with``."""
+    return f"with-route:{exit_face_id}"
+
+
 def try_edge_slot(site_id: str, edge: int | str) -> BranchResultSlot:
     """Body halt edge ``edge``'s slot: true exactly when the exception a
     handler (or ``finally``) received was raised by body statement ``edge``

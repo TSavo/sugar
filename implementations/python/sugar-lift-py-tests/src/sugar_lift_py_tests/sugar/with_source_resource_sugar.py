@@ -28,6 +28,15 @@ class WithReducedManagerSugar(Sugar):
     enter_slot_id: str | None
     exit_face_id: str
     site: object = field(compare=False, default=None)
+    #: ``with-route`` address when the source tree joined a binding after the
+    #: ``with`` over its routes (``With._suppression_route``): its body
+    #: completed (slot 0 false), or ``__exit__`` suppressed a body halt (slot
+    #: 0 true).  ``None`` when no binding depends on the route.
+    route_site: object = None
+    #: ``((slot id, occurrence keys), ...)``: one ``try-edge`` slot per body
+    #: statement the suppression route's state is joined over; a suppressed
+    #: halt grounds them from its own occurrence (``try_sugar._ground_edges``).
+    edge_keys: tuple = ()
 
     @classmethod
     def witnesses(cls):
@@ -111,6 +120,9 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
     headed, manager_out = header_applied(resource, "manager", ctx)
     if headed is not None:
         return headed
+    # ``(route, outcomes)`` per routed body face: ``None`` the body's route,
+    # ``0`` the suppression of a body halt (``_route_taken``).
+    taken: list = []
     manager_out = _require_exit_set(
         manager_out, owner="WithReducedManagerSugar.manager"
     )
@@ -168,11 +180,19 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                     (*manager_facts, *enter_facts),
                     ctx,
                     resume,
+                    taken,
                 )
 
             # Anything that is not an ``ExitSet`` is refused by name in
             # ``routed`` (owner ``WithReducedManagerSugar.body``).
             parts.append(routed(body_es))
+    if resource.route_site is not None:
+        # Every completed outcome came by one route: the route is decided for
+        # the code after the ``with``, as a ``try``'s is
+        # (``try_sugar._ground_decided_route``).
+        from sugar_lift_py_tests.sugar.try_sugar import _ground_decided_route
+
+        _ground_decided_route(taken, resource.route_site, 1, ctx, resource.site)
     if not parts:
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -195,10 +215,13 @@ def _union_parts(parts):
     return _union_parts((head.union(following), *tail))
 
 
-def _route_exit_over_body(resource, entered, body_es, facts, ctx, resume) -> ExitSet:
+def _route_exit_over_body(
+    resource, entered, body_es, facts, ctx, resume, taken
+) -> ExitSet:
     """``__exit__`` over every face of one entered body, under Python's own
     disposition (8.5), each routed arm carrying the manager's and the enter's
-    ``facts``: the union of the routed arms."""
+    ``facts``: the union of the routed arms.  Each face's route is decided
+    on its completed outcomes and recorded on ``taken`` (``_route_taken``)."""
     from sugar_lift_py_tests.outcome.exit_set import Halted, _require_exit_set
     from sugar_lift_py_tests.outcome.resource_bindings import (
         ExitFaceBinding,
@@ -286,6 +309,7 @@ def _route_exit_over_body(resource, entered, body_es, facts, ctx, resume) -> Exi
                 site=resource.site,
                 resume=resume,
             )
+        routed = _route_taken(resource, body_face, routed, taken)
         routed_faces.append(prepend_facts_to_exitset(routed, (*facts, *face_facts)))
     if not routed_faces:
         return ExitSet(())
@@ -293,6 +317,66 @@ def _route_exit_over_body(resource, entered, body_es, facts, ctx, resume) -> Exi
     for part in routed_faces[1:]:
         result = result.union(part)
     return result.normalize()
+
+
+def _route_taken(resource, body_face, routed, taken):
+    """``routed`` (the outcomes ``__exit__`` routed one body face to) with
+    the ``with``'s route decided on each completed outcome, as a ``try``'s
+    routed outcome decides its own (``try_sugar._route_confirmation``,
+    ``_ground_route_on_faces``): a completed body face goes on by the body's
+    route (slot 0 false), a suppressed body halt by the suppression route
+    (slot 0 true).  On the suppression route the body halt edges are
+    grounded from the halt's own occurrence (``try_sugar._ground_edges``),
+    as a ``try``'s handler grounds them: the code after the ``with`` reads
+    each name as it stood where the body halted (``With._suppression_route``).
+    Halted outcomes leave as they are.  ``(route, routed)`` is recorded on
+    ``taken`` for the decision every outcome agrees on
+    (``_ground_decided_route``).  With no ``route_site`` no binding after the
+    ``with`` depends on its route: ``routed`` as it is."""
+    if resource.route_site is None:
+        return routed
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+    from sugar_lift_py_tests.sugar.try_sugar import (
+        _ground_route_on_faces,
+        _prepend_facts,
+        _route_confirmation,
+    )
+
+    arm = 0 if isinstance(body_face, Halted) else None
+    routed = _ground_route_on_faces(
+        _prepend_facts(
+            routed,
+            _route_confirmation(resource.route_site, 1, arm, resource.site),
+        ),
+        resource.route_site,
+        1,
+        arm,
+        resource.site,
+    )
+    if arm is not None and resource.edge_keys:
+        routed = routed.and_then(
+            lambda record: ExitSet.completed(
+                _halt_edges_grounded(record, resource.edge_keys, body_face.effect)
+            )
+        )
+    taken.append((arm, routed))
+    return routed
+
+
+def _halt_edges_grounded(record, edge_keys, effect):
+    """``record`` (the one a suppressed body halt goes on after the ``with``
+    from, ``resumed``) in a context whose ``try-edge`` slots say which body
+    statement raised ``effect`` (``try_sugar._ground_edges``); as it is where
+    it holds no context."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+    from sugar_lift_py_tests.sugar.try_sugar import _ground_edges
+
+    context = getattr(record, "context", None)
+    if not isinstance(record, _ReducedBlock) or context is None:
+        return record
+    return replace(record, context=_ground_edges(context, edge_keys, effect))
 
 
 def _project_manager_receiver(value, ctx, seen=frozenset()):

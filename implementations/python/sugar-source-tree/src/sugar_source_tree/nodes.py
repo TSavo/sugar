@@ -16724,6 +16724,11 @@ class With(Statement):
             ),
             exit_face_id=exit_face,
             site=self.fragment,
+            # The route and edge slots the reads after the ``with`` are
+            # joined over (``_suppression_route``), decided on every arm it
+            # goes on by.
+            route_site=getattr(self, "with_route_site", None),
+            edge_keys=getattr(self, "with_edge_keys", ()) or (),
         )
 
     def _nest_items(self) -> "With":
@@ -16926,11 +16931,21 @@ class With(Statement):
             exited_net, exited = self._exited(items, body_scope, body_net)
             # Keyed as the item is: the With's own sugar reads its slots off
             # the keyed item.
-            return self._published(
+            node, routed_net = self._suppression_route(
                 self._keyed_evaluation(
                     self if not changed else rewrite(self, **changed), scope
                 ),
+                item,
+                head_scope,
+                body_scope,
+                body_edges,
+                body_net,
                 exited_net,
+                exited,
+            )
+            return self._published(
+                node,
+                routed_net,
                 self._halted(
                     scope, head_scope, body_scope, body_edges, body_net, exited
                 ),
@@ -16948,12 +16963,94 @@ class With(Statement):
         if d:
             changed["body"] = new_body
         exited_net, exited = self._exited(items, body_scope, body_net)
-        return self._published(
+        node, routed_net = self._suppression_route(
             self if not changed else rewrite(self, **changed),
+            items[0],
+            head_scope,
+            body_scope,
+            body_edges,
+            body_net,
             exited_net,
+            exited,
+        )
+        return self._published(
+            node,
+            routed_net,
             self._halted(scope, head_scope, body_scope, body_edges, body_net, exited),
             _header_halt_state(self, scope, head_scope),
         )
+
+    def _make_ifexp(self, test, body, orelse):
+        """A phi over one of this ``with``'s route or edge slots
+        (``_suppression_route``), built as every statement that joins a
+        binding over a slot builds it (``If._make_ifexp``)."""
+        return If._make_ifexp(self, test, body, orelse)
+
+    def _suppression_route(
+        self, node, item, head_scope, body_scope, body_edges, body_net, net, exited
+    ):
+        """``(node, net)``: ``net`` -- what the ``with`` leaves after its body
+        completed and ``__exit__`` ran (``_exited``) -- joined, name by name,
+        with what it leaves on the route where ``__exit__`` suppressed a halt
+        of its body, over the ``with``'s suppression slot (``route_slot`` 0
+        of ``with_route_site``: true on that route, false on the body's).
+
+        On the suppression route the body stopped at the halt, and Python
+        goes on after the ``with`` with every name as it stood there: a store
+        the body never reached was never made.  So the route reads the state
+        a halt of the body carries (``Try._body_halt_edges``: the state at
+        its own statement), joined over the body statement that raised it by
+        the one join a ``try``'s handler reads its body through
+        (``_HaltEdgeJoin``: one ``try-edge`` slot of this address per body
+        statement, which the suppressed halt grounds from its own occurrence,
+        ``try_sugar._ground_edges``).  A name no halt changed holds there
+        what it held before the body; a name unbound before the ``with`` is
+        unbound there, a ``NameError`` read, never the completed body's
+        value.  Before, every name read the completed body's key on both
+        routes, and on the suppression route that key was never bound: the
+        read was refused by name (``EvaluationRefSugar``), the whole
+        function with it.
+
+        ``node`` carries the route address (``with_route_site``) and the edge
+        keys (``with_edge_keys``) its sugar decides those slots by
+        (``WithReducedManagerSugar``), as a ``try`` carries its own
+        (``Try._rewrite_with_route_site``).  A body that cannot halt has no
+        suppression route: ``node`` and ``net`` are as they were.  A name
+        ``__exit__`` may rebind (``exited``) is another evaluation after the
+        ``with`` on both routes (``_exited``) and is not joined."""
+        from .binding_state import join_binding_state, route_slot, with_route_site
+        from .shadow import rewrite_with_leaves
+
+        if not net:
+            return node, net
+        final = {**body_scope, **body_net}
+        edges = Try._body_halt_edges(self, [*body_edges, (None, final)], head_scope)
+        if not edges:
+            return node, net
+        site_id = with_route_site(item._exit_face_id())
+        join = _HaltEdgeJoin(self, head_scope, site_id)
+        at_halt = join.finally_state([join.carry(state) for _i, _m, state in edges])
+        slot = route_slot(site_id, 0)
+        routed = dict(net)
+        for name, completed in net.items():
+            if not isinstance(name, str) or name in exited:
+                continue
+            suppressed = at_halt.get(name, _MISSING)
+            if suppressed is _MISSING:
+                suppressed = head_scope.get(name, _MISSING)
+            if suppressed is _MISSING:
+                continue
+            routed[name] = join_binding_state(
+                slot=slot,
+                when_true=suppressed,
+                when_false=completed,
+                make_ifexp=self._make_ifexp,
+            )
+        leaves = {"with_route_site": site_id}
+        edge_keys = join.edge_keys() if join.minted else ()
+        if edge_keys:
+            leaves["with_edge_keys"] = edge_keys
+        return rewrite_with_leaves(node, leaves), routed
 
     def _exited(self, items, body_scope, body_net):
         """``(net, exited)``: what the ``with`` leaves after its body
@@ -17015,9 +17112,10 @@ class With(Statement):
 
         A halt inside the body that the manager does not suppress leaves the
         ``with`` as a halt; one it suppresses goes on after the ``with`` from
-        the record it halted with (``function_universe_sugar.resumed``), where
-        a store the body never reached is unbound: the read refuses by name
-        (``EvaluationRefSugar._unbound``), never the completed body's value.
+        the record it halted with (``function_universe_sugar.resumed``), and
+        ``body_net`` is already joined over the ``with``'s routes
+        (``_suppression_route``): there every name reads the state at the
+        halt, never the completed body's value.
         A halt inside the ``with`` itself reaches an enclosing handler with
         the state it carries (``halted``, ``With._halted``); one inside its
         head alone (the manager's expression, ``__enter__``) with ``header``
