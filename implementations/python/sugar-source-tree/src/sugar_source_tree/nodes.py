@@ -23484,6 +23484,11 @@ class ReceiverAfterCall(Expression):
         subjects = getattr(self, "subjects", None) or ()
         rules = getattr(self, "rules", None) or ()
         after = getattr(self, "after", None)
+        if prior is not None and rules:
+            # The states before ``prior`` are constructed first, oldest
+            # first, so ``prior.sugar()`` below is one step: its own prior's
+            # sugar is already answered (``_construct_earlier_states``).
+            _construct_earlier_states(prior)
         return ReceiverAfterCallSugar(
             label=self.label,
             site=self.fragment,
@@ -23492,6 +23497,58 @@ class ReceiverAfterCall(Expression):
             rules=tuple(rules),
             after=None if after is None else (after[0], tuple(after[1])),
         )
+
+
+def _decides_by_prior(node) -> bool:
+    """Whether ``node`` is a value after a call that decides by the value
+    before it (``ReceiverAfterCall`` with ``rules`` and a ``prior``): the
+    one kind whose sugar holds its prior's sugar."""
+    return (
+        isinstance(node, ReceiverAfterCall)
+        and getattr(node, "prior", None) is not None
+        and bool(getattr(node, "rules", None))
+    )
+
+
+def _sugar_answered(node) -> bool:
+    """Whether ``node``'s coordinate already holds its sugar answer -- a
+    present sugar or a refusal -- that ``Node.sugar`` would serve now."""
+    cache, key, _ = node._coordinate()
+    rows = cache.sugar_rows.get(cache.memo_key(key), ())
+    return any(row.holds() for row in rows)
+
+
+def _construct_earlier_states(prior) -> None:
+    """Construct the sugar of every state before ``prior`` that is not yet
+    answered, the oldest first.
+
+    A value after a call holds the value before it (``ReceiverAfterCall.
+    prior``), and ``_rebind`` mints one after every statement whose call may
+    reach the object: a name handed to N calls is a chain of N states, and
+    each state's sugar holds its prior's.  Constructed by recursion, the
+    chain is N nested ``Node.sugar`` frames, so a test that hands one
+    object to a few hundred calls -- straight-line Python, no nesting at
+    all -- exhausted the interpreter's stack and the whole file failed to
+    mint (pandas ``tests/frame/methods/test_info.py``,
+    ``tests/arrays/categorical/test_operators.py``, #7757).
+
+    Each state constructed here finds the one before it already answered
+    and constructs in one step; ``prior`` itself is constructed by its
+    caller, whose ``prior.sugar()`` finds this chain answered.  Every state
+    is constructed through ``Node.sugar`` (the one door: its row, its
+    testimony, its refusal by name), once; only the order is oldest first
+    instead of nested.  A state refused by name raises its refusal here, out
+    of the construction that asked for it, as the nested construction
+    raised it."""
+    if not _decides_by_prior(prior) or _sugar_answered(prior):
+        return
+    chain = []
+    node = prior.prior
+    while _decides_by_prior(node) and not _sugar_answered(node):
+        chain.append(node)
+        node = node.prior
+    for state in reversed(chain):
+        state.sugar()
 
 
 class ContainerMutationStatement(Statement):
