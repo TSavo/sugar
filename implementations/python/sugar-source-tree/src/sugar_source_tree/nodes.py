@@ -11067,6 +11067,10 @@ class FunctionDef(Statement):
                         # What an ``__init__``'s receiver may hold where it
                         # leaves (#7757 B2).
                         receiver_holds=_receiver_holds(self),
+                        # A generator function: its call runs none of the
+                        # body, so its contract states no result and no halt
+                        # of the call (``UniverseValue.suspends``).
+                        suspends=FunctionDef._owns_yield(self.body),
                     )
         finally:
             _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
@@ -20964,6 +20968,9 @@ class Lambda(Expression):
             bridge_source_symbol=self.bridge_source_symbol(),
             formal_coordinates=self.formal_coordinates(),
             inputs=self.contract_inputs(),
+            # ``lambda: (yield)`` is a generator function as a ``def`` with a
+            # ``yield`` is (``FunctionDef._construct_sugar``).
+            suspends=FunctionDef._owns_yield((self.body,)),
         )
 
     def contract_inputs(self) -> tuple:

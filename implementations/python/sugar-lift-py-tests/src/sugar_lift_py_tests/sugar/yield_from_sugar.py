@@ -11,8 +11,9 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 class YieldFromSugar(Sugar):
     """A source ``yield from`` boundary; no reduction consumes it (#7757 step 6).
 
-    Same discipline as YieldSuspensionSugar: eager expression reduction must not
-    silently invent generator protocol behavior.
+    A ``yield`` reduces to the two-faced resume (``YieldSuspensionSugar``); a
+    delegation through ``yield from`` is not written, and refuses by name
+    rather than invent generator protocol behavior.
     """
 
     value: object  # the iterable's sugar

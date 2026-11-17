@@ -378,33 +378,46 @@ def test_yield_from_only_function_owns_its_suspension() -> None:
     assert FunctionDef._owns_yield(function.body)
 
 
-def test_census_door_refuses_both_yield_constructors_with_no_call_site() -> None:
-    """CLASSIFICATION PIN: the census door's yield refusals are accounted semantics.
+def test_census_door_reduces_a_yield_and_refuses_a_yield_from() -> None:
+    """CLASSIFICATION PIN: the census door reduces a generator body through
+    its ``yield`` and states no result of its call.
 
-    `functions() -> sugar -> desugar` reduces a function body with no call, so
-    no call frame and therefore no generator instance can exist. No reduction
-    consumes a suspension boundary (a generator call is its definition's
-    coordinate and edge, joined at prove: #7757 step 6), so BOTH constructors
-    refuse here, by name. These occurrences are correct output, not owed work,
-    and no fix at any layer drains them.
+    `functions() -> sugar -> desugar` reduces a function body with no call.
+    A ``yield`` is the two-faced resume (``YieldSuspensionSugar``): the body
+    runs past it to its ``return``, and the universe of a generator function
+    states nothing about the call's ``out`` (``UniverseValue.suspends``): its
+    call returns the generator, never the ``9`` the body returns.  A
+    ``yield from`` still refuses by name (``YieldFromSugar.desugar``).
     """
-    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.ir import and_
+    from sugar_lift_py_tests.outcome.exit_set import Completed
 
-    for body, owner in (
-        ("    yield 7\n    return 9\n", "YieldSuspensionSugar.desugar"),
-        ("    yield from (1, 2)\n    return 9\n", "YieldFromSugar.desugar"),
-    ):
-        source = _source_file("def arbitrarily_renamed():\n" + body)
-        function = next(
-            node for node in source.nodes() if isinstance(node, FunctionDef)
-        )
-        sugar = function.sugar()
-        try:
-            sugar.desugar(None)
-        except SugarNotWritten as refusal:
-            assert refusal.owner == owner
-        else:
-            raise AssertionError(f"{owner} must refuse under the census door")
+    source = _source_file("def arbitrarily_renamed():\n    yield 7\n    return 9\n")
+    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
+    sugar = function.sugar()
+    assert sugar.suspends
+    completed = [
+        exit_.value
+        for exit_ in sugar.desugar(None).exits
+        if isinstance(exit_, Completed)
+    ]
+    assert completed
+    for universe in completed:
+        assert isinstance(universe, UniverseValue)
+        assert universe.suspends
+        assert universe.post() == and_([])
+
+    source = _source_file(
+        "def arbitrarily_renamed():\n    yield from (1, 2)\n    return 9\n"
+    )
+    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
+    try:
+        function.sugar().desugar(None)
+    except SugarNotWritten as refusal:
+        assert refusal.owner == "YieldFromSugar.desugar"
+    else:
+        raise AssertionError("YieldFromSugar.desugar must refuse under the census door")
 
 
 _ENGINE_PICKING_NEW = (
