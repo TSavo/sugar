@@ -567,8 +567,14 @@ class ClassDefinitionValue(GuardStableValue):
         result is named by the state its class's contract states the class
         of, ``python:after(<call result>, "out")`` (as a field read of it
         is, ``CallSiteValue.attribute``).  A class whose metaclass is not
-        decided to be ``type`` (its ``__instancecheck__`` may be anything)
-        keeps the one refusal (``FloorValue.test_python_type``).
+        decided to be ``type`` (its ``__instancecheck__`` may be anything:
+        a ``metaclass=`` keyword, or a base the lifter does not read, such as
+        ``np.ndarray`` or ``pd.DataFrame``), or one with no join symbol, is
+        the undecided type test (``floor_value.undecided_type_test``): both
+        faces owed, its halt kept, never the refusal of the function that
+        tests it (#7757).  It is never ``python:isinstance(<x>, "<C>")``:
+        prove's law would read ``True`` off ``C``'s order there, which a
+        metaclass's ``__instancecheck__`` need not answer.
 
         That term is two-faced (``_isinstance_faces``): where ``type(x)`` is
         no subclass of this class, ``type.__instancecheck__``
@@ -596,7 +602,11 @@ class ClassDefinitionValue(GuardStableValue):
         tested = self._isinstance_faces(value, site)
         if tested is not None:
             return tested
-        return super().test_python_type(value, site)
+        from sugar_lift_py_tests.floor.floor_value import undecided_type_test
+
+        return undecided_type_test(
+            value, self, site, owner="ClassDefinitionValue.test_python_type"
+        )
 
     def _isinstance_faces(self, value, site):
         """The two faces of ``isinstance(<value>, <this class>)``

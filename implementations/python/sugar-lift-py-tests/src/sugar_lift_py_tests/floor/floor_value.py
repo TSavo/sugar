@@ -1653,6 +1653,63 @@ def undecided_attribute_result(
     )
 
 
+def undecided_type_test(value, classinfo, site, *, owner: str):
+    """``isinstance(<value>, <classinfo>)`` that nothing here decides: the
+    undecided truth, its halt kept (#7757).
+
+    ``PyObject_IsInstance`` (Objects/abstract.c) answers ``True`` at once
+    only where ``type(value) is classinfo``.  Otherwise a class whose
+    metaclass is not decided to be ``type`` runs its metaclass's
+    ``__instancecheck__``, which may answer anything or raise; and under
+    ``type``'s own check (``object_isinstance``) a value whose type is no
+    subclass is asked for its ``__class__``, which a property or a
+    ``__getattribute__`` of its type may answer by raising.  So the test is
+    the one form of an undecided operation's value
+    (``undecided_result_terms``): it completes with
+    ``python:isinstance_result(<classinfo>, <value>, <key>)`` only under
+    ``python:isinstance_op.completes``, keyed per evaluation, and halts with
+    an ``UndeterminedRaiseEffect`` (``owner``) under the complement, owed on
+    both faces.  No ``TypeError`` is named and no truth is chosen.  Prove
+    relates nothing to it: the isinstance law (``consistency::
+    isinstance_law_facts``) reads only ``python:isinstance(<x>, "<C>")``
+    over a class whose namespace row states its order.
+
+    A test that reached here with no site is the lifter's own gap: it cannot
+    key the completes atom or the debt, so it refuses by name."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.object_identity import identity_term
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    if site is None:
+        _siteless_undecided_read(
+            owner,
+            f"isinstance({type(value).__name__}, {type(classinfo).__name__})",
+            "Call",
+        )
+    key = occurrence_key(site)
+    term, completes = undecided_result_terms(
+        "isinstance",
+        (
+            identity_term(classinfo, site, "classinfo", owner=owner),
+            identity_term(value, site, "operand", owner=owner),
+        ),
+        key,
+    )
+    return ExitSet.two_faced(
+        SymbolicValue(term),
+        UndeterminedRaiseEffect(
+            blame=str(site),
+            occurrence=key,
+            producer_node_owner=owner,
+            site=site,
+        ),
+        guard=completes,
+        site=site,
+    )
+
+
 def undecided_binary_faces(left, right, site, operator: str):
     """Two faces for ``left <operator> right`` over an undecided operand type.
 
