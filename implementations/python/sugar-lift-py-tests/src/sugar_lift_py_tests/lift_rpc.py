@@ -1391,8 +1391,8 @@ def _closed_enumerate_result(
                 )
             merged[cid] = node
 
-    from sugar_lift_py_tests.canonicalizer import jcs_hash
-    from sugar_lift_py_tests.ir import _json_like_to_value
+    from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
+    from sugar_lift_py_tests.ir import _json_like_to_value, _rpc_canonical_bytes
 
     reachable: Dict[str, Dict[str, Any]] = {}
     resolved: Dict[str, Dict[str, Any]] = {}
@@ -1448,7 +1448,15 @@ def _closed_enumerate_result(
         else:
             raise ValueError(f"term-table CID `{cid}` has unknown kind `{kind}`")
         active.remove(cid)
-        actual = jcs_hash(_json_like_to_value(canonical))
+        # The same bytes the term table minted the CID from
+        # (``TermTableBuilder``: ``_rpc_canonical_bytes`` of the canonical
+        # text), never a second encoding of them. A str a value holds may be
+        # a lone surrogate (``"\ud83d"`` in pandas tests), which has no UTF-8
+        # bytes; the term table hashes it as the scalar the wire carries, and
+        # a plain ``.encode("utf-8")`` here crashed the whole file's mint.
+        actual = blake3_512_of(
+            _rpc_canonical_bytes(encode_jcs(_json_like_to_value(canonical)))
+        )
         if actual != cid:
             raise ValueError(
                 f"term-table CID mismatch: key `{cid}` resolves to `{actual}`"
