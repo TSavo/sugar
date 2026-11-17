@@ -429,6 +429,40 @@ class GuardedValue(FloorValue):
             None,
         )
 
+    def iter_with(self, operation, ctx):
+        """``iter(a if c else b)``: a ``for``, a comprehension or a
+        ``str.join`` over a guarded iterable (``axis = (axis,)`` on one arm,
+        the formal on the other, then ``for ax in axis``).
+
+        Each arm's iteration goes through the one ``iter`` door
+        (``iterator_operation.iterated``) under the iterating caller's
+        context: an arm whose iteration is decided never to raise completes
+        holding no iterator, a list or tuple in hand hands its own iterator,
+        and any other arm (a formal, a call's result, a manager's result) is
+        its own receiver's answer -- the undecided iteration, two faces,
+        owed.  The arms' faces are siblings, each under its own polarity of
+        this value's guard (:func:`_siblings`, the split this value owns),
+        and never joined: each completed face holds its own arm's iterator,
+        so each ``next`` the iteration steps (``iterator_operation.stepped``)
+        is submitted to that arm's iterator only, and an arm whose ``iter``
+        raises leaves before any item under its own guard.  Both arms are
+        always evaluated; no halt of either is dropped (#7757)."""
+        from sugar_lift_py_tests.operations.iterator_operation import iterated
+        from sugar_lift_py_tests.outcome.exit_set import partition
+
+        true_outcome = iterated(
+            self.when_true, ctx, owner=operation.owner, site=operation.blame
+        )
+        false_outcome = iterated(
+            self.when_false, ctx, owner=operation.owner, site=operation.blame
+        )
+        return _siblings(
+            self.guard,
+            true_outcome,
+            false_outcome,
+            partition(("GuardedValue.iter", str(operation.blame), self.guard)),
+        )
+
     def attribute(self, name, site, ctx):
         """Distribute attribute projection over both branch faces.
 
