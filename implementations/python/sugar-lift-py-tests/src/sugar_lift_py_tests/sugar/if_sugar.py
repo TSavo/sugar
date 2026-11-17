@@ -369,6 +369,90 @@ def _joined_evaluation(arms):
     return arm.value
 
 
+def _reduce_suite(body, ctx):
+    """One suite of an ``if`` reduced under ``ctx``: the block reducer."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+
+    return reduce_block_to_exitset(body, ctx)
+
+
+class _SuiteReductions:
+    """Each suite of ONE run of an ``if`` reduced once, whatever number of
+    condition faces select over it.
+
+    A condition that is not one plain completed arm (``a and b``, a test
+    over a value joined after an earlier ``if``, ``x.kind == "f"`` over a
+    guarded value: one completed face per arm) selects the suites once per
+    completed face (``IfSugar._select_on_face``).  Every face of a symbolic
+    test reduces BOTH suites under the same context (``branch_ctx``, the
+    test's ``extend_scope`` of the context the ``if`` runs in, identity for
+    every face that binds nothing), so the reductions are one computation
+    asked k times.  Through an ``elif`` chain -- each ``elif`` the ``else``
+    suite of the one before -- that is k1 * k2 * ... * kd reductions of the
+    innermost suite: exponential in the chain's depth (pandas
+    ``core/arrays/_utils.py``: one 50-line function past the 120 s kit
+    deadline).
+
+    Here each suite is reduced once per run of the ``if`` and every face
+    joins that one reduction under its own formula and partition
+    (``_join_branches``), so nothing a face states changes: the same suite
+    under the same context, occurrence path and branch decisions is the
+    same reduction.  A reduction is reused only where all of those are the
+    very ones it ran under: the same context object, the same occurrence
+    path (``occurrence.current_path``), and the same decision table
+    (``ground_branch_results``, the one context table written in place) --
+    entry by entry, the same objects.  Anything else reduces again, as
+    before.
+    """
+
+    __slots__ = ("_held",)
+
+    def __init__(self) -> None:
+        # id(body) -> [(body, ctx, path, decided, exits)], each reduction
+        # holding the objects it ran under so no id is recycled under it.
+        self._held: dict = {}
+
+    @staticmethod
+    def _decided(ctx):
+        table = getattr(ctx, "ground_branch_results", None)
+        return tuple(table.items()) if isinstance(table, dict) else None
+
+    @staticmethod
+    def _same_decided(held, now) -> bool:
+        if held is None or now is None:
+            return held is now
+        return len(held) == len(now) and all(
+            held_slot == slot and held_value is value
+            for (held_slot, held_value), (slot, value) in zip(held, now)
+        )
+
+    def reduced(self, body, ctx):
+        if ctx is None:
+            # A suite with no context reduces from a fresh root each time.
+            return _reduce_suite(body, ctx)
+        from sugar_lift_py_tests.occurrence import current_path
+
+        path = current_path()
+        decided = self._decided(ctx)
+        for held_body, held_ctx, held_path, held_decided, exits in self._held.get(
+            id(body), ()
+        ):
+            if (
+                held_body is body
+                and held_ctx is ctx
+                and held_path == path
+                and self._same_decided(held_decided, decided)
+            ):
+                return exits
+        exits = _reduce_suite(body, ctx)
+        self._held.setdefault(id(body), []).append(
+            (body, ctx, path, decided, exits)
+        )
+        return exits
+
+
 @dataclass(frozen=True)
 class IfSugar(Sugar):
     """`if <test>: <then> [else: <else>]`, constructed by `If.sugar()` with the
@@ -415,9 +499,12 @@ class IfSugar(Sugar):
         if headed is not None:
             return headed
 
+        # This run of the ``if`` reduces each suite once, however many
+        # condition faces select over it (``_SuiteReductions``).
+        suites = _SuiteReductions()
         condition = plain_completed_value(cond)
         if condition is not None:
-            return self._desugar_condition(condition, ctx)
+            return self._desugar_condition(condition, ctx, suites)
         if isinstance(cond, ExitSet):
             # Any condition that is not one plain completed arm: one that may
             # raise (an unknown callee completes or raises), one with several
@@ -431,15 +518,16 @@ class IfSugar(Sugar):
             # record of where the condition halted (``halts_recorded``), onto
             # which the block composition splices what ran before the ``if``.
             return halts_recorded(cond, halt_record(ctx)).and_then(
-                lambda value: self._select_on_face(value, ctx)
+                lambda value: self._select_on_face(value, ctx, suites)
             )
         return cond
 
-    def _select_on_face(self, value, ctx):
+    def _select_on_face(self, value, ctx, suites=None):
         """One completed condition face selects its suites: its truth is
         taken by the one truth rule (``_desugar_condition``), whose faces
-        each select under their own guard."""
-        return self._desugar_condition(value, ctx)
+        each select under their own guard, over the one reduction of each
+        suite this run of the ``if`` holds (``suites``)."""
+        return self._desugar_condition(value, ctx, suites)
 
     def _ground_branch_result(self, ctx, observed_formula, slot) -> None:
         """A ground condition decides this if's branch-result slot, as the
@@ -464,7 +552,7 @@ class IfSugar(Sugar):
             else FalseBoolLiteralSugar(site=self.site)
         )
 
-    def _desugar_condition(self, condition, ctx: object = None):
+    def _desugar_condition(self, condition, ctx: object = None, suites=None):
         # Branches carry facts/effects: the guard is the condition's TRUTHINESS
         # as a predicate. `.truth` is uniform -- a predicate condition (`if a ==
         # b`) stands as its own formula, a bare value (`if c`) emits the Python
@@ -494,13 +582,21 @@ class IfSugar(Sugar):
                     condition,
                     truth_formula(ExitSet.completed(truth_value), condition),
                     ctx,
+                    suites,
                 )
             )
-        return self._select_suites(condition, truth_formula(truth, condition), ctx)
+        return self._select_suites(
+            condition, truth_formula(truth, condition), ctx, suites
+        )
 
-    def _select_suites(self, condition, observed_formula, ctx) -> ExitSet:
+    def _select_suites(
+        self, condition, observed_formula, ctx, suites=None
+    ) -> ExitSet:
         """The ``if`` on ``condition`` whose truth states ``observed_formula``:
-        a ground formula selects one suite, any other splits both."""
+        a ground formula selects one suite, any other splits both.  A split
+        reads each suite off ``suites``, the one reduction of it this run of
+        the ``if`` holds (``_SuiteReductions``); with none, it reduces them
+        here."""
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
             BranchResultAuthentication,
             branch_result_guard,
@@ -580,8 +676,10 @@ class IfSugar(Sugar):
                 else (ExitSet(()), selected)
             )
         else:
-            then_exits = reduce_block_to_exitset(self.then_body, branch_ctx)
-            else_exits = reduce_block_to_exitset(self.else_body, branch_ctx)
+            if suites is None:
+                suites = _SuiteReductions()
+            then_exits = suites.reduced(self.then_body, branch_ctx)
+            else_exits = suites.reduced(self.else_body, branch_ctx)
 
         # If is union in the exit algebra: each branch is restricted to its
         # polarity, then the partitions normalize together. In particular, a
