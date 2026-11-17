@@ -35,6 +35,14 @@ name: Main scorecard numpy
 # Gate, wait and supersede are the board's (main-scorecard-board.yml): the
 # fast lane measures first, an hourly run never replaces a push run, and a
 # merge burst measures the numpy lane of its head.
+#
+# ONE HEAVY LANE AT A TIME (main-scorecard-board.yml; run 43996546638 was
+# cancelled at 02:28:16Z together with the board and the pandas lift seat it
+# had started beside). The `wait` job also holds until main-scorecard-board.yml's
+# run on this commit (board, pandas lift seat, lift join) finished
+# (AFTER_WORKFLOWS), so numpy takes the host alone. That wait is the fast
+# lane (~15 min) + the board (~10 min) + the pandas lift seat (<= 100 min),
+# so its cap is 330 min, inside the GitHub-hosted 360.
 
 on:
   push:
@@ -55,7 +63,7 @@ permissions:
 env:
   PYTHONUNBUFFERED: "1"
   # One seat; files run side by side inside it (the script's load gate,
-  # 1.25 x CPUs, shares the host with the pandas board and lift lane).
+  # 1.25 x CPUs, guards the shared host; numpy runs after the pandas lanes).
   LIFT_SEATS: "1"
   LIFT_WORKERS: "12"
   LIFT_SEAT_CAP_S: "7200"
@@ -101,12 +109,17 @@ jobs:
         shell: bash
         run: bash tools/main_scorecard_schedule_gate.sh main-scorecard-numpy.yml
 
+  # The fast lane, then main-scorecard-board.yml on this commit (ONE HEAVY
+  # LANE AT A TIME). The cap (330 min) ends the wait before the job's 345.
   wait:
-    name: wait for the fast lane
+    name: wait for the fast lane and the pandas lanes
     needs: [gate]
     if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 345
+    env:
+      AFTER_WORKFLOWS: main-scorecard-board.yml
+      FAST_LANE_WAIT_CAP_S: "19800"
     outputs:
       measure: ${{ steps.wait.outputs.measure }}
     steps:
@@ -125,7 +138,10 @@ jobs:
     needs: [gate, wait]
     if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' && needs.wait.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 150
+    # Set-up and the release build (~10 min), LIFT_SEAT_CAP_S (120 min) plus
+    # the 5 min KILL backstop, LIFT_JOIN_CAP_S (5 min), the post and the
+    # uploads: 140 min at most, inside 165.
+    timeout-minutes: 165
     steps:
       - name: Start the job clock
         shell: bash
