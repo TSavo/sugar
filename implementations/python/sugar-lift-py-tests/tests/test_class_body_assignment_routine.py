@@ -16,11 +16,12 @@ An undefined name (``limit = nope``) is the same halt by the same routine: a
 read of a name nothing binds is a ``NameError`` halt (#7854), so the class
 statement halts with it and no class exists.
 
-Not in this change, and pinned below as what still happens:
-
-- a field whose right-hand side has several completed values still refuses by
-  name.  Carrying those faces would build one class per value: a completion
-  where there is a refusal, which is its own change.
+A field whose right-hand side has several completed values leaves the body
+on several completed faces, and the class statement builds one class on each,
+under that face's guard, as a base with several completions builds one class
+per completion (#7757).  An ``if`` of the body whose test the truth rule does
+not decide reduces both arms (``IfSugar``), and the class is built once per
+arm, under that arm's guard, holding the rows of that arm only.
 
 A class statement runs once, in the module's run; a function called after
 import reads what that run left.  Every read of the class's name -- a call,
@@ -463,13 +464,90 @@ def test_the_class_holds_each_field_value_in_source_order() -> None:
     assert fields[0].value is fields[1].value
 
 
-def test_a_class_conditional_that_is_not_ground_still_refuses() -> None:
-    from sugar_source_tree.panic import SugarNotWritten
+def _classes_made_in(definition: str, body: str) -> list:
+    """The class ``class Box:`` with ``body`` that the function
+    ``definition`` returns, on each of its completed faces.  The class
+    statement stands in the function's body, so each face reads the class
+    its own run of the statement built, in the context it left."""
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+    from sugar_source_tree import nodes
 
-    # ``FLAG`` is a module global: the class body reads it in the module's
-    # run (``_module_run``), where its statement bound it.
-    with pytest.raises(SugarNotWritten, match="not a ground bool literal"):
-        _module_run("    if FLAG:\n        limit = 1\n")
+    source = (
+        _PRELUDE
+        + f"def {definition}():\n"
+        + "    class Box:\n"
+        + "".join(f"    {line}\n" for line in body.splitlines())
+        + "    return Box\n"
+    )
+    tree = _tree(source)
+    (function,) = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, nodes.FunctionDef) and node.name == definition
+    )
+    outcome = function_universe_outcome(function)
+    classes = []
+    for face in outcome.exits:
+        if not isinstance(face, Completed):
+            continue
+        universe = face.value
+        assert isinstance(universe, UniverseValue), outcome
+        for entry in universe.record.statements:
+            if isinstance(entry, ReturnValue):
+                assert isinstance(entry.value, ClassDefinitionValue), entry
+                classes.append(entry.value)
+    return classes
+
+
+def test_a_class_conditional_that_is_not_ground_builds_the_class_on_each_arm() -> None:
+    """``if FLAG:`` in a class body, ``FLAG`` a module global the truth rule
+    does not decide: the ``if`` reduces both arms, each under its test's
+    guard, and the class statement builds the class once per arm -- with
+    ``limit`` where the test holds and without it where it fails.  It was
+    refused whole ("class conditional guard is not a ground bool
+    literal")."""
+    classes = _classes_made_in("make", "    if FLAG:\n        limit = 1\n")
+
+    assert sorted(
+        tuple(field.name for field in value.class_fields) for value in classes
+    ) == [(), ("limit",)]
+
+
+def test_each_arm_of_an_undecided_class_conditional_holds_its_own_rows() -> None:
+    """Both arms bind ``limit``: each class holds the row of its own arm
+    only, never both arms' rows on one face."""
+    classes = _classes_made_in(
+        "make",
+        "    if FLAG:\n        limit = 1\n    else:\n        limit = 2\n",
+    )
+
+    assert [
+        tuple(field.name for field in value.class_fields) for value in classes
+    ] == [("limit",), ("limit",)]
+
+
+def test_an_arm_that_changes_an_earlier_field_builds_the_class_on_each_arm() -> None:
+    """``numpy/lib/_iotools.py``'s ``StringConverter``: an undecided ``if``
+    whose arm changes a list an earlier field holds, and a field after it
+    that changes it again.  The class is built on each arm, the field after
+    the ``if`` the last row of its name on both."""
+    classes = _classes_made_in(
+        "make",
+        "    items = [1]\n"
+        "    if FLAG:\n"
+        "        items.append(2)\n"
+        "    items.extend([3])\n",
+    )
+
+    assert len(classes) == 2
+    for value in classes:
+        assert {field.name for field in value.class_fields} == {"items"}
 
 
 def test_a_class_conditional_after_a_field_that_always_raises_never_runs() -> None:
@@ -483,15 +561,16 @@ def test_a_class_conditional_after_a_field_that_always_raises_never_runs() -> No
     assert halted >= 1
 
 
-def test_a_field_with_several_completed_values_still_refuses() -> None:
-    """Left: lifting this refusal builds one class per value, a completion
-    where there is a refusal.  It is its own change."""
-    from sugar_source_tree.panic import SugarNotWritten
+def test_a_field_with_several_completed_values_builds_one_class_per_value() -> None:
+    """``limit = FLAG or int(FLAG)`` has two completed values: the body
+    leaves on two completed faces and the class statement builds the class
+    on each, under its guard, each holding the value that face bound.  It
+    was refused whole ("class field limit did not construct completely")."""
+    classes = _classes_made_in("make", "    limit = FLAG or int(FLAG)\n")
 
-    with pytest.raises(
-        SugarNotWritten, match="class field limit did not construct completely"
-    ):
-        _module_run("    limit = FLAG or int(FLAG)\n")
+    assert len(classes) >= 2
+    for value in classes:
+        assert [field.name for field in value.class_fields] == ["limit"]
 
 
 def test_a_body_that_did_not_run_to_its_end_builds_no_class() -> None:
