@@ -68,14 +68,12 @@ def _test_line(module: str) -> int:
 #   the read would be the constructed 3.  It stays owed until the lift
 #   names ``as box`` as the manager's own object where nothing else holds
 #   the manager (#7757, carried on #7661).
-# - ``raise Boom()`` / ``except Boom``: the lie is refuted (#8831).  The
-#   raise already carries ``Boom``'s class (``Raise._raised_operand_sugar``
-#   stamps the call with it), so the truthful half is not held open by the
-#   class of the call's result; what keeps it open (the arm where the
-#   handler does not take a raise) is not traced here.
+# ``raise Boom()`` / ``except Boom`` is decided both ways (below): the class
+# contract states the ``*args``/``**kwargs`` its call packs, so ``Boom()``
+# joins its constructor (#9155) and the handler's match is decided.
 _OPEN_UNTIL_STEP_8 = (
     "the claim reads something step 8 does not state: a field of "
-    "__enter__'s result, or (Boom) an arm the handler does not take"
+    "__enter__'s result"
 )
 
 
@@ -255,8 +253,18 @@ def test_a_same_module_exception_class_raised_and_handled_in_a_function(
     The lie (`f() == 2`) is refuted without the class: `f`'s one
     completing arm is the handler's `return 1`, and the arm where the
     handler does not take the raise halts, so wherever `f()` completes it is
-    1 (scorecard 43745139407 measured `unsat`).  The truthful half stays
-    `open` until the class of the raised value is stated at prove."""
-    _assert_open_pair(
-        tmp_path, _RAISE_AND_HANDLE_SAME_MODULE_CLASS, "1", "2", lie="unsat"
+    1 (scorecard 43745139407 measured `unsat`).  The truthful half is `sat`
+    since ``Boom``'s contract states the ``*args``/``**kwargs`` its call
+    packs and ``raise Boom()`` joins its constructor (#9155): the class of
+    the raised value is stated, the handler surely takes it, and `f()`
+    completes 1 (scorecard 44005532618 on 13e3413ad: truthful `green`,
+    lying `refuted`)."""
+    told = run_source_through_real_solver(
+        tmp_path / "t", _RAISE_AND_HANDLE_SAME_MODULE_CLASS.format(claim="1")
     )
+    lied = run_source_through_real_solver(
+        tmp_path / "l", _RAISE_AND_HANDLE_SAME_MODULE_CLASS.format(claim="2")
+    )
+    line = _test_line(_RAISE_AND_HANDLE_SAME_MODULE_CLASS)
+    assert claim_verdict(told.prove_doc, claims_from_line=line) == "sat"
+    assert lied.verdict == "unsat"
