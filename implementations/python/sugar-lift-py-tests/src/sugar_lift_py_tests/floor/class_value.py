@@ -84,13 +84,25 @@ class ClassValue(FloorValue):
         ``self.expected_exceptions[0].__name__``. Without this arm the attribute
         producer panics on BuiltinExceptionClassValue and exit summary stays
         exit-may-halt rather than sealing ExpectsMode.
+
+        Every other member (``str.upper``, ``set.union``, ``ValueError.args``)
+        is ``type(cls).__getattribute__`` over the class's namespace and its
+        order, then the descriptor it finds: nothing here reads that
+        namespace, so the read is the one undecided read -- both faces, owed,
+        its halt kept (``undecided_attribute_result``, #7757) -- never a
+        refusal of the function that reads it.
         """
         if name in {"__name__", "__qualname__"}:
             from sugar_lift_py_tests.floor.string_value import StringValue
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(StringValue(self.name))
-        return super().attribute(name, site, ctx)
+        del ctx
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+
+        return undecided_attribute_result(
+            self, name, site, owner="ClassValue.attribute"
+        )
 
     def test_python_type(self, value, site):
         return value.python_isinstance(self.name, self.to_term(owner=self.name), site)

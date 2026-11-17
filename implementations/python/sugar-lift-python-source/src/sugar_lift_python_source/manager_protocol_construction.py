@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.floor import (
     EnteredManagerStateValue,
-    FloorValue,
     ObjectValue,
 )
 from sugar_lift_py_tests.floor.manager_coordinate import (
@@ -167,34 +166,25 @@ def _exit_for_body(
     )
 
 
-@dataclass(frozen=True)
-class UndecidedManagerSlotResultValue(FloorValue):
+def undecided_manager_slot_result(slot: str, key: str):
     """What ``__enter__`` or ``__exit__`` of the undecided manager returned.
 
     Opaque and keyed on the ``with`` evaluation's exit face: nothing here
-    decides which method ran, so nothing decides what it returned."""
+    decides which method ran, so nothing decides what it returned.  It is
+    the one opaque value (``SymbolicValue``), so every read of it -- an
+    attribute (``f.read``), an item (``f[0]``), its truth (whether
+    ``__exit__``'s result suppresses), an iteration -- is that value's one
+    undecided read, both faces, owed, its halt kept (#7757); no second floor
+    answers some reads and refuses the rest."""
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import ctor, str_const
 
-    slot: str
-    key: str
-
-    def to_term(self, *, owner: str):
-        from sugar_lift_py_tests.ir import ctor, str_const
-
-        del owner
-        return ctor(
+    return SymbolicValue(
+        ctor(
             "python:undecided_manager.slot_result",
-            (str_const(self.slot), str_const(self.key)),
+            (str_const(slot), str_const(key)),
         )
-
-    def truth(self, site):
-        """Truth is the undecided ``py.truthy`` of this exact opaque result."""
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(
-            PredicateValue(py_truthy(self.to_term(owner="truth")), site)
-        )
+    )
 
 
 @dataclass(frozen=True)
@@ -323,7 +313,7 @@ class ReducedManagerProtocolV1:
             return self._undecided_step(
                 "__enter__",
                 EnteredManagerStateValue(
-                    enter_value=UndecidedManagerSlotResultValue(
+                    enter_value=undecided_manager_slot_result(
                         "__enter__", self.exit_face_id
                     ),
                     receiver_state=receiver,
@@ -387,7 +377,7 @@ class ReducedManagerProtocolV1:
             )
         return self._undecided_step(
             "__exit__",
-            UndecidedManagerSlotResultValue("__exit__", self.exit_face_id),
+            undecided_manager_slot_result("__exit__", self.exit_face_id),
         )
 
 

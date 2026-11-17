@@ -136,6 +136,21 @@ class LambdaCallable(FloorValue):
 
         return ExitSet.completed(TrueBoolLiteralSugar(site=site))
 
+    def attribute(self, name, site, ctx):
+        """``f.name`` of a function (``f.__name__``, ``f.__doc__``,
+        ``f.cache``): the ``function`` type's lookup over its descriptors and
+        the function's own ``__dict__``, which any store, anywhere, may have
+        written.  Nothing here reads that dictionary, so the read is the one
+        undecided read, both faces, owed, its halt kept
+        (``undecided_attribute_result``, #7757); never a refusal of the
+        function that reads it."""
+        del ctx
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+
+        return undecided_attribute_result(
+            self, name, site, owner="LambdaCallable.attribute"
+        )
+
     def _function_term(self):
         """This function value as its join symbol (#7757 step 9):
         ``python:function(<symbol>, py.default(<param>, <value>)...,
