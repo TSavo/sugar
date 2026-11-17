@@ -56,6 +56,17 @@ name: Main scorecard board
 # without --final (the lane is pending until the join) and the join posts
 # --final, so a number that never reported is unmeasured and compared. A lost
 # seat is the lane unmeasured, never a partial count.
+#
+# ONE SEAT, FILES IN PARALLEL (run 43960179946: 3 seats x 3 h, 822 of 1421
+# files without a row). The three self-hosted runners share one 32-thread
+# host, so more seats add no CPU: they only take the runners the board and the
+# numpy lane need (seat 2 waited 13 min behind the board; the numpy lane
+# waited 3 h behind the seats). The lane is now one seat (one runner) running
+# LIFT_WORKERS files at once, slowest first by the previous run's rows (order
+# only, no row carried), each file inside the one 300 s ceiling, and no file
+# starts once it could not finish inside LIFT_SEAT_CAP_S. Its rows live
+# under $HOME/.cache/sugar-lift-lane/<run id>, so a re-run of a failed seat
+# on the same runner resumes; a new run measures every file.
 
 on:
   push:
@@ -79,10 +90,13 @@ env:
   # Per-seat and join caps for the pandas board (seconds).
   BOARD_SEAT_CAP_S: "10800"
   BOARD_JOIN_CAP_S: "300"
-  # The nine-step lane: seats, and the cap on one seat (seconds). The
-  # per-file budget is the lane script's own.
-  LIFT_SEATS: "3"
-  LIFT_SEAT_CAP_S: "10800"
+  # The nine-step lane: seats, files at once per seat, and the budget of one
+  # seat (seconds; no file starts once it could not finish inside it). The
+  # per-file ceiling is the lane script's own (300 s). The 1-minute load gate
+  # in the script (1.25 x CPUs) shares the host with the board and numpy.
+  LIFT_SEATS: "1"
+  LIFT_WORKERS: "28"
+  LIFT_SEAT_CAP_S: "5400"
   SCORECARD_ISSUE_TITLE: "Main scorecard"
   SCORECARD_MEASURES: "board,lift"
   # The lanes this workflow posts (main_scorecard_post.py --lane).
@@ -291,12 +305,13 @@ jobs:
     needs: [gate, wait]
     if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' && needs.wait.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 240
+    # Set-up, LIFT_SEAT_CAP_S (90 min), and the upload.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         # One entry per seat; keep in step with LIFT_SEATS.
-        seat: [0, 1, 2]
+        seat: [0]
     steps:
       - name: Start the job clock
         shell: bash
@@ -334,6 +349,24 @@ jobs:
           python tools/bx_corpus_pin_gate.py \
             --expected-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
             --corpus-root "$PANDAS_CORPUS"
+      - name: Timing prior (an earlier run's rows; order only)
+        shell: bash
+        run: |
+          set +e -uo pipefail
+          # The newest earlier board run with seat rows orders this run's
+          # files slowest first. Nothing from it is counted or carried.
+          mkdir -p lift-prior
+          for id in $(gh run list --workflow main-scorecard-board.yml --branch main \
+                        --limit 10 --json databaseId --jq '.[].databaseId'); do
+            [ "$id" = "$GITHUB_RUN_ID" ] && continue
+            if gh run download "$id" --pattern 'pandas-lift-seat-*' \
+                 --dir "lift-prior/$id" >/dev/null 2>&1; then
+              echo "timing prior: run $id, $(cat lift-prior/"$id"/*/*/rows.jsonl 2>/dev/null | wc -l) rows"
+              break
+            fi
+            rm -rf "lift-prior/$id"
+          done
+          true
       - name: Seat (sugar mint + sugar prove per file)
         shell: bash
         env:
@@ -341,27 +374,46 @@ jobs:
           SEAT: ${{ matrix.seat }}
         run: |
           set +e -uo pipefail
+          # Rows live outside the workspace, keyed by this run: a re-run of
+          # this seat (same run, next attempt) on this runner resumes from
+          # them; a new run measures every file. State older than a day goes.
+          STATE_BASE="$HOME/.cache/sugar-lift-lane"
+          STATE="$STATE_BASE/$GITHUB_RUN_ID/pandas-s$SEAT"
+          mkdir -p "$STATE"
+          touch -d '-1 day' "$STATE_BASE/.prune-before"
+          for d in "$STATE_BASE"/*/; do
+            [ "$d" -ot "$STATE_BASE/.prune-before" ] && rm -rf "$d"
+          done
           OUT="$GITHUB_WORKSPACE/lift"
           rm -rf "$OUT"
-          mkdir -p "$OUT"
-          timeout -s KILL "$LIFT_SEAT_CAP_S" \
+          mkdir -p "$OUT/s$SEAT"
+          # The script stops starting files in time to finish inside
+          # LIFT_SEAT_CAP_S; the KILL is only the backstop.
+          timeout -s KILL "$((LIFT_SEAT_CAP_S + 300))" \
             python -u tools/nine_step_lift_lane.py \
               --corpus-root "$PANDAS_CORPUS" \
               --label pandas \
               --slice "$SEAT/$LIFT_SEATS" \
-              --out-dir "$OUT/s$SEAT" \
+              --out-dir "$STATE" \
+              --workers "$LIFT_WORKERS" \
+              --seat-budget "$LIFT_SEAT_CAP_S" \
+              --prior lift-prior \
               > "$OUT/s$SEAT.log" 2>&1
           rc=$?
           echo "$rc" > "$OUT/s$SEAT.rc"
           # The per-file projects are scratch: only the rows travel.
-          rm -rf "$OUT/s$SEAT/work"
+          rm -rf "$STATE/work"
+          cp "$STATE/rows.jsonl" "$OUT/s$SEAT/rows.jsonl"
           echo "lift seat s$SEAT rc=$rc wall=$(( $(date +%s) - JOB_T0 ))s"
+          grep -E "^pandas seat |^seat budget|^holding|^resuming|^retry" "$OUT/s$SEAT.log" | tail -n 40
           tail -n 5 "$OUT/s$SEAT.log"
       - name: Upload the seat (rows and log only)
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: pandas-lift-seat-${{ matrix.seat }}
+          # A re-run attempt replaces the seat's earlier upload.
+          overwrite: true
           path: |
             lift/s*/rows.jsonl
             lift/*.log
@@ -445,6 +497,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pandas-lift-refusals
+          overwrite: true
           path: pandas-lift/refusals.json
           if-no-files-found: warn
       - name: Upload the lift join
@@ -452,6 +505,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pandas-lift-join
+          overwrite: true
           path: |
             pandas-lift/summary.json
             pandas-lift/join.log

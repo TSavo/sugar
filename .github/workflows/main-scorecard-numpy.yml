@@ -18,7 +18,12 @@ name: Main scorecard numpy
 #
 # Every enrolled file goes through tools/nine_step_lift_lane.py, the one lane
 # script the pandas lane also runs: `sugar mint`, `sugar dump`, `sugar prove`
-# per file, LIFT_SEATS seats of --slice i/K on one runner, then the join. The
+# per file, LIFT_SEATS seats of --slice i/K on one runner, then the join.
+# A seat runs LIFT_WORKERS files at once, slowest first by the previous numpy
+# run's rows (order only, nothing carried), each inside the one 300 s
+# ceiling, and starts no file it could not finish inside LIFT_SEAT_CAP_S; its
+# rows live under $HOME/.cache/sugar-lift-lane/<run id>, so a re-run attempt
+# on the same runner resumes (see main-scorecard-board.yml, ONE SEAT). The
 # row on the "Main scorecard" issue carries
 # `numpy_lift_files=M/N numpy_lift_funcs=F/T numpy_refused=R` and the top
 # refusal names, posted with `--lane` (the poster's label-generic lane
@@ -46,8 +51,10 @@ permissions:
 
 env:
   PYTHONUNBUFFERED: "1"
-  # Seats run side by side on one runner, as the board's do.
-  LIFT_SEATS: "4"
+  # One seat; files run side by side inside it (the script's load gate,
+  # 1.25 x CPUs, shares the host with the pandas board and lift lane).
+  LIFT_SEATS: "1"
+  LIFT_WORKERS: "12"
   LIFT_SEAT_CAP_S: "7200"
   LIFT_JOIN_CAP_S: "300"
   SCORECARD_ISSUE_TITLE: "Main scorecard"
@@ -153,6 +160,24 @@ jobs:
               file=sys.stderr,
           )
           PY
+      - name: Timing prior (an earlier run's rows; order only)
+        shell: bash
+        run: |
+          set +e -uo pipefail
+          # The newest earlier numpy run with rows orders this run's files
+          # slowest first. Nothing from it is counted or carried.
+          mkdir -p numpy-prior
+          for id in $(gh run list --workflow main-scorecard-numpy.yml --branch main \
+                        --limit 10 --json databaseId --jq '.[].databaseId'); do
+            [ "$id" = "$GITHUB_RUN_ID" ] && continue
+            if gh run download "$id" --name numpy-lift \
+                 --dir "numpy-prior/$id" >/dev/null 2>&1; then
+              echo "timing prior: run $id, $(cat numpy-prior/"$id"/s*/rows.jsonl 2>/dev/null | wc -l) rows"
+              break
+            fi
+            rm -rf "numpy-prior/$id"
+          done
+          true
       - name: Seats + join (sugar mint + sugar prove per file)
         shell: bash
         env:
@@ -163,18 +188,32 @@ jobs:
           export SUGAR_HOME="$GITHUB_WORKSPACE/.sugar"
           export SUGAR_BIN="$(bin/sugarbin --profile release)"
           bin/sugarbin --profile release --bin sugar-ir-smt-lib >/dev/null
+          # Rows live outside the workspace, keyed by this run, so a re-run
+          # attempt on this runner resumes; state older than a day goes.
+          STATE_BASE="$HOME/.cache/sugar-lift-lane"
+          STATE="$STATE_BASE/$GITHUB_RUN_ID"
+          mkdir -p "$STATE"
+          touch -d '-1 day' "$STATE_BASE/.prune-before"
+          for d in "$STATE_BASE"/*/; do
+            [ "$d" -ot "$STATE_BASE/.prune-before" ] && rm -rf "$d"
+          done
           OUT="$GITHUB_WORKSPACE/numpy-lift"
           rm -rf "$OUT"
           mkdir -p "$OUT"
           K="$LIFT_SEATS"
           for i in $(seq 0 $((K - 1))); do
             (
-              timeout -s KILL "$LIFT_SEAT_CAP_S" \
+              # The script stops starting files in time to finish inside
+              # LIFT_SEAT_CAP_S; the KILL is only the backstop.
+              timeout -s KILL "$((LIFT_SEAT_CAP_S + 300))" \
                 python -u tools/nine_step_lift_lane.py \
                   --corpus-root "$NUMPY_CORPUS" \
                   --label numpy \
                   --slice "$i/$K" \
-                  --out-dir "$OUT/s$i" \
+                  --out-dir "$STATE/numpy-s$i" \
+                  --workers "$LIFT_WORKERS" \
+                  --seat-budget "$LIFT_SEAT_CAP_S" \
+                  --prior numpy-prior \
                   > "$OUT/s$i.log" 2>&1
               echo $? > "$OUT/s$i.rc"
             ) &
@@ -183,6 +222,10 @@ jobs:
           dirs=()
           for i in $(seq 0 $((K - 1))); do
             echo "numpy lift seat s$i rc=$(cat "$OUT/s$i.rc" 2>/dev/null || echo missing)"
+            rm -rf "$STATE/numpy-s$i/work"
+            mkdir -p "$OUT/s$i"
+            cp "$STATE/numpy-s$i/rows.jsonl" "$OUT/s$i/rows.jsonl"
+            grep -E "^numpy seat |^seat budget|^holding|^resuming|^retry" "$OUT/s$i.log" | tail -n 20
             dirs+=("$OUT/s$i")
           done
           timeout -s KILL "$LIFT_JOIN_CAP_S" \
@@ -205,6 +248,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: numpy-lift-refusals
+          overwrite: true
           path: numpy-lift/refusals.json
           if-no-files-found: warn
       - name: Upload seat logs and the join
@@ -212,6 +256,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: numpy-lift
+          # A re-run attempt replaces the earlier upload.
+          overwrite: true
           path: |
             numpy-lift/*.log
             numpy-lift/*.rc
