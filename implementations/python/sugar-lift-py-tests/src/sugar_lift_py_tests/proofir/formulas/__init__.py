@@ -7,20 +7,12 @@ from typing import Any, Generic, Mapping, TypeVar
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.ir import Formula as IrFormula
 from sugar_lift_py_tests.ir import Term as IrTerm
-from sugar_lift_py_tests.ir import (
-    _Atomic,
-    _Connective,
-    _Ctor,
-    _Lambda,
-    _Quantifier,
-    _Var,
-)
 from sugar_lift_py_tests.ir import and_ as ir_and
 from sugar_lift_py_tests.ir import eq as ir_eq
 from sugar_lift_py_tests.ir import formula_to_value
 from sugar_lift_py_tests.proofir._errors import proofir_construction_gap
 from sugar_lift_py_tests.proofir.sorts import Sort
-from sugar_lift_py_tests.proofir.terms import Term
+from sugar_lift_py_tests.proofir.terms import Term, free_vars_in_ir
 
 S = TypeVar("S", bound=Sort)
 
@@ -138,54 +130,13 @@ def _merge_var_sorts(*maps: Mapping[str, Sort]) -> dict[str, Sort]:
 def _free_vars_in_ir_formula(
     ir_formula: IrFormula, memo: "dict[int, frozenset[str]] | None" = None
 ) -> frozenset[str]:
-    # Terms form a shared DAG (term-refs alias one canonical row from many
-    # parents), so the traversal memoizes per node identity: without it every
-    # shared subterm is revisited once per PATH, which is exponential on deep
-    # DAGs. The memo is per top-level call; the formula being traversed pins
-    # every node alive, so id() keys cannot be reused within the call.
-    if memo is None:
-        memo = {}
-    if isinstance(ir_formula, _Atomic):
-        return frozenset().union(
-            *(_free_vars_in_ir_term(term, memo) for term in ir_formula.args)
-        )
-    if isinstance(ir_formula, _Connective):
-        return frozenset().union(
-            *(
-                _free_vars_in_ir_formula(operand, memo)
-                for operand in ir_formula.operands
-            )
-        )
-    if isinstance(ir_formula, _Quantifier):
-        return _free_vars_in_ir_formula(ir_formula.body, memo) - {ir_formula.name}
-    proofir_construction_gap(
-        owner="proofir.formulas.formula_from_ir",
-        observed=type(ir_formula).__name__,
-        requested="known ir.Formula",
-        fix="wrap only ir.py formula values in the ProofIR formula family",
-    )
+    return free_vars_in_ir(ir_formula, formula=True, memo=memo)
 
 
 def _free_vars_in_ir_term(
     ir_term: IrTerm, memo: "dict[int, frozenset[str]] | None" = None
 ) -> frozenset[str]:
-    if memo is None:
-        memo = {}
-    cached = memo.get(id(ir_term))
-    if cached is not None:
-        return cached
-    if isinstance(ir_term, _Var):
-        result = frozenset({ir_term.name})
-    elif isinstance(ir_term, _Ctor):
-        result = frozenset().union(
-            *(_free_vars_in_ir_term(arg, memo) for arg in ir_term.args)
-        )
-    elif isinstance(ir_term, _Lambda):
-        result = _free_vars_in_ir_term(ir_term.body, memo) - {ir_term.param_name}
-    else:
-        result = frozenset()
-    memo[id(ir_term)] = result
-    return result
+    return free_vars_in_ir(ir_term, formula=False, memo=memo)
 
 
 __all__ = ["And", "Eq", "Formula", "formula_from_ir", "formula_to_rpc"]
