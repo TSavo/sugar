@@ -93,7 +93,29 @@ pub struct LiftPluginKit {
     question_cache: std::sync::Arc<Mutex<sugar_lift_rpc_client::QuestionCache>>,
     resident: std::sync::Arc<ResidentSlot>,
     resident_max_requests: usize,
+    /// Live `ResidentGenerationHold`s on this connection (shared by every
+    /// clone, as the resident slot is). While any is held, the resident
+    /// generation is not retired, whatever its response count.
+    generation_holds: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     terminal_error: std::sync::Arc<Mutex<Option<LiftPluginKitError>>>,
+}
+
+/// Keeps the resident generation alive while held (`hold_generation`).
+///
+/// A generation is retired between requests after `resident_max_requests`
+/// successful responses, which is lawful only while every request stands on
+/// its own. A driver whose requests share state the kit keeps in its process
+/// (mint's walk: each parameter-contract link unit is enrolled in one request
+/// and resumed in later ones, `lift_rpc._RETAINED_LINK_UNITS`) holds the
+/// generation across them; dropping the hold lets the next request retire it.
+pub(crate) struct ResidentGenerationHold {
+    holds: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Drop for ResidentGenerationHold {
+    fn drop(&mut self) {
+        self.holds.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 struct ResidentSlot(Mutex<Option<ResidentLifter>>);
@@ -185,7 +207,18 @@ impl LiftPluginKit {
             )),
             resident: std::sync::Arc::new(ResidentSlot(Mutex::new(None))),
             resident_max_requests,
+            generation_holds: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             terminal_error: std::sync::Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Hold the resident generation until the returned guard drops: no
+    /// request sent meanwhile, on this handle or any clone of it, retires the
+    /// generation (`ResidentGenerationHold`).
+    pub(crate) fn hold_generation(&self) -> ResidentGenerationHold {
+        self.generation_holds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ResidentGenerationHold {
+            holds: self.generation_holds.clone(),
         }
     }
 
@@ -627,9 +660,12 @@ impl LiftPluginKit {
             ))
         })?;
 
+        // A held generation is never retired (`hold_generation`): the
+        // requests under the hold share state the kit keeps in its process.
+        let held = self.generation_holds.load(std::sync::atomic::Ordering::SeqCst) > 0;
         let needs_fresh = slot
             .as_ref()
-            .map(|entry| entry.successful_responses >= self.resident_max_requests)
+            .map(|entry| !held && entry.successful_responses >= self.resident_max_requests)
             .unwrap_or(true);
         if needs_fresh {
             if let Some(mut old) = slot.take() {
@@ -1569,5 +1605,65 @@ for line in sys.stdin:
         assert_eq!(&lift_pids[0..2], &[initialize_pids[0], initialize_pids[0]]);
         assert_eq!(&lift_pids[2..4], &[initialize_pids[1], initialize_pids[1]]);
         assert_eq!(lift_pids[4], initialize_pids[2]);
+    }
+
+    /// Run 43960179946: mint's walk enrolls every link unit in one request
+    /// and resumes each in its own; a generation retired between them lost
+    /// the kit's retained continuations, so every pandas file with 63 or
+    /// more link units (64 responses) refused at its first resume past the
+    /// budget. Under a hold no request retires the generation, on any clone;
+    /// the first request after the hold drops does.
+    #[test]
+    fn held_resident_generation_is_not_retired_until_the_hold_drops() {
+        let temp = tempfile::tempdir().expect("test tempdir");
+        let log_path = temp.path().join("requests.log");
+        let (_stub, command) = protocol_stub(&log_path);
+        let mut kit = LiftPluginKit::new("python", command, None);
+        kit.resident_max_requests = 2;
+        let clone = kit.clone();
+
+        let hold = kit.hold_generation();
+        for request in 0..5 {
+            let handle = if request % 2 == 0 { &kit } else { &clone };
+            handle
+                .parse_session(&Input::Spec(json!({
+                    "workspace_root": ".",
+                    "mode": format!("held-{request}")
+                })))
+                .expect("a held generation keeps answering");
+        }
+        drop(hold);
+        kit.parse_session(&Input::Spec(json!({
+            "workspace_root": ".",
+            "mode": "after-hold"
+        })))
+        .expect("the generation retires after the hold");
+
+        let frames = protocol_log(&log_path);
+        let initialize_pids: Vec<_> = frames
+            .iter()
+            .filter_map(|frame| {
+                let (pid, rest) = frame.split_once(':')?;
+                rest.starts_with("initialize:").then_some(pid)
+            })
+            .collect();
+        let lift_pids: Vec<_> = frames
+            .iter()
+            .filter_map(|frame| {
+                let (pid, rest) = frame.split_once(':')?;
+                rest.starts_with("lift:").then_some(pid)
+            })
+            .collect();
+        assert_eq!(
+            initialize_pids.len(),
+            2,
+            "five held requests share one generation; the next one retires it: {frames:?}"
+        );
+        assert_eq!(lift_pids.len(), 6, "no request replayed or dropped: {frames:?}");
+        assert!(
+            lift_pids[0..5].iter().all(|pid| *pid == initialize_pids[0]),
+            "every held request runs on the generation that answered the first: {frames:?}"
+        );
+        assert_eq!(lift_pids[5], initialize_pids[1]);
     }
 }

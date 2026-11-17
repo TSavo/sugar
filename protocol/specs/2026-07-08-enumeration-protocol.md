@@ -22,7 +22,11 @@ else does:
    the `parameter-contract-link-units` rows and one
    `parameter-contract-resume` per link unit, then one `universe` scan per
    file. The universe rows are the proof's rows; there is no `lift` method
-   and no deeper descent.
+   and no deeper descent. The kit retains each enrolled unit in its own
+   process until its resume, so the walk holds one resident generation from
+   the `parameter-contract-link-units` scan through the last resume
+   (`LiftPluginKit::hold_generation`); a generation is retired only between
+   requests that stand on their own.
 2. **The board door** (`scripts/recensus_enumerate_consumer.py`): per file,
    the `functions` scan (D2), the `context-manager-resolutions` and
    `relation-membership` scans, and one `facts` leaf under `auditFrontier`
