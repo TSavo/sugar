@@ -481,16 +481,35 @@ class ClassConstructorBodySugar(Sugar):
         ).and_then(initialize)
 
     def _carrying_exception_args(self, receiver, ctx):
-        """``receiver`` with ``args``: the tuple the frame's ``*args`` formal
-        bound, which is every positional actual of the call.  A formal the
-        call did not bind is refused by name, never read as empty."""
+        """``receiver`` with ``args``: what the frame's ``*args`` formal
+        holds, which is every positional actual of the call.
+
+        Two binders bind that formal, and each value is exactly what
+        ``BaseException_new`` stores (Objects/exceptions.c): a call's binder
+        (``bind_actuals``) the tuple of its positional actuals; the class's
+        own constructor contract (``tree_enumerate.class_universe_outcome``)
+        the formal itself, standing free as every contract formal does, so
+        the contract states ``args`` as the formal a call's edge supplies
+        packed (#7757 step 6).  A formal bound to anything else, or bound at
+        all where nothing bound it, is refused by name, never read as
+        empty."""
         from dataclasses import replace
 
-        from sugar_lift_py_tests.floor import ObjectField, ObjectValue, TupleValue
+        from sugar_lift_py_tests.floor import (
+            ObjectField,
+            ObjectValue,
+            SymbolicValue,
+            TupleValue,
+        )
+        from sugar_lift_py_tests.ir import _Var
         from sugar_source_tree.panic import SugarNotWritten
 
         args = ctx.temporal.value_if_bound(self.exception_args_coordinate_cid)
-        if type(args) is not TupleValue or not isinstance(receiver, ObjectValue):
+        free_formal = type(args) is SymbolicValue and isinstance(args.term, _Var)
+        if (
+            not (type(args) is TupleValue or free_formal)
+            or not isinstance(receiver, ObjectValue)
+        ):
             raise SugarNotWritten(
                 blame=self.site,
                 owner="ClassConstructorBodySugar.exception_args",
