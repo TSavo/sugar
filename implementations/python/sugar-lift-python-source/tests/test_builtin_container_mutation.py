@@ -273,6 +273,39 @@ def test_a_pure_builtin_does_not_change_its_argument(tmp_path):
     )
 
 
+# A name handed to N calls is a chain of N states after a call, each holding
+# the one before it (``ReceiverAfterCall.prior``).  Deep enough that one
+# nested frame per state crossed the interpreter's default limit on its own:
+# the pandas lane minted ``tests/frame/methods/test_info.py`` and
+# ``tests/arrays/categorical/test_operators.py`` to ``maximum recursion depth
+# exceeded`` for the whole file (#7757).  The chain is now constructed and
+# evaluated oldest first, each state in one step.
+_MANY_CALLS = 500
+
+
+def test_a_pure_builtin_handed_the_object_many_times_keeps_it(tmp_path):
+    # POSITIVE: every state still decides by the one before it, so after
+    # every pure call the list is the one bound before them.
+    calls = "".join("    n = len(r)\n" for _ in range(_MANY_CALLS))
+    source = "def f():\n    r = [1]\n" + calls + "    return (n, r)\n"
+    assert _only_return(tmp_path, source) == TupleValue(
+        (TermValue(1), fresh(ListValue, _ints(1)))
+    )
+
+
+def test_unprojected_code_handed_the_object_many_times_leaves_it_unknown(
+    tmp_path,
+):
+    # DISCRIMINATING: each opaque call may change the list, so after the
+    # last it is the unknown a call left -- never ``[1]``, the contents
+    # before the calls.
+    calls = "".join("    v = copy.copy(r)\n" for _ in range(_MANY_CALLS))
+    source = "import copy\ndef f():\n    r = [1]\n" + calls + "    return r\n"
+    returns, _halts = _returns(tmp_path, source)
+    assert returns and all(_is_unknown_after_call(value, "r") for value in returns)
+    assert fresh(ListValue, _ints(1)) not in returns
+
+
 def test_a_name_rebound_from_a_pure_builtin_may_change_its_argument(tmp_path):
     # ``sorted`` here is ``random.shuffle`` by its binding, never the pure
     # builtin by its spelling (#7757): the list is unknown after the call,

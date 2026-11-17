@@ -324,6 +324,14 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
             )
         else:
             outcome, ends = _module_run(node.unit, sf)
+    except RecursionError as exhausted:
+        # The reduction ran out of interpreter stack: this owner is refused
+        # by name, the one refusal its reader serves as the owner's refused
+        # member (``lift_rpc``'s universe scan), and the rest of the file is
+        # minted.  Never a file that fails to mint because one function's
+        # reduction is deep (#7757).  Not kept, as no refusal is.
+        abandon_row(computation)
+        raise _stack_exhausted(node, lc, exhausted) from exhausted
     except BaseException:
         # A refusal is not kept: what the reduction read and said belongs
         # to the computation around it.
@@ -332,6 +340,30 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     held = OwnerReduction(node.unit, outcome, ends)
     close_row(_OWNER_REDUCTIONS, key, computation, node.reporter, value=held)
     return held
+
+
+def _stack_exhausted(node, lc, exhausted):
+    """The refusal by name of the owner (``node``, at ``lc``) whose
+    reduction exhausted the interpreter's stack (``exhausted``), as the roll
+    call names a root whose construction did (``roll_call.discharge``)."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    gap = SugarNotWritten(
+        owner="tree_enumerate.owner_reduction",
+        blame=node.fragment,
+        observed=(
+            f"RecursionError reducing {node.kind} at "
+            f"{node.unit.filename}:{lc.start_line}:{lc.start_col}: {exhausted}"
+        ),
+        requested="a reduction of this owner whose depth its source bounds",
+        fix=(
+            "name the walk that nests once per element of the source (a "
+            "statement, a call, an object's state) and make it an iterative "
+            "fold; never raise the interpreter's limit"
+        ),
+    )
+    gap.kind = "ConstructionRecursionGap"
+    return gap
 
 
 # The units whose module run is under way.  Set by the module's own

@@ -29,11 +29,18 @@ projections of it, which answer from that one evaluation.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field
 from typing import ClassVar
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
+
+# The states before a value after a call, already evaluated in one context
+# (``_earlier_states_evaluated``): ``(ctx, {id(state): (state, outcome)})``.
+_EARLIER_STATES: ContextVar = ContextVar(
+    "receiver_after_call_earlier_states", default=None
+)
 
 
 def _not_verdict(cls, floor_name, reason):
@@ -362,7 +369,7 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
         unknown = ExitSet.completed(self._changed(ctx))
         if self.prior is None or not self.rules:
             return unknown
-        held = self.prior.desugar(ctx)
+        held = self._prior_outcome(ctx)
         value = plain_completed_value(held)
         if value is None:
             return unknown
@@ -388,6 +395,73 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
             ):
                 return unknown
         return held
+
+    def _decides_by_prior(self) -> bool:
+        return self.prior is not None and bool(self.rules)
+
+    def _prior_outcome(self, ctx):
+        """``self.prior`` evaluated in ``ctx``: once, as before, but never by
+        nesting one evaluation per state.
+
+        A value after a call holds the value before it, and the tree mints
+        one after every statement whose call may reach the object
+        (``container_mutation._rebind``): a name handed to N calls is a chain
+        of N states, each evaluating its prior.  Evaluated by recursion that
+        is N nested ``desugar`` frames, and a straight-line test that hands
+        one object to a few hundred calls exhausted the interpreter's stack:
+        the whole file failed to mint (pandas ``tests/frame/methods/
+        test_info.py``, ``tests/arrays/categorical/test_operators.py``,
+        #7757).
+
+        Here every state below ``self.prior`` that decides by its own prior
+        is evaluated first, the oldest first, each through its own
+        ``desugar`` (the one evaluation: its occurrence path, its stamped
+        site), in ``ctx`` and under the occurrence path the nested
+        evaluation gave it (each state's path is the one the state after it
+        evaluated under, extended by that state's iteration tags,
+        ``evaluation_path``).  Each finds its own prior's outcome already
+        evaluated here and answers in one step.  Every state is still
+        evaluated once, in the one context, to the same outcome."""
+        from sugar_lift_py_tests.occurrence import (
+            current_path,
+            extended_path,
+            occurrence_path,
+        )
+
+        prior = self.prior
+        earlier = _EARLIER_STATES.get()
+        table = earlier[1] if earlier is not None and earlier[0] is ctx else {}
+
+        def evaluated(state, path):
+            # ``state``'s outcome, evaluated here in ``ctx`` under ``path``.
+            known = table.get((id(state), path))
+            return None if known is None or known[0] is not state else known
+
+        path = current_path()
+        known = evaluated(prior, path)
+        if known is not None:
+            return known[1]
+        chain = []
+        paths = []
+        state = prior
+        while isinstance(state, ReceiverAfterCallSugar) and state._decides_by_prior():
+            if evaluated(state, path) is not None:
+                break
+            chain.append(state)
+            paths.append(path)
+            tags = getattr(state, "__dict__", {}).get("_occurrence_tags")
+            path = extended_path(path, tuple(tags or ()))
+            state = state.prior
+        if len(chain) < 2:
+            return prior.desugar(ctx)
+        token = _EARLIER_STATES.set((ctx, table))
+        try:
+            for state, state_path in zip(reversed(chain), reversed(paths)):
+                with occurrence_path(state_path):
+                    table[(id(state), state_path)] = (state, state.desugar(ctx))
+        finally:
+            _EARLIER_STATES.reset(token)
+        return table[(id(prior), paths[0])][1]
 
     def _changed(self, ctx):
         """The value after the call where the call may have changed it:
