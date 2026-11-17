@@ -1190,12 +1190,34 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
     def _recurrence_starts(self, runtime, heads):
         """The value each carried name (``runtime.carried_names`` order) has
-        where the recurrence stands: its recurrence value (``heads``, in
-        coordinate order) for a name carried under a binding coordinate;
-        None for a name carried through its header alone, which has none
-        here, so its header is left unbound and a read of it is refused by
-        name."""
+        where the recurrence stands: its recurrence value -- the fixed point
+        of the loop's step under the key a read after the loop reads it
+        through, the one value ``_recurrence`` states and publishes for it.
+
+        - a name carried under a binding coordinate: ``heads`` (in
+          coordinate order), the head of its coordinate;
+        - a name carried through its header alone (a module binding, a name
+          first bound in the loop, a ``nonlocal`` cell): the head of its
+          post-loop key (``published_evaluations``, ``loop_post_writes``:
+          its header's key), the head ``_recurrence`` publishes it under.
+
+        An item may follow earlier items, so it begins with what they handed
+        on, never with the value before the loop: the recurrence's value,
+        which nothing decides, so a read of it owes the undecided member
+        (``read_of_bound_value``).  A name first bound in the loop keeps its
+        write slot undecided (``_enter_header``, ``decide``): both its arms
+        stand, the ``NameError`` where no earlier item wrote it included.
+
+        None only for a carried name the loop publishes under no key, whose
+        header is then left unbound and a read of it refused by name."""
         by_name = dict(zip(self._coordinate_names(runtime), heads, strict=True))
+        for name, (post_key, _writes, _else_writes) in zip(
+            getattr(runtime, "published_names", ()),
+            getattr(runtime, "published_evaluations", ()),
+            strict=True,
+        ):
+            if by_name.get(name) is None:
+                by_name[name] = self._recurrence_head(post_key)
         return tuple(
             None if by_name.get(name) is None else SymbolicValue(by_name[name])
             for name in runtime.carried_names
@@ -1974,11 +1996,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
             ctx = ReduceContext.root(owner="LoopRecurrenceSugar.symbolic-item")
         item = partial(entered, loop_symbolic_item_segment(self.target_cid))
-        # The recurrence has a value for each name it carries under a binding
-        # coordinate (``heads``, in coordinate order); a name it carries
-        # through its header alone has none here, so its header is left
-        # unbound and a read of it is refused by name
-        # (``_recurrence_starts``).  Whether an earlier item wrote a name
+        # The recurrence has a value for each name it carries: the head of
+        # its binding coordinate (``heads``) or, carried through its header
+        # alone, of its post-loop key (``_recurrence_starts``); each header
+        # is bound to it inside the item.  Whether an earlier item wrote a name
         # first bound in the loop is not known here: its write slot is left
         # undecided (``decide``).
         starts = self._recurrence_starts(runtime, heads)

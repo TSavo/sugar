@@ -19,11 +19,8 @@ call (#7757 step 7).  These are unit checks of the contract; the twins are
 
 from __future__ import annotations
 
-import pytest
-
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -229,17 +226,22 @@ def test_count(xs):
 """
 
 
-def test_a_rebinding_in_a_live_loop_is_refused_by_name() -> None:
+def test_a_rebinding_in_a_live_loop_reads_the_recurrences_value() -> None:
     # A live loop over the cell ``xs`` runs its one symbolic item, and the
     # recurrence carries the ``nonlocal`` cell ``n`` through its header
-    # alone, with no recurrence coordinate: its header is left unbound in
-    # the item and the read of ``n`` in ``n += x`` is refused by name
-    # (``LoopRecurrenceSugar._recurrence_starts``,
-    # ``refuse_unbound_evaluation``; scorecard 43752693483).  The function
-    # is refused, so its contract states nothing of the cell, never a value
+    # alone, published through its post-loop key.  The item begins with the
+    # recurrence's value of that key (``LoopRecurrenceSugar._recurrence_starts``),
+    # what earlier items handed on, never the value before the loop: the
+    # read of ``n`` in ``n += x`` owes the undecided member, and the function
+    # is no longer refused (before, the header was left unbound in the item
+    # and the read was refused by name, scorecard 43752693483).  Whatever the
+    # contract states of the cell is the recurrence's value, never a value
     # made up for it.
-    with pytest.raises(ConstructionPanic, match="read of `n`"):
-        _posts(_LIVE_LOOP, "bump")
+    posts = _posts(_LIVE_LOOP, "bump")
+    assert posts, posts
+    for post in posts:
+        if "python:after" in post and "cell:n" in post:
+            assert "python:loop.recurrence" in post, post
 
 
 _UNROLLED_LOOP = """\
