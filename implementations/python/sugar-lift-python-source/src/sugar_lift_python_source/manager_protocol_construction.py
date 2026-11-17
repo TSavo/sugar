@@ -186,6 +186,28 @@ def undecided_manager_slot_result(slot: str, key: str):
         )
     )
 
+    def iter_with(self, operation, ctx):
+        """``iter(<manager result>)`` (``with open(p) as f: for line in f``):
+        nothing here decides which ``__enter__`` ran, so nothing decides the
+        type of what it returned or its ``__iter__``.  The one two-faced
+        undecided read (``FloorValue.undecided_iteration``), as for a call's
+        result (``CallSiteValue.iter_with``): a ``for`` over it is the
+        recurrence that follows the completed face, its ``iter`` halt kept
+        (#7757)."""
+        del ctx
+        return self.undecided_iteration(
+            operation.blame, owner="UndecidedManagerSlotResultValue.iter"
+        )
+
+    def next_with(self, operation, ctx):
+        """``next(<manager result>)``: the one two-faced undecided read
+        (``FloorValue.undecided_next``), for the reason ``iter_with``
+        gives."""
+        del ctx
+        return self.undecided_next(
+            operation.blame, owner="UndecidedManagerSlotResultValue.next"
+        )
+
 
 @dataclass(frozen=True)
 class ReducedManagerProtocolV1:

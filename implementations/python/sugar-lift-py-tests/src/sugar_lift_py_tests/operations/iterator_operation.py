@@ -303,7 +303,11 @@ def stepped(
     (``iteration_total``), a decided builtin iterable whose contents are not
     current (``source_call_resolution.iterates_without_raising``: a list,
     tuple, ``str``, ``bytes``, set or dict iterator), or a decided builtin
-    iterator (``ListIteratorValue``, ``TupleIteratorValue``)."""
+    iterator (``ListIteratorValue``, ``TupleIteratorValue``).  Nor where
+    ``iterated`` completed holding no iterator: it does so only for an
+    iteration decided never to raise, which an arm of a guarded iterable
+    may be when the iterable as a whole is not (``GuardedValue.iter_with``:
+    each arm's face holds its own arm's iterator)."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.floor.iterator_value import (
         ListIteratorValue,
@@ -318,7 +322,8 @@ def stepped(
     )
 
     if (
-        iteration_total(iterable)
+        iterator is None
+        or iteration_total(iterable)
         or iterates_without_raising(iterable)
         or isinstance(iterator, (ListIteratorValue, TupleIteratorValue))
     ):
