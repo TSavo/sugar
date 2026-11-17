@@ -394,16 +394,26 @@ def _refuse_deferred_carried_writes(loop, carried_names) -> None:
                 )
 
 
-def _initial_value_sugar_for_loop_prestate(state):
-    """Project one pre-loop binding state into an initial-value sugar.
+def _initial_value_sugar_for_loop_prestate(state, *, name, site):
+    """Project one pre-loop binding state of ``name`` into the sugar the
+    loop at ``site`` reduces its header's start from.
 
     Hierarchy law: ``GuardedBinding`` / ``UnboundBinding`` / ``LoopProjectedBinding``
-    are binding *states*, not Nodes. Their ``.sugar()`` routes through the same
-    projection door as this helper (``_project_binding_state_sugar`` /
-    ``_construct_binding_projection``). One door, every species.
+    are binding *states*, not Nodes. They project through the one projection
+    door (``_construct_binding_projection``). One door, every species.
+
+    A projection is no sugar: the start is its read, ``read_binding`` over
+    it (``PreLoopBindingReadSugar``), as a ``LoopProjectedBinding``'s
+    product reads its own projection.  Handing the projection itself to the
+    loop crashed the file on its ``desugar``
+    (``'GuardedProjection' object has no attribute 'desugar'``, #7757).
     """
-    from .binding_state import _project_binding_state_sugar
-    from .nodes import Node
+    from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import (
+        PreLoopBindingReadSugar,
+    )
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+
+    from .nodes import Node, _construct_binding_projection
 
     if isinstance(state, LoopProjectedBinding):
         product = state.constructed_term_product
@@ -415,7 +425,10 @@ def _initial_value_sugar_for_loop_prestate(state):
         return product
     if isinstance(state, Node):
         return state.sugar()
-    return _project_binding_state_sugar(state)
+    projection = _construct_binding_projection(state)
+    if isinstance(projection, Sugar):
+        return projection
+    return PreLoopBindingReadSugar(name=name, state=projection, site=site)
 
 
 def _formula_cid(formula) -> str:
@@ -1201,12 +1214,16 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         # first bound in the loop (its header starts unbound).
         entries = dict(zip(coordinate_names, pre_runtime, strict=True))
         return tuple(
-            _initial_value_sugar_for_loop_prestate(entries[name].state)
+            _initial_value_sugar_for_loop_prestate(
+                entries[name].state, name=name, site=loop.fragment
+            )
             if name in entries
             else (
                 None
                 if isinstance(starts[name], UnboundBinding)
-                else _initial_value_sugar_for_loop_prestate(starts[name])
+                else _initial_value_sugar_for_loop_prestate(
+                    starts[name], name=name, site=loop.fragment
+                )
             )
             for name in carried_names
         )
