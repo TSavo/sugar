@@ -374,18 +374,43 @@ args = sys.argv[1:]
 assert args[0] == "mint", args
 out = pathlib.Path(os.environ["SUGAR_KIT_PROFILE_DIR"])
 assert out.is_absolute(), out
-deadline = os.environ["SUGAR_LIFT_RESPONSE_TIMEOUT_SECS"]
+assert "SUGAR_LIFT_RESPONSE_TIMEOUT_SECS" not in os.environ  # the row's own deadline
 for pid, samples in ((11, 3), (12, 40)):
     (out / f"kit-profile-{{pid}}.json").write_text(json.dumps({{
-        "samples": samples, "elapsedSeconds": 1.5, "deadline": deadline,
+        "samples": samples, "elapsedSeconds": 1.5,
         "request": {{"inFlight": "sugar.enumerate:universe", "id": 62}},
         "requests": {{"sugar.enumerate:universe": samples}},
         "self": [{{"frame": f"f{{i}}", "samples": 1}} for i in range(20)],
         "inclusive": [{{"frame": "g", "samples": samples}}],
     }}))
-print("lift plugin transport stalled at stage=read_line.enter message_id=62", file=sys.stderr)
+print({message!r}, file=sys.stderr)
 sys.exit(1)
 """
+
+STALL = "error: lift plugin transport stalled at stage=read_line.enter message_id=62"
+
+
+def _fake_sugar(tmp_path, message):
+    fake = tmp_path / "sugar"
+    fake.write_text(FAKE_PROFILING_SUGAR.format(python=sys.executable, message=message))
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    return fake
+
+
+def _mint_sampled(tmp_path, message):
+    root = tmp_path / "pkg"
+    (root / "tests").mkdir(parents=True)
+    (root / "tests/test_matmul.py").write_text("def test_a():\n    x = 1\n")
+    work = tmp_path / "work"
+    work.mkdir()
+    store = tmp_path / "store"
+    store.mkdir()
+    profiles = tmp_path / "profiles"
+    row = lane.mint_one(
+        str(_fake_sugar(tmp_path, message)), root, root / "tests/test_matmul.py",
+        work, store, 300, corpus(), profiles,
+    )
+    return row, profiles, work
 
 
 def test_mint_stalled_is_the_ceiling_or_the_kit_deadline():
@@ -396,31 +421,50 @@ def test_mint_stalled_is_the_ceiling_or_the_kit_deadline():
     assert not lane.mint_stalled({"file": "a.py"})
 
 
-def test_profile_one_reads_the_heaviest_kit_profile_and_keeps_no_proof(tmp_path):
-    root = tmp_path / "pkg"
-    (root / "tests").mkdir(parents=True)
-    (root / "tests/test_matmul.py").write_text("def test_a():\n    x = 1\n")
-    fake = tmp_path / "sugar"
-    fake.write_text(FAKE_PROFILING_SUGAR.format(python=sys.executable))
-    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
-    work = tmp_path / "work"
-    work.mkdir()
-    profiles = tmp_path / "profiles"
-    row = lane.profile_one(str(fake), root, "tests/test_matmul.py", work, profiles, 300)
-    assert row["file"] == "tests/test_matmul.py"
-    assert row["status"] == "profiled"
-    assert row["profile"]["rc"] == 1
-    assert "transport stalled" in row["profile"]["error"]
-    assert row["profile"]["dir"] == "tests__test_matmul.py"
-    summary = row["profile"]["summary"]
+def test_a_stalled_mint_keeps_the_profile_its_own_run_left(tmp_path):
+    row, profiles, work = _mint_sampled(tmp_path, STALL)
+    assert lane.mint_stalled(row)
+    assert list(work.iterdir()) == []  # the project is scratch: no proof kept
+    profiled = lane.profile_row(row, profiles)
+    assert profiled["file"] == "tests/test_matmul.py"
+    assert profiled["status"] == "profiled"
+    assert profiled["profile"]["rc"] == 1
+    assert "transport stalled" in profiled["profile"]["error"]
+    assert profiled["profile"]["dir"] == "tests__test_matmul.py"
+    summary = profiled["profile"]["summary"]
     assert summary["path"] == "kit-profile-12.json"
     assert summary["samples"] == 40
     assert len(summary["self"]) == lane.PROFILE_TOP_FRAMES
     assert summary["request"]["id"] == 62
-    # The CLI's response deadline was raised to the file ceiling.
-    kept = json.loads((profiles / "tests__test_matmul.py" / "kit-profile-12.json").read_text())
-    assert kept["deadline"] == "300"
-    assert list(work.iterdir()) == []  # the project is scratch: no proof kept
+
+
+def test_a_mint_that_did_not_stall_keeps_no_profile(tmp_path):
+    row, profiles, _ = _mint_sampled(tmp_path, "error: LifterRefusal: z")
+    assert not lane.mint_stalled(row)
+    assert not (profiles / "tests__test_matmul.py").exists()
+
+
+def test_a_multi_line_error_is_recorded_whole(tmp_path):
+    message = (
+        "\x1b[1m\x1b[31merror\x1b[39m\x1b[0m: kit transform failed: lift plugin "
+        "diagnostic kind=path_execution path=lift.path: tree enumeration failed: "
+        "sugar.enumerate response from `python` not valid JSON: EOF; raw=partial\n"
+        "second line of the raw frame\n"
+        "; fix=Inspect the lift PathAlgebra step and registered LiftKit"
+    )
+    row, _, _ = _mint_sampled(tmp_path, message)
+    assert row["mint"]["error"].startswith("; fix=Inspect")  # the last line alone
+    whole = row["mint"]["diagnostic"]["message"]
+    assert whole.startswith("error: kit transform failed")
+    assert "not valid JSON: EOF" in whole and "second line" in whole
+    assert "\x1b" not in whole
+    assert row["refusals"][0]["diagnostic"]["message"] == whole
+
+
+def test_error_block_takes_the_last_error_to_the_end():
+    text = "warn: x\nerror: first\nnoise\nerror: second\n  detail\n"
+    assert lane.error_block(text) == "error: second\n  detail"
+    assert lane.error_block("no error word\nat all") == "no error word\nat all"
 
 
 def test_run_adds_env_to_the_inherited_environment(tmp_path):
