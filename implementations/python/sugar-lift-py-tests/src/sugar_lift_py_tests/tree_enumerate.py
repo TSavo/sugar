@@ -1051,9 +1051,11 @@ def function_universe_outcome(fn):
 
     A method whose own frame has a ``__class__`` cell (PEP 3135: it reads
     ``super`` or ``__class__``, ``_class_cell_statement``) runs with that cell
-    holding the class its statement bound, read through the statement's key
-    in the state the module's one run left (``_class_statement_read``), as
-    the class's own contract reads it: a zero-argument ``super()`` in it is
+    holding the class its statement built, read through the cell's key in
+    the state the module's one run left (``_class_cell_read``): the class
+    ``type.__new__`` made, before any decorator ran, so a decorated class's
+    methods read their cell as an undecorated one's do (PEP 3135); a
+    zero-argument ``super()`` in it is
     then the dispatched call after that class (#7757 entry 6), in an
     ``__init__`` as in any method.
 
@@ -1116,7 +1118,8 @@ def function_universe_outcome(fn):
                 owner="function_universe_outcome",
                 blame=fn.fragment,
                 observed=(
-                    f"the class statement's key holds a {type(value).__name__}"
+                    f"the class statement's __class__ cell holds a "
+                    f"{type(value).__name__}"
                 ),
                 requested="the class its __class__ cell holds (PEP 3135)",
                 fix="seat the cell with the class its statement bound",
@@ -1140,7 +1143,22 @@ def function_universe_outcome(fn):
         held = entry.with_temporal(temporal)
         return sugar.desugar(held)
 
-    return _class_statement_read(cell, entry).and_then(in_its_cell)
+    return _class_cell_read(cell, entry).and_then(in_its_cell)
+
+
+def _class_cell_read(cls, entry):
+    """The class the ``__class__`` cell of a method of ``cls`` holds, as a
+    reader after import meets it (PEP 3135): the class the statement
+    ``cls`` built, never what its decorators returned.  A class of the
+    module body is read through its cell's key in the state the module's
+    one run left (``DecoratorApplicationSugar.class_cell_read``: the key
+    the statement bound the class it built under, beside its name's).  A
+    class a class body holds is read as ``Outer.Inner`` is
+    (``_class_statement_read``), refused by name there where that is not
+    the class the statement built."""
+    if _enclosing_class(cls) is not None:
+        return _class_statement_read(cls, entry)
+    return cls.statement_value_ref().sugar().class_cell_read(entry)
 
 
 def _first_positional_formal(fn):

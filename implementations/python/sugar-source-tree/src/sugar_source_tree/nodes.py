@@ -25512,11 +25512,41 @@ def _decorated_statement_sugar(statement):
 
     from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
+    if _binds_class_cell(statement) and hasattr(own, "cell_evaluation"):
+        # The class the statement builds is bound under its ``__class__``
+        # cell's key too (PEP 3135), whatever the decorators bind the name
+        # to: what a method's own universe seats its cell with
+        # (``tree_enumerate.function_universe_outcome``).
+        from sugar_lift_py_tests.sugar.decorator_application_sugar import (
+            class_cell_key,
+        )
+
+        object.__setattr__(own, "cell_evaluation", class_cell_key(evaluation))
     return AssignSugar(
         name=statement.name,
         value=own,
         site=statement.fragment,
         evaluations=((statement.name, evaluation),),
+    )
+
+
+def _binds_class_cell(statement) -> bool:
+    """Whether ``statement`` is a ``class`` statement of the module body:
+    the one whose class the module's one run leaves under its ``__class__``
+    cell's key (``DecoratorApplicationSugar.cell_evaluation``), read by a
+    method of it called after import
+    (``tree_enumerate.function_universe_outcome``).  A class a class body
+    holds is read through its enclosing class's namespace, and one a
+    function body holds is bound in no module state, so neither binds it."""
+    if not isinstance(statement, ClassDef):
+        return False
+    module = getattr(statement.unit, "typed_module", None)
+    if module is None:
+        return False
+    identity = SourceOccurrenceIdentityV1.of(statement)
+    return any(
+        isinstance(item, ClassDef) and SourceOccurrenceIdentityV1.of(item) == identity
+        for item in module.body
     )
 
 
