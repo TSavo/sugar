@@ -399,8 +399,10 @@ def _initial_value_sugar_for_loop_prestate(state, *, name, site):
     loop at ``site`` reduces its header's start from.
 
     Hierarchy law: ``GuardedBinding`` / ``UnboundBinding`` / ``LoopProjectedBinding``
-    are binding *states*, not Nodes. They project through the one projection
-    door (``_construct_binding_projection``). One door, every species.
+    are binding *states*, not Nodes. They project through the sole projection
+    door (``binding_state._project_binding_state_sugar``, which routes to
+    ``_construct_binding_projection``); nothing here reaches the projection
+    behind it. One door, every species.
 
     A projection is no sugar: the start is its read, ``read_binding`` over
     it (``PreLoopBindingReadSugar``), as a ``LoopProjectedBinding``'s
@@ -413,7 +415,8 @@ def _initial_value_sugar_for_loop_prestate(state, *, name, site):
     )
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
-    from .nodes import Node, _construct_binding_projection
+    from .binding_state import _project_binding_state_sugar
+    from .nodes import Node
 
     if isinstance(state, LoopProjectedBinding):
         product = state.constructed_term_product
@@ -425,7 +428,7 @@ def _initial_value_sugar_for_loop_prestate(state, *, name, site):
         return product
     if isinstance(state, Node):
         return state.sugar()
-    projection = _construct_binding_projection(state)
+    projection = _project_binding_state_sugar(state)
     if isinstance(projection, Sugar):
         return projection
     return PreLoopBindingReadSugar(name=name, state=projection, site=site)
