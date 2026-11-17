@@ -51,7 +51,7 @@ pub use memento_pool::{
 };
 pub use proof::{build_proof_envelope, ProofEnvelopeInput, ProofEnvelopeOutput};
 pub use proof_graph::{
-    contains_term_ref, member_body, member_field, member_kind, member_signature, member_signer,
+    collect_term_ref_cids, contains_term_ref, member_body, member_field, member_kind, member_signature, member_signer,
     recompute_member_cid, verify_member_signature, AnchoredMember, AssertionSurfaceMemento,
     AtomCid, AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento,
     ClaimContractMemento, ContextManagerContractMemento, ContractBody, ContractBodyCid,

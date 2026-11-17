@@ -11,6 +11,20 @@ use std::fmt;
 pub use crate::{AnchoredMember, AtomCid, ContractBodyCid, MemberKind, MementoCid, StoredMember};
 use serde_json::Value as Json;
 
+/// Written-out term nodes one body formula slot may hold when the verifier
+/// reads it (#7757). The proof carries its term graph; this bounds only what
+/// the verifier writes out for its laws to read. Above every slot a lift
+/// bounded at 16 MiB written out could state.
+pub const WRITTEN_OUT_TERM_NODE_BOUND: usize = 4_000_000;
+
+/// The CID a `{kind: term-ref, cid}` node names; `None` for any other node.
+fn term_ref_cid(value: &Json) -> Option<&str> {
+    if value.get("kind").and_then(Json::as_str) != Some("term-ref") {
+        return None;
+    }
+    value.get("cid").and_then(Json::as_str)
+}
+
 fn contract_body_pointer(member: &StoredMember) -> Option<ContractBodyCid> {
     member
         .field("bodyCid")
@@ -717,9 +731,116 @@ impl MementoPool {
                 .and_then(|raw| AtomCid::try_parse(raw.to_string()).ok())?;
             let atom_bytes = self.atoms.get(&atom_cid)?;
             let formula: Json = serde_json::from_slice(atom_bytes).ok()?;
-            resolved.insert(slot.clone(), formula);
+            resolved.insert(slot.clone(), self.state_term_refs(formula)?);
         }
         Some(resolved)
+    }
+
+    /// `formula` with every `{kind: term-ref, cid}` written out from this
+    /// pool's term-row atoms (#7757). The proof carries its term graph; the
+    /// verifier's laws read terms written out, so a slot is written out here,
+    /// at the one door every body formula passes, up to
+    /// `WRITTEN_OUT_TERM_NODE_BOUND` nodes. The size is counted on the graph
+    /// first (each row once), so a slot past the bound is never built; it
+    /// reads as no body. Load already refused a catalog with a term-ref that
+    /// names no term row of its own.
+    fn state_term_refs(&self, formula: Json) -> Option<Json> {
+        if !crate::contains_term_ref(&formula) {
+            return Some(formula);
+        }
+        let mut rows: BTreeMap<String, Json> = BTreeMap::new();
+        let mut sizes: BTreeMap<String, usize> = BTreeMap::new();
+        let mut cids = Vec::new();
+        crate::collect_term_ref_cids(&formula, &mut cids);
+        let mut total = 0usize;
+        for cid in &cids {
+            total = total.saturating_add(self.written_out_nodes(cid, &mut rows, &mut sizes)?);
+        }
+        if total > WRITTEN_OUT_TERM_NODE_BOUND {
+            return None;
+        }
+        self.write_out_term_refs(formula, &mut rows)
+    }
+
+    /// The term-row atom `cid` names, parsed once per slot.
+    fn term_row(&self, cid: &str, rows: &mut BTreeMap<String, Json>) -> Option<Json> {
+        if let Some(row) = rows.get(cid) {
+            return Some(row.clone());
+        }
+        let atom_cid = AtomCid::try_parse(cid.to_string()).ok()?;
+        let row: Json = serde_json::from_slice(self.atoms.get(&atom_cid)?).ok()?;
+        rows.insert(cid.to_string(), row.clone());
+        Some(row)
+    }
+
+    /// Nodes of the term `cid` names, written out, counted on the graph
+    /// (each row once).
+    fn written_out_nodes(
+        &self,
+        cid: &str,
+        rows: &mut BTreeMap<String, Json>,
+        sizes: &mut BTreeMap<String, usize>,
+    ) -> Option<usize> {
+        if let Some(nodes) = sizes.get(cid) {
+            return Some(*nodes);
+        }
+        let row = self.term_row(cid, rows)?;
+        let kind = row.get("kind").and_then(Json::as_str)?.to_string();
+        let nodes = match kind.as_str() {
+            "var" | "const" => 1usize,
+            "ctor" => {
+                let mut nodes = 1usize;
+                for arg in row.get("args")?.as_array()? {
+                    let child = term_ref_cid(arg)?;
+                    nodes = nodes.saturating_add(self.written_out_nodes(child, rows, sizes)?);
+                }
+                nodes
+            }
+            _ => return None,
+        };
+        sizes.insert(cid.to_string(), nodes);
+        Some(nodes)
+    }
+
+    /// The term `cid` names, written out.
+    fn written_out_term(&self, cid: &str, rows: &mut BTreeMap<String, Json>) -> Option<Json> {
+        let row = self.term_row(cid, rows)?;
+        let kind = row.get("kind").and_then(Json::as_str)?.to_string();
+        match kind.as_str() {
+            "var" | "const" => Some(row),
+            "ctor" => {
+                let mut args = Vec::new();
+                for arg in row.get("args")?.as_array()? {
+                    args.push(self.written_out_term(term_ref_cid(arg)?, rows)?);
+                }
+                Some(serde_json::json!({"kind": "ctor", "name": row.get("name")?, "args": args}))
+            }
+            _ => None,
+        }
+    }
+
+    fn write_out_term_refs(&self, value: Json, rows: &mut BTreeMap<String, Json>) -> Option<Json> {
+        match value {
+            Json::Object(fields) => {
+                if fields.get("kind").and_then(Json::as_str) == Some("term-ref") {
+                    let cid = fields.get("cid").and_then(Json::as_str)?;
+                    return self.written_out_term(cid, rows);
+                }
+                let mut out = serde_json::Map::new();
+                for (key, item) in fields {
+                    out.insert(key, self.write_out_term_refs(item, rows)?);
+                }
+                Some(Json::Object(out))
+            }
+            Json::Array(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    out.push(self.write_out_term_refs(item, rows)?);
+                }
+                Some(Json::Array(out))
+            }
+            scalar => Some(scalar),
+        }
     }
 
     /// Check if P → Q is already proven in the pool.

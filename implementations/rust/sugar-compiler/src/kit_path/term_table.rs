@@ -82,20 +82,6 @@ impl LiftTermNode {
             }),
         }
     }
-
-    fn resolved_value(&self) -> Value {
-        match &self.kind {
-            LiftTermKind::Var { name } => serde_json::json!({"kind": "var", "name": name}),
-            LiftTermKind::Const { value, sort } => {
-                serde_json::json!({"kind": "const", "value": value, "sort": sort})
-            }
-            LiftTermKind::Ctor { name, args } => serde_json::json!({
-                "kind": "ctor",
-                "name": name,
-                "args": args.iter().map(|arg| arg.resolved_value()).collect::<Vec<_>>()
-            }),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -190,32 +176,6 @@ impl LiftTermTable {
                     .map(|(key, value)| Ok((key.clone(), self.canonical_value(value)?)))
                     .collect::<Result<Vec<_>, String>>()?,
             )),
-        }
-    }
-
-    /// Resolve every term-ref in an arbitrary response-owned JSON value.
-    ///
-    /// Enumeration stays DAG-only on the wire; this projection exists solely
-    /// at the typed consumer boundary, where `IrFormula` expects recursive
-    /// term values. A missing ref remains a loud validator error.
-    pub fn resolve_value(&self, value: &Value) -> Result<Value, String> {
-        if value.get("kind").and_then(Value::as_str) == Some("term-ref") {
-            return Ok(self.resolve_reference(value)?.resolved_value());
-        }
-        match value {
-            Value::Array(values) => Ok(Value::Array(
-                values
-                    .iter()
-                    .map(|value| self.resolve_value(value))
-                    .collect::<Result<Vec<_>, _>>()?,
-            )),
-            Value::Object(values) => Ok(Value::Object(
-                values
-                    .iter()
-                    .map(|(key, value)| Ok((key.clone(), self.resolve_value(value)?)))
-                    .collect::<Result<serde_json::Map<_, _>, String>>()?,
-            )),
-            scalar => Ok(scalar.clone()),
         }
     }
 }
@@ -415,16 +375,14 @@ mod tests {
         let args = parent.args().expect("ctor args");
         assert!(Arc::ptr_eq(&args[0], &args[1]));
 
-        let formula = json!({
-            "kind": "atomic", "name": "same",
-            "args": [
-                {"kind": "term-ref", "cid": parent_cid.clone()},
-                {"kind": "term-ref", "cid": parent_cid}
-            ]
-        });
-        let resolved = table.resolve_value(&formula).expect("formula refs resolve");
-        assert_eq!(resolved["args"][0], resolved_parent);
-        assert_eq!(resolved["args"][0], resolved["args"][1]);
+        // The table is the graph: a term is reached by its CID and its
+        // written-out canonical value is the parent's, never re-stated.
+        let reference = json!({"kind": "term-ref", "cid": parent_cid});
+        let canonical = table.canonical_value(&reference).expect("ref resolves");
+        assert_eq!(
+            sugar_canonicalizer::encode_jcs(canonical.as_ref()),
+            sugar_canonicalizer::encode_jcs(json_to_canonical(&resolved_parent).as_ref())
+        );
     }
 
     /// `py.conditional(guard, a, b)` with `a` containing `b` doubles the term
