@@ -166,11 +166,7 @@ class ClassDefinitionValue(GuardStableValue):
                 self.class_name, positional, keywords, operation.site
             )
         frame = definition.source_visible_constructor_frame()
-        from sugar_lift_py_tests.floor.lambda_callable import (
-            _refuse,
-            definition_edge_call,
-            variadic_formals,
-        )
+        from sugar_lift_py_tests.floor.lambda_callable import _refuse
 
         # The one binder binds the call to the constructor's signature (a
         # call that does not fit is refused by name there), each formal the
@@ -195,6 +191,24 @@ class ClassDefinitionValue(GuardStableValue):
             refuse=_refuse,
             defaults=self.constructor_defaults(),
         )
+        # A default read that is guarded or owes is the call's prefix: its
+        # guard and debts ride every arm of the call (``then_call``).
+        return bound.bound_source_actuals.then_call(
+            self._constructor_edge_call(
+                definition, frame, positional, keywords, bound, operation, ctx
+            )
+        )
+
+    def _constructor_edge_call(
+        self, definition, frame, positional, keywords, bound, operation, ctx
+    ):
+        """The class call as its coordinate and edge, bound by ``bound``
+        (``callable_application_with``)."""
+        from sugar_lift_py_tests.floor.lambda_callable import (
+            definition_edge_call,
+            variadic_formals,
+        )
+
         return definition_edge_call(
             symbol_definition=definition,
             signature=definition.constructor_definition(),

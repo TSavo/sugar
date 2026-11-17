@@ -340,8 +340,12 @@ class LambdaCallable(FloorValue):
             term=term,
             defaults=self.defaults,
         )
-        return self._edge_call(
-            operation, positional, keywords, captured, bound, frame, caller_ctx
+        # A default read that is guarded or owes is the call's prefix: its
+        # guard and debts ride every arm of the call (``then_call``).
+        return bound.bound_source_actuals.then_call(
+            self._edge_call(
+                operation, positional, keywords, captured, bound, frame, caller_ctx
+            )
         )
 
     def _edge_call(

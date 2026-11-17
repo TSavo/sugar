@@ -50,11 +50,30 @@ class BoundFormalActualV1:
 
 @dataclass(frozen=True, eq=False)
 class BoundSourceCallActualsV1:
-    """One binder result with its authenticated coordinate testimony."""
+    """One binder result with its authenticated coordinate testimony.
+
+    ``default_reads``: the read of each default the call omitted whose one
+    completed arm is guarded or owes (a module ``def``'s default read after
+    import is the module run's arms that bound its key: their guard, their
+    debts, ``call_site_sugar.bound_read``).  The bound actual is that arm's
+    value; the read itself is the call's prefix, composed before its outcome
+    by the one composition (``then_call``), so its guard and its debts ride
+    every arm of the call and nothing is dropped into the actual."""
 
     actuals: tuple
     formal_coordinates: tuple[BindingCoordinateV1, ...]
     projected_pairs: tuple[BoundFormalActualV1, ...] = ()
+    default_reads: tuple = ()
+
+    def then_call(self, outcome):
+        """``outcome``, the call's, after every default read this binding
+        made (``default_reads``), in formal order: ``ExitSet.and_then``, the
+        one composition, so each read's guard is conjoined and its debts owed
+        on every arm of the call, and a halted arm of a read is the call's
+        halt (the call does not run)."""
+        for read in reversed(self.default_reads):
+            outcome = read.and_then(lambda _value, tail=outcome: tail)
+        return outcome
 
     def __post_init__(self) -> None:
         actual_count = len(self.actuals)
@@ -287,6 +306,7 @@ class SourceVisibleCallFrameV1:
         reading entries a second way (#7757 H2).
         """
         from sugar_lift_py_tests.floor import DictValue, StringValue, TupleValue
+        from sugar_lift_py_tests.outcome import Completed
 
         self._validate_formal_coordinate_rosters()
 
@@ -302,6 +322,7 @@ class SourceVisibleCallFrameV1:
             named[key] = value
         bound = []
         projected_pairs = []
+        default_reads = []
         for index, (name, kind, default) in enumerate(
             zip(
                 self.parameters,
@@ -360,12 +381,24 @@ class SourceVisibleCallFrameV1:
             if not present and default is not None:
                 # The value the ``def`` statement bound under the default's
                 # key, the same object for every call (``DefaultValueSugar``).
-                exits = default.desugar(ctx)
-                # One completed arm under truth that owes nothing: a default
-                # that owes would drop its debt into the bound actual.
-                value = None if exits.owed_items() else exits.completed_value()
-                if value is None:
-                    raise SourceCallBindingGap("default did not construct completely")
+                exits = default.desugar(ctx).normalize()
+                # The read's one completed arm holds the value.  Under a
+                # guard, or owing (the module run's arms that bound the key),
+                # the read is the call's prefix (``default_reads``): its
+                # guard and debts ride the call's arms, never dropped into
+                # the bound actual.  Two completed arms hold two values on
+                # one path: no one actual to bind, refused by name.
+                completed = tuple(
+                    arm for arm in exits.exits if isinstance(arm, Completed)
+                )
+                if len(completed) != 1:
+                    raise SourceCallBindingGap(
+                        "default read holds no one value: "
+                        f"{len(completed)} completed arms"
+                    )
+                value = completed[0].value
+                if exits.completed_value() is None or exits.owed_items():
+                    default_reads.append(exits)
                 present = True
             if not present:
                 raise SourceCallBindingGap(f"missing required formal {index}")
@@ -376,6 +409,7 @@ class SourceVisibleCallFrameV1:
             tuple(bound),
             self.formal_coordinates,
             tuple(projected_pairs),
+            tuple(default_reads),
         )
 
     def _validate_formal_coordinate_rosters(self) -> None:
