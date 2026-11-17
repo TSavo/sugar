@@ -17950,6 +17950,61 @@ def _header_halt_state(statement, entry, header):
     return _compound_halt_state(statement, entry, header, ())
 
 
+def _root_after_call(state) -> bool:
+    """Whether ``state`` is the object a name denotes after the one mutation
+    door's call on it (``PathAfterCall`` with mode ``root`` and no steps,
+    ``container_mutation.name_mutation_statement``): a read of the call's
+    pair key, which a halt inside the call never bound."""
+    return (
+        getattr(state, "kind", None) == "PathAfterCall"
+        and getattr(state, "mode", None) == "root"
+        and not getattr(state, "steps", ())
+    )
+
+
+def _global_prior(state):
+    """The read, before the call, of the name the root ``PathAfterCall``
+    ``state`` rebinds (its ``prior``; the ``root`` the statement read where
+    it carries none): for a module global no scope held before the
+    statement, the global's own read."""
+    prior = getattr(state, "prior", None)
+    return prior if prior is not None else getattr(state, "root", None)
+
+
+def _object_at_a_halt_inside_the_call(statement, name, tags, state, prior):
+    """What ``name`` holds at a halt inside ``statement``'s one mutation-door
+    call (``state``: the object after it, ``_root_after_call``): the object
+    as it was before the call (``prior``), which the call may have changed
+    and THEN raised -- the value after a call that may have changed it,
+    decided at reduce by the receiver's value (``ReceiverAfterCall``,
+    ``container_mutation._havoc``).  A cited container mutation halts before
+    it stores, and an immutable is never changed.  Never ``state``: its pair
+    key is bound only where the call completed."""
+    from .container_mutation import _havoc
+
+    call = state.call
+    return _havoc(
+        statement,
+        name,
+        tags,
+        prior=prior,
+        conditions=[(call.receiver, (call.method, False, True))],
+    )
+
+
+def _entry_read_of_a_global(state):
+    """The read of a module global before the first statement that changed
+    it, off the state that statement's halt holds it at (``state``): the
+    ``prior`` of the value after the call (``ReceiverAfterCall``; a root
+    ``PathAfterCall``), or None where the state names none (an unknown)."""
+    state = unwrap_binding_state(state)
+    if getattr(state, "kind", None) == "ReceiverAfterCall":
+        return getattr(state, "prior", None)
+    if _root_after_call(state):
+        return _global_prior(state)
+    return None
+
+
 def _unpack_may_raise(target, value) -> bool:
     """Whether assigning ``value`` to ``target`` may raise as Python unpacks
     it: ``target`` is a Tuple/List pattern and ``value`` is not a display of
@@ -18432,8 +18487,19 @@ class Try(Statement):
         of their own, ``(index, "header")``, beside the statement's: a halt
         its occurrence names in the header (``_header_occurrence_keys``)
         began before any suite ran, so it carries none of what a suite
-        stored.  The statement's own edge keeps every other halt of it."""
+        stored.  The statement's own edge keeps every other halt of it.
+
+        A module global no scope holds before the block (``scope``) enters
+        it at the first statement that changes it, and that statement's halt
+        holds it (``_mid_statement_state``); a halt of an earlier statement
+        holds it too, as it stood before that change: the global's read the
+        change's halt state names (``_entry_read_of_a_global``,
+        ``_globals_before_their_change``).  Without it the join over the
+        edges had no value for the global on those edges and read the
+        completed block's post-state there, whose key a halt before the
+        change never bound (#7757)."""
         edges = []
+        pres = []
         for index, entry in enumerate(edge_states):
             statement, pre_statement_scope = entry
             if statement is None:
@@ -18464,8 +18530,42 @@ class Try(Statement):
                 edges.append(
                     (None, None, _HaltEdgeState(at_header, edge=(index, "header")))
                 )
+                pres.append(pre_statement_scope)
             edges.extend(statement_edges)
+            pres.extend(pre_statement_scope for _edge in statement_edges)
+        Try._globals_before_their_change(edges, pres, scope)
         return edges
+
+    @staticmethod
+    def _globals_before_their_change(edges, pres, scope) -> None:
+        """Give every halt edge before the first statement that changed a
+        module global the global as it stood there: its read before that
+        change (``_entry_read_of_a_global``), off that statement's own halt
+        state.  ``pres`` is the scope each edge's statement began in.
+
+        Only where that statement is where the global entered the block's
+        scope (its ``pres`` holds no binding of it), so nothing before it
+        changed the global, and only where its halt state names the read
+        (a value after a call with a ``prior``): anything else -- a global
+        a compound statement changed, which states no halt of it, or one an
+        unknown holds -- is left as it was, unstated, never a read the
+        statements before it might not leave."""
+        firsts: dict = {}
+        for position, ((_identity, _mro, state), pre) in enumerate(
+            zip(edges, pres, strict=True)
+        ):
+            for name, value in state.items():
+                if not isinstance(name, str) or name in scope or name in firsts:
+                    continue
+                firsts[name] = (
+                    position,
+                    None if name in pre else _entry_read_of_a_global(value),
+                )
+        for name, (position, read) in firsts.items():
+            if read is None:
+                continue
+            for _identity, _mro, state in edges[:position]:
+                state.setdefault(name, read)
 
     def _suite_halt_states(self, edge_states, base):
         """The state every halt inside one suite carries, as what it changed
@@ -18576,21 +18676,12 @@ class Try(Statement):
                 )
             elif kind in Try._MID_STATEMENT_MUTATION_KINDS:
                 binding[name] = state if kept else _havoc(statement, name, tags)
-            elif (
-                kind == "PathAfterCall"
-                and getattr(state, "mode", None) == "root"
-                and not getattr(state, "steps", ())
-            ):
+            elif _root_after_call(state):
                 # The one mutation door: a cited container mutation halts
                 # before it stores, and an immutable is never changed; an
                 # ordinary call may change the object and THEN raise.
-                call = state.call
-                binding[name] = _havoc(
-                    statement,
-                    name,
-                    tags,
-                    prior=_read_of(before),
-                    conditions=[(call.receiver, (call.method, False, True))],
+                binding[name] = _object_at_a_halt_inside_the_call(
+                    statement, name, tags, state, _read_of(before)
                 )
         # A module global the statement's call may have changed is in no
         # scope before it: a read of it resolves to the global, and the
@@ -18606,11 +18697,33 @@ class Try(Statement):
         # rules decide (read at the halt through the record the call's
         # halted face carries, ``call_site_value.bind_after_call``), else
         # the unknown.
+        #
+        # The one mutation door on a global (``G.m(...)``,
+        # ``container_mutation.name_mutation_statement``) binds it to the
+        # object after the call (``PathAfterCall``, a read of the call's pair
+        # key) and is held at the halt by the same rule as a name bound
+        # before the statement (the branch above): at a halt inside the call
+        # the pair key was never bound, so the halt holds the global's read
+        # before the call (the ``PathAfterCall``'s ``prior``), which the
+        # call may have changed and THEN raised
+        # (``_object_at_a_halt_inside_the_call``), never the post-state
+        # (#7757: ``with pytest.raises(E): nanops._ensure_numeric(x)`` before
+        # a second such ``with``; ``sys.setrecursionlimit(100)`` in a ``try``
+        # whose ``finally`` restores it).
         for name, after in post.items():
             if not isinstance(name, str) or name in pre or name in binding:
                 continue
             state = unwrap_binding_state(after)
             kind = getattr(state, "kind", None)
+            if _root_after_call(state):
+                binding[name] = (
+                    _havoc(statement, name, tags)
+                    if compound
+                    else _object_at_a_halt_inside_the_call(
+                        statement, name, tags, state, _read_of(_global_prior(state))
+                    )
+                )
+                continue
             if kind not in Try._MID_STATEMENT_MUTATION_KINDS:
                 continue
             kept = kind == "ReceiverAfterCall" and getattr(state, "rules", None)
