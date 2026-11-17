@@ -314,6 +314,20 @@ class BuiltinSemanticCallable(FloorValue):
         )
         return UnknownCalleeCallV1(qualified).faces(callsite, operation.site)
 
+    def subscript(self, index, site):
+        """``<builtin>[index]`` (``tuple[int, int]``, ``dict[str, Any]``,
+        ``type[Any]``): ``type(<builtin>)`` binds no ``__getitem__``, so
+        Python looks up the builtin's own ``__class_getitem__`` -- present on
+        some builtins and not others -- and a generic alias reads attributes
+        of every non-class argument (``__typing_subst__``,
+        ``__parameters__``), which may run code.  Nothing here decides
+        either, so the read is the one undecided read, both faces, owed, its
+        halt kept (``FloorValue.undecided_subscript``, #7757); never a
+        refusal of the function or module that reads it."""
+        return self.undecided_subscript(
+            index, site, owner="BuiltinSemanticCallable.subscript"
+        )
+
     def _isinstance(self, operation):
         """Exact ``isinstance(obj, classinfo)`` over authenticated floors.
 
