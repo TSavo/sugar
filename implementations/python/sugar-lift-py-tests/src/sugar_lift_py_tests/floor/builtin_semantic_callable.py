@@ -30,6 +30,19 @@ class BuiltinSemanticCallable(FloorValue):
             symbol_kind="builtin",
         )
 
+    def attribute(self, name, site, ctx):
+        """``<builtin>.name`` (``set.union``, ``dict.__init__``,
+        ``tuple.__new__``): ``type(<builtin>).__getattribute__`` and the
+        descriptor it finds, which nothing here reads.  The one undecided
+        read, both faces, owed, its halt kept (``undecided_attribute_result``,
+        #7757); never a refusal of the function that reads it."""
+        del ctx
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+
+        return undecided_attribute_result(
+            self, name, site, owner="BuiltinSemanticCallable.attribute"
+        )
+
     def callable_application_with(self, operation, ctx):
         from sugar_source_tree.nodes import LanguageCallee
 
