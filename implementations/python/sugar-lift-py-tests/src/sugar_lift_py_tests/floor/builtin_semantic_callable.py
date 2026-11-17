@@ -223,9 +223,20 @@ class BuiltinSemanticCallable(FloorValue):
         not its contents now.  It is the bodiless call that names the list by
         its identity (``_unhandled_construct``, the door ``set``/``tuple``/
         ``dict`` take for the same operand), never an iterator over the
-        contents it arrived with (#7757 H8)."""
+        contents it arrived with (#7757 H8).
+
+        So is every call whose pairs no shape here decides: an operand that
+        is not a sequence this frame holds (a formal, an attribute, a call's
+        result such as ``zip(...)``), a ``start`` actual, any other arity.
+        Python's ``enumerate`` iterates nothing when called (``iter`` of the
+        operand runs, and may raise), so it is the builtin's one unanswered
+        call, two faces, owed, its halt kept -- never a refusal of the
+        function that calls it (#7757)."""
+        del ctx
         if operation.keyword_names or len(operation.arguments) != 1:
-            return super().callable_application_with(operation, ctx)
+            return self._unhandled_construct(
+                operation, *_cited_builtins()[self.operation]
+            )
         from sugar_lift_py_tests.floor import (
             ComprehensionValue,
             ListIteratorValue,
@@ -249,7 +260,9 @@ class BuiltinSemanticCallable(FloorValue):
         ):
             elements = source.finite_elements
         else:
-            return super().callable_application_with(operation, ctx)
+            return self._unhandled_construct(
+                operation, *_cited_builtins()[self.operation]
+            )
         return ExitSet.completed(
             ListIteratorValue(
                 tuple(
