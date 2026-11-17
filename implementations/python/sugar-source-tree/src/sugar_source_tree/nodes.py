@@ -16459,6 +16459,21 @@ class If(Statement):
         else:
             node = self._rewrite_with_slot(changed, slot, authenticated_slot=slot)
 
+        # The statement after the ``if`` is reached only from an arm that
+        # completes by falling through (``_block_has_completed_fallthrough``,
+        # the one rule a ``try`` joins its routes by and a ``match`` its
+        # cases by).  An arm that always leaves by ``raise``, ``return``,
+        # ``break`` or ``continue`` (``if bad: self.close(); raise E``) is no
+        # route to it: what it bound is never a face of the join, so a read
+        # after the ``if`` never reads a key only that arm binds.  Its
+        # bindings still leave by its own exit (``halted``, the halt's edge
+        # state; a ``return``'s record; a loop's latch).  With both arms
+        # leaving, nothing follows the ``if`` and the join is as before.
+        then_goes_on = self._block_has_completed_fallthrough(self.body)
+        else_goes_on = self._block_has_completed_fallthrough(self.orelse)
+        going_on = None
+        if then_goes_on != else_goes_on:
+            going_on = then_net if then_goes_on else else_net
         names = set(then_net) | set(else_net)
         phis = []
         availability: BindingMap = {}
@@ -16466,6 +16481,11 @@ class If(Statement):
             incoming = _explicit_state(name, scope)
             then_val = then_net.get(name, incoming)
             else_val = else_net.get(name, incoming)
+            if going_on is not None:
+                if name not in going_on:
+                    # The arm that goes on left it as the ``if`` found it.
+                    continue
+                then_val = else_val = going_on[name]
             if then_val is _MISSING or else_val is _MISSING:
                 continue
             joined = join_binding_state(
@@ -16483,6 +16503,14 @@ class If(Statement):
             # statement began with, as the statement's one edge does.
             return node
         return _Splice((node, *phis), availability, halted, header)
+
+    def _block_has_completed_fallthrough(self, statements) -> bool:
+        """Whether one source path through ``statements`` reaches the
+        statement after them: the ``try``'s one rule
+        (``Try._block_has_completed_fallthrough``), which a ``match`` and a
+        ``try*`` borrow too; ``Try`` is defined after ``If``, so it is read
+        here at the call."""
+        return Try._block_has_completed_fallthrough(self, statements)
 
     def branch_slot(self, scope, item: Optional[str] = None) -> BranchResultSlot:
         """This ``if``'s branch-result slot where it is evaluated in
