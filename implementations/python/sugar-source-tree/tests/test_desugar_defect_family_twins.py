@@ -274,14 +274,53 @@ def test_walrus_condition_guards_on_the_presented_face() -> None:
     assert _statements(out)
 
 
+def test_two_walrus_condition_guards_beneath_both_writes() -> None:
+    """POSITIVE. `if (m := a) == (n := b):` -- the comparison's truth face
+    carries both writes, a wrapper presenting a wrapper presenting the
+    predicate. Peeling one wrapper read the second's absent formula and the
+    whole file failed to mint (pandas ``core/base.py``)."""
+    out = _out(
+        "def f(a, b):\n if (m := a) == (n := b):\n  return m\n return n\n"
+    )
+    assert _statements(out)
+
+
+def test_a_chain_of_writes_presents_the_formula_beneath_them_all() -> None:
+    """POSITIVE (the projection itself). A truth face carrying two writes --
+    a walrus and a call's record, ``carry_walrus_binds`` -- guards on the
+    formula beneath both, never on the wrapper one level down."""
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        NamedExpressionValue,
+        carry_walrus_binds,
+    )
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import atomic
+    from sugar_lift_py_tests.sugar.if_sugar import truth_formula
+
+    formula = atomic("p", [])
+    face = carry_walrus_binds(
+        (
+            NamedExpressionValue("m", TermValue(1)),
+            NamedExpressionValue("n", TermValue(2)),
+        ),
+        PredicateValue(formula),
+    )
+    assert isinstance(face.presented_value, NamedExpressionValue)
+    assert truth_formula(ExitSet.completed(face), face) == formula
+
+
 def test_a_condition_with_no_formula_at_all_is_still_loud() -> None:
     """DISCRIMINATING. Projecting through the presented face must not invent a
     guard where there is none: a condition whose presented face carries no
-    formula and is no boolean literal stays loud, and now names the PRESENTED
-    type rather than the wrapper that merely carried it."""
+    formula and is no boolean literal stays loud -- refused by name, so the
+    enclosing function is the proof's refused member and the file still
+    mints -- and names the PRESENTED type rather than the wrapper that merely
+    carried it."""
     from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.floor.named_expression_value import NamedExpressionValue
     from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
+    from sugar_source_tree.panic import SugarNotWritten
 
     carried = TermValue(5)
 
@@ -290,8 +329,32 @@ def test_a_condition_with_no_formula_at_all_is_still_loud() -> None:
             del site
             return ExitSet.completed(NamedExpressionValue("n", carried))
 
-    with pytest.raises(NotImplementedError, match="TermValue"):
+    with pytest.raises(SugarNotWritten, match="TermValue"):
         predicate_formula(_Walrus(), site="twin")
+
+
+def test_a_chain_with_no_formula_beneath_it_names_the_bottom_value() -> None:
+    """DISCRIMINATING. Peeling the whole chain never invents a guard: two
+    writes over a value with no formula are refused by name, naming the
+    value at the bottom, never the second wrapper."""
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        NamedExpressionValue,
+        carry_walrus_binds,
+    )
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.sugar.if_sugar import truth_formula
+    from sugar_source_tree.panic import SugarNotWritten
+
+    face = carry_walrus_binds(
+        (
+            NamedExpressionValue("m", TermValue(1)),
+            NamedExpressionValue("n", TermValue(2)),
+        ),
+        TermValue(5),
+    )
+    with pytest.raises(SugarNotWritten) as raised:
+        truth_formula(ExitSet.completed(face), face)
+    assert "without a symbolic formula: TermValue" in raised.value.observed
 
 
 # --------------------------------------------------------------------------
