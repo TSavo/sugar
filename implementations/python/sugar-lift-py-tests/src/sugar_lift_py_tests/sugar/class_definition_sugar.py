@@ -66,6 +66,11 @@ class ClassDefinitionSugar(Sugar):
     # The indexes in ``fields`` of the rows that stand in an arm of an
     # ``if`` of the body: bound only on a face where that arm ran.
     branch_fields: frozenset = field(default=frozenset(), compare=False)
+    # The ``if`` arms each row of ``fields`` stands in, one per row: a tuple
+    # of ``(slot, polarity)`` from the outermost ``if`` in, ``True`` for its
+    # body and ``False`` for its ``else``; ``()`` for a row of the body
+    # itself (``nodes.ClassDef._class_body_block``).
+    field_arms: tuple = field(default=(), compare=False)
     # The branch slot of each ``if`` of the body.
     branch_slots: tuple = field(default=(), compare=False)
     # The key of each default of each method ``def`` statement
@@ -369,42 +374,54 @@ class ClassDefinitionSugar(Sugar):
                     requested="the record the class body's block left at its end",
                     fix="keep a class body that did not run to its end loud",
                 )
-            fields, method_defaults = self._namespace(body)
-            value = ClassDefinitionValue(
-                self.class_name,
-                self.class_definition_cid,
-                self.methods,
-                None,
-                self.binding_target_occurrence,
-                fields,
-                self.docstring_cid,
-                self.annotation_cids,
-                self.decorator_cids,
-                tuple(base_values),
-                class_definition=self.class_definition,
-                method_defaults=method_defaults,
-            )
-            # The ``__init__`` a call of the class runs is the one the one
-            # class-namespace lookup selects (``initializer_class``: this
-            # class's own or an inherited one), the last ``def`` its class
-            # body wrote -- Python's live class binding (overload stubs
-            # written as ``def __init__(...): ...`` precede the
-            # implementation).  None when the lookup does not decide a
-            # source ``def``.
-            owner = value.initializer_class()
-            if owner is not None:
-                value = replace(value, initializer=_written_initializer(owner))
-            # What the body's callees stored ran at this statement: the run
-            # carries it on the class it built (``statement_run``); the class
-            # itself holds none of it.
             from sugar_lift_py_tests.floor.named_expression_value import (
                 carry_caller_stores,
             )
 
-            return ExitSet.completed(carry_caller_stores(body.entries, value))
+            # One class per face of the namespace (``_namespace``): one face
+            # where every ``if`` of the body was decided, else one per arm
+            # of each ``if`` whose test is undecided, under that arm's guard.
+            built = []
+            for restrictions, fields, method_defaults in self._namespace(body):
+                value = ClassDefinitionValue(
+                    self.class_name,
+                    self.class_definition_cid,
+                    self.methods,
+                    None,
+                    self.binding_target_occurrence,
+                    fields,
+                    self.docstring_cid,
+                    self.annotation_cids,
+                    self.decorator_cids,
+                    tuple(base_values),
+                    class_definition=self.class_definition,
+                    method_defaults=method_defaults,
+                )
+                # The ``__init__`` a call of the class runs is the one the
+                # one class-namespace lookup selects (``initializer_class``:
+                # this class's own or an inherited one), the last ``def`` its
+                # class body wrote -- Python's live class binding (overload
+                # stubs written as ``def __init__(...): ...`` precede the
+                # implementation).  None when the lookup does not decide a
+                # source ``def``.
+                owner = value.initializer_class()
+                if owner is not None:
+                    value = replace(value, initializer=_written_initializer(owner))
+                # What the body's callees stored ran at this statement: the
+                # run carries it on the class it built (``statement_run``);
+                # the class itself holds none of it.
+                face = ExitSet.completed(carry_caller_stores(body.entries, value))
+                for guard, side in restrictions:
+                    face = face.guarded(guard, side)
+                built.append(face)
+            first, *rest = built
+            return first.union(*rest)
 
-        # The class exists only on a face the whole body completed under;
-        # every halt of the body is the statement's halt, unchanged.
+        # The class exists only on a face the whole body completed under,
+        # one class per completed face of the body, each built over the
+        # record that face left, as a base with several completions builds
+        # the class once per completion (``_fold_bases``); every halt of the
+        # body is the statement's halt, unchanged.
         return class_body().and_then(construct_class)
 
     def _class_body(self, ctx):
@@ -418,38 +435,26 @@ class ClassDefinitionSugar(Sugar):
         statement runs under it, and an ``if`` is ``IfSugar`` -- its test
         taken by the one truth rule, the arm it selects reduced as the suite
         it is.  Nothing here decides a statement.
+
+        A body with several completed faces (a field whose right-hand side
+        has several completed values, a loop that leaves on several faces)
+        leaves one record per face, each under its own guard: the class
+        statement builds one class on each (``_construct``), every reader of
+        the class value composing over them as over any value with several
+        completions.
         """
-        from sugar_lift_py_tests.outcome.exit_set import Completed
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
 
-        outcome = reduce_block_to_exitset(self.body, ctx)
-        if (
-            isinstance(outcome, ExitSet)
-            and sum(isinstance(face, Completed) for face in outcome.exits) > 1
-        ):
-            # A body with several completed faces (a field whose right-hand
-            # side has several completed values) would build one class per
-            # face.  That stays refused, as it always was (no such class has
-            # been traced through a reader of the class value).  The block
-            # does not say which statement it was, so the refusal names the
-            # body's fields.
-            from sugar_source_tree.panic import SugarNotWritten
-
-            names = ", ".join(dict.fromkeys(item.name for item in self.fields))
-            raise SugarNotWritten(
-                blame=self.site,
-                owner="ClassDefinitionSugar.desugar",
-                observed=f"class field {names} did not construct completely",
-                requested="one exact constructed class-field value",
-                fix="keep effectful or unresolved class initializers loud",
-            )
-        return outcome
+        return reduce_block_to_exitset(self.body, ctx)
 
     def _namespace(self, record) -> tuple:
-        """``(fields, method defaults)``: the class's namespace, read off
-        the state the body's block left (``record``, its completed record).
+        """``((restrictions, fields, method defaults), ...)``: the class's
+        namespace on each face of the state the body's block left
+        (``record``, its completed record), each face restricted
+        (``ExitSet.guarded``) by ``restrictions``: ``(guard, side)`` per
+        undecided ``if``, its arm's guard and its side of the split.
 
         Each row of ``fields`` names a Name one statement of the body binds
         and the key that statement's sugar bound its value under; the
@@ -467,42 +472,69 @@ class ClassDefinitionSugar(Sugar):
         An ``if`` the one truth rule did not decide on this face reduced
         both arms into one record, each under its branch guard
         (``IfSugar``): the record carries that ``if``'s branch-result
-        authentication.  A name such an arm binds is bound under a guard the
-        namespace's rows do not carry, so the namespace is not read from
-        that state: refused by name, as an undecided class conditional
-        always was.
+        authentication, the test's condition the arms were guarded by.  A
+        name such an arm binds is bound in that record only where its arm
+        ran, so the namespace is read once per arm, under the guard the
+        ``if`` put on it: on the face its test holds, the rows of its body
+        (``field_arms``) and none of its ``else``; on the face it fails, the
+        reverse.  Several such ``if`` give one face per choice of arm for
+        each, under the conjunction of their guards; a face whose guard is
+        never true builds a class no path reaches.  An ``if`` whose test was
+        decided needs no face of its own: the arm it did not take bound
+        nothing.  A row that stands after the ``if`` reads its value through
+        the join the ``if`` left (``If.substitute``), the same on every face.
+        One slot the record reads as two conditions has no one guard to put
+        on its arms: refused by name.
         """
         from sugar_lift_py_tests.floor import ObjectField
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
             BranchResultAuthentication,
         )
+        from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
             evaluation_read_here,
         )
         from sugar_source_tree.panic import SugarNotWritten
 
-        # An authentication held under an enclosing arm's guard (a nested
-        # ``if``) is read as its enclosing ``if``'s, as before it kept its
-        # guards (``BranchResultAuthentication.guards``).
-        if any(
-            isinstance(entry, BranchResultAuthentication)
-            and not entry.guards
-            and entry.slot.slot_id in self.branch_slots
-            for entry in record.entries
-        ):
-            raise SugarNotWritten(
-                blame=self.site,
-                owner="ClassDefinitionSugar.desugar",
-                observed="class conditional guard is not a ground bool literal",
-                requested=(
-                    "a class-body if whose test the truth rule decides on the "
-                    "face the class is built on"
-                ),
-                fix=(
-                    "read a name bound under an undecided branch as the "
-                    "guarded binding it is, or keep the class loud"
-                ),
-            )
+        # Each ``if`` of the body whose test the truth rule did not decide on
+        # this face, by its slot, with the test's condition its arms were
+        # guarded by (``BranchResultAuthentication.observed_guard``), in
+        # the body's order.  One nested in another's arm holds under that
+        # arm's guard too: each face conjoins every slot's arm, so it is
+        # read under it.
+        ground = (true_guard(), false_guard())
+        conditions: dict = {}
+        for entry in record.entries:
+            if (
+                isinstance(entry, BranchResultAuthentication)
+                and entry.slot is not None
+                and entry.slot.slot_id in self.branch_slots
+                and entry.observed_guard not in ground
+            ):
+                conditions.setdefault(entry.slot.slot_id, []).append(
+                    entry.observed_guard
+                )
+        undecided = []
+        for slot in dict.fromkeys(self.branch_slots):
+            read = conditions.get(slot)
+            if not read:
+                continue
+            if any(formula != read[0] for formula in read[1:]):
+                raise SugarNotWritten(
+                    blame=self.site,
+                    owner="ClassDefinitionSugar.desugar",
+                    observed=(
+                        "class conditional read as several conditions on one face"
+                    ),
+                    requested=(
+                        "the one condition a class-body if guards its arms by"
+                    ),
+                    fix=(
+                        "read each arm under the guard its own test put on it, "
+                        "or keep the class loud"
+                    ),
+                )
+            undecided.append((slot, read[0]))
         if self.unrostered_definitions:
             # A ``def`` in an arm binds a method on the faces where its arm
             # ran; the class's methods are its roster (``methods``), which
@@ -532,30 +564,69 @@ class ClassDefinitionSugar(Sugar):
                 return None
             return temporal.value_if_bound(evaluation_read_here(temporal, key))
 
-        fields = []
-        for index, row in enumerate(self.fields):
-            value = bound(row.evaluation_key)
-            if value is None:
-                if index in self.branch_fields:
-                    # The arm holding this statement did not run on this face.
-                    continue
-                raise SugarNotWritten(
-                    blame=self.site,
-                    owner="ClassDefinitionSugar.desugar",
-                    observed=(
-                        f"class field {row.name} is not bound in the state "
-                        "its body's block left"
-                    ),
-                    requested=(
-                        "the value the field's statement bound under its "
-                        "evaluation key"
-                    ),
-                    fix="bind every class-body assignment under its key",
-                )
-            fields.append(ObjectField(row.name, value))
         defaults = tuple(
             (key, value)
             for key, value in ((key, bound(key)) for key in self.default_keys)
             if value is not None
         )
-        return tuple(fields), defaults
+
+        def namespace(taken) -> tuple:
+            fields = []
+            for index, row in enumerate(self.fields):
+                arms = self.field_arms[index] if index < len(self.field_arms) else ()
+                if any(taken.get(slot, polarity) != polarity for slot, polarity in arms):
+                    # The arm holding this statement is not the one this
+                    # face of its undecided ``if`` takes.
+                    continue
+                value = bound(row.evaluation_key)
+                if value is None:
+                    if index in self.branch_fields:
+                        # The arm holding this statement did not run on this
+                        # face.
+                        continue
+                    raise SugarNotWritten(
+                        blame=self.site,
+                        owner="ClassDefinitionSugar.desugar",
+                        observed=(
+                            f"class field {row.name} is not bound in the state "
+                            "its body's block left"
+                        ),
+                        requested=(
+                            "the value the field's statement bound under its "
+                            "evaluation key"
+                        ),
+                        fix="bind every class-body assignment under its key",
+                    )
+                fields.append(ObjectField(row.name, value))
+            return tuple(fields)
+
+        if not undecided:
+            return (((), namespace({}), defaults),)
+        from itertools import product
+
+        from sugar_lift_py_tests.outcome.exit_set import complement_guard, partition
+
+        # Each undecided ``if`` splits the namespace in two, and this
+        # statement owns that split: its faces are minted here, one pair per
+        # slot, so a reader joining the classes reads them as exclusive.
+        sides = {
+            slot: partition(
+                ("ClassDefinitionSugar", self.definition_fragment_cid, slot)
+            )
+            for slot, _formula in undecided
+        }
+        faces = []
+        for choice in product((True, False), repeat=len(undecided)):
+            taken = {
+                slot: polarity
+                for (slot, _formula), polarity in zip(undecided, choice, strict=True)
+            }
+            restrictions = tuple(
+                (
+                    formula if polarity else complement_guard(formula),
+                    sides[slot][0 if polarity else 1],
+                )
+                for (slot, formula), polarity in zip(undecided, choice, strict=True)
+            )
+            faces.append((restrictions, namespace(taken), defaults))
+        return tuple(faces)

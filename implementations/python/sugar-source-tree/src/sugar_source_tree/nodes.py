@@ -11640,6 +11640,12 @@ class ClassDef(Statement):
         leaves (``ClassDefinitionSugar._namespace``); nothing here evaluates
         a field.  ``branch_fields`` are the indexes of the rows standing in
         an arm of an ``if`` (bound only where that arm ran);
+        ``field_arms`` the arms each row stands in, one per row: a tuple of
+        ``(slot, polarity)`` from the outermost ``if`` in, ``True`` for its
+        body and ``False`` for its ``else`` (``()`` for a row of the body
+        itself), which the class statement reads to build the namespace on
+        each face of an ``if`` whose test is undecided
+        (``ClassDefinitionSugar._namespace``);
         ``branch_slots`` the slot of each ``if`` of the body;
         ``default_keys`` the key of each method default;
         ``unrostered_definitions`` the fragment CID of each ``def`` standing
@@ -11678,30 +11684,37 @@ class ClassDef(Statement):
         statements = []
         fields = []
         branch_fields = set()
+        field_arms = []
         branch_slots = []
         default_keys = []
         unrostered = []
 
-        def enroll(row, in_branch):
-            if in_branch:
+        def enroll(row, arms):
+            # ``arms``: the ``(slot, polarity)`` of each ``if`` arm the row
+            # stands in, outermost first; ``()`` for the body itself.
+            if arms:
                 branch_fields.add(len(fields))
             fields.append(row)
+            field_arms.append(tuple(arms))
 
-        def rows(item, in_branch, after_if, bound, armed) -> bool:
+        def rows(item, arms, after_if, bound, armed) -> bool:
             # True when ``item`` is an ``if`` or one of the phis spliced
-            # after it.  ``bound``: the names a statement of the body bound
-            # on the path to ``item`` (class names on every face that
+            # after it.  ``arms``: the ``if`` arms ``item`` stands in
+            # (``enroll``).  ``bound``: the names a statement of the body
+            # bound on the path to ``item`` (class names on every face that
             # reaches it); ``armed``: the names only an arm of an earlier
             # ``if`` bound.
             if isinstance(item, If):
                 slot = getattr(item, "branch_result_slot_id", None)
                 if slot is not None:
                     branch_slots.append(slot)
-                for arm in (item.body, item.orelse):
+                for polarity, arm in ((True, item.body), (False, item.orelse)):
                     spliced = False
                     in_arm = set(bound)
                     for child in arm:
-                        spliced = rows(child, True, spliced, in_arm, armed)
+                        spliced = rows(
+                            child, (*arms, (slot, polarity)), spliced, in_arm, armed
+                        )
                     armed.update(in_arm - bound)
                 return True
             if isinstance(item, With):
@@ -11715,7 +11728,7 @@ class ClassDef(Statement):
                         unkeyed(item, name)
                 spliced = False
                 for child in item.body:
-                    spliced = rows(child, in_branch, spliced, bound, armed)
+                    spliced = rows(child, arms, spliced, bound, armed)
                 return False
             if (
                 isinstance(item, Assign)
@@ -11740,7 +11753,7 @@ class ClassDef(Statement):
                             group,
                             evaluation_key=key,
                         ),
-                        in_branch,
+                        arms,
                     )
                     bound.add(target.id)
                 return False
@@ -11758,7 +11771,7 @@ class ClassDef(Statement):
                             binding_occurrence(item.target),
                             evaluation_key=key,
                         ),
-                        in_branch,
+                        arms,
                     )
                     bound.add(item.target.id)
                 return False
@@ -11784,10 +11797,10 @@ class ClassDef(Statement):
                     requested="the LoopRecurrenceStatement the block threads",
                     fix="thread the class body before constructing its statements",
                 )
-            written(item, in_branch, bound, armed)
+            written(item, arms, bound, armed)
             return False
 
-        def written(item, in_branch, bound, armed) -> None:
+        def written(item, arms, bound, armed) -> None:
             # Any other simple statement (``_require_class_members``): the
             # mutation statement the threading makes of ``x = r.m()`` or
             # ``r.m()``, a store, an unpacking assignment, a bare
@@ -11892,7 +11905,7 @@ class ClassDef(Statement):
                         group,
                         evaluation_key=key,
                     ),
-                    in_branch,
+                    arms,
                 )
             bound.update(own)
 
@@ -11956,12 +11969,12 @@ class ClassDef(Statement):
                         binding_occurrence(item.binding_target),
                         evaluation_key=evaluation,
                     ),
-                    False,
+                    (),
                 )
                 bound_names.add(item.name)
                 statements.append(_body_statement_sugar(keyed))
                 continue
-            after_if = rows(item, False, spliced, bound_names, armed_names)
+            after_if = rows(item, (), spliced, bound_names, armed_names)
             statements.append(_body_statement_sugar(item))
         return (
             tuple(statements),
@@ -11970,6 +11983,7 @@ class ClassDef(Statement):
             tuple(branch_slots),
             tuple(default_keys),
             tuple(unrostered),
+            tuple(field_arms),
         )
 
 
@@ -12151,6 +12165,7 @@ class ClassDef(Statement):
             branch_slots,
             default_keys,
             unrostered_definitions,
+            field_arms,
         ) = self._class_body_block(threaded)
         bases = ()
         if self.bases:
@@ -12206,6 +12221,7 @@ class ClassDef(Statement):
             class_definition=self,
             body=body_statements,
             branch_fields=branch_fields,
+            field_arms=field_arms,
             branch_slots=branch_slots,
             default_keys=default_keys,
             unrostered_definitions=unrostered_definitions,
