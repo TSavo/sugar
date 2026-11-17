@@ -138,11 +138,11 @@ class PartitionFace:
     guards happen to be spelled.
 
     This is the difference the factoring gap turns on. ``_are_exclusive`` is a
-    sound but shallow prover over guard SHAPE: it sees ``g`` against ``not g``
-    one literal deep and nothing else. A partition that survives a disjunctive
-    merge, a nested conjunction, or a value-level rewrite is still a partition,
-    but its shape no longer advertises it. Carried testimony does not decay
-    that way.
+    sound prover over the guards' FORMULAS: their boolean structure, every
+    atom opaque. A partition whose exclusion lives below the atoms (two
+    producers' atoms a value-level rewrite made unrelated, a coordinate no
+    formula ties to the test) is still a partition, but no formula shows it.
+    Carried testimony does not decay that way.
     """
 
     partition: object
@@ -219,14 +219,16 @@ def _overlapping_completed_pair(completed):
     the two as faces of ONE split already answered, and its answer does not
     decay when the guards are merged or rewritten), then the shape-level
     prover, the sound fallback for arms whose producer never claimed a
-    partition."""
+    partition. One budget for the whole admission: the decision over the
+    guards' boolean structure is bounded per face, not per pair."""
     if _complete_family(completed):
         return None
+    budget = [_EXCLUSION_BUDGET]
     for index, arm in enumerate(completed):
         for other in completed[index + 1 :]:
             if _faces_exclusive(arm.faces, other.faces):
                 continue
-            if not _are_exclusive(arm.guard, other.guard):
+            if not _are_exclusive(arm.guard, other.guard, budget):
                 return arm, other
     return None
 
@@ -375,14 +377,34 @@ def _conjuncts(guard: Formula) -> tuple[Formula, ...]:
     return (guard,)
 
 
-def _are_exclusive(left: Formula, right: Formula) -> bool:
-    """Whether two guards provably cannot hold together, syntactically.
+def _are_exclusive(
+    left: Formula, right: Formula, budget: "list[int] | None" = None
+) -> bool:
+    """Whether two guards provably cannot hold together.
 
-    Branch joins produce guards that carry a literal and its negation (``g``
-    against ``not g``), which is why one level of literal comparison is enough
-    for the shapes the tower builds. This is a SOUND-ONLY test: a False answer
-    means "not provably exclusive", never "provably overlapping". Factoring
-    refuses on a False answer rather than assuming a partition.
+    A SOUND-ONLY test: a False answer means "not proven exclusive", never
+    "provably overlapping". Factoring refuses on a False answer rather than
+    assuming a partition.
+
+    First the literal reading: branch joins produce guards that carry a
+    literal and its negation (``g`` against ``not g``), and one level of
+    literal comparison over the flattened conjunctions decides them at the
+    cost of a set lookup.
+
+    Then the guards' boolean structure, decided (``_jointly_satisfiable``):
+    every atom (an atomic formula or a quantifier) is an opaque proposition,
+    and the pair is exclusive exactly when ``left and right`` is false under
+    every truth assignment to those propositions. That is a proof, never a
+    guess from spelling, and it is what an equal-destination merge hides
+    from the literal reading: ``normalize`` disjoins the contributors'
+    guards (``g or X``), so the merged arm is exclusive with a sibling
+    exactly when every contributor was, and the decision reads that off the
+    disjunction itself. ``g or X`` against ``not g`` with ``X`` free still
+    holds together (``X``), and is still refused.
+
+    ``budget`` is the formula-node visits the decision may spend, shared by
+    every pair one admission asks about (``_overlapping_completed_pair``);
+    spent, the answer is "not proven".
     """
     if _is_false(left) or _is_false(right):
         return True
@@ -390,6 +412,195 @@ def _are_exclusive(left: Formula, right: Formula) -> bool:
     for literal in _conjuncts(left):
         if complement_guard(literal) in right_literals:
             return True
+    if budget is None:
+        budget = [_EXCLUSION_BUDGET]
+    try:
+        return not _jointly_satisfiable(left, right, budget)
+    except _ExclusionBudgetSpent:
+        return False
+
+
+# Formula-node visits one admission may spend deciding exclusion over the
+# guards' boolean structure. Spent, the pair is "not proven", exactly as the
+# literal reading alone answered.
+_EXCLUSION_BUDGET = 5_000
+
+
+class _ExclusionBudgetSpent(Exception):
+    """The decision ran out of visits: the pair is not proven exclusive."""
+
+
+def _proposition_kind(node: Formula) -> str | None:
+    """The boolean connective ``node`` is, or None for an opaque atom."""
+    if type(node) is _Connective:
+        arity = len(node.operands)
+        if node.kind in ("and", "or"):
+            return node.kind
+        if node.kind == "not" and arity == 1:
+            return "not"
+        if node.kind == "implies" and arity == 2:
+            return "implies"
+    return None
+
+
+def _spend(budget: "list[int]") -> None:
+    budget[0] -= 1
+    if budget[0] < 0:
+        raise _ExclusionBudgetSpent
+
+
+def _combined_truth(kind: str, operands: list) -> "bool | None":
+    if kind == "not":
+        return None if operands[0] is None else not operands[0]
+    if kind == "implies":
+        antecedent, consequent = operands
+        if antecedent is False or consequent is True:
+            return True
+        if antecedent is True and consequent is False:
+            return False
+        return None
+    if kind == "and":
+        if any(value is False for value in operands):
+            return False
+        if all(value is True for value in operands):
+            return True
+        return None
+    if any(value is True for value in operands):
+        return True
+    if all(value is False for value in operands):
+        return False
+    return None
+
+
+def _truth_values(root: Formula, assignment: dict, budget: "list[int]") -> dict:
+    """Three-valued truth (True, False, None for undecided) of every node of
+    ``root`` under ``assignment`` (atom -> bool), keyed by node identity.
+
+    One iterative post-order walk over the shared DAG: a guard is as deep as
+    the body that folded it, so it never leans on the call stack."""
+    values: dict[int, bool | None] = {}
+    stack = [(root, False)]
+    while stack:
+        node, ready = stack.pop()
+        key = id(node)
+        if key in values:
+            continue
+        kind = _proposition_kind(node)
+        if kind is None:
+            values[key] = assignment.get(node)
+            continue
+        if not ready:
+            _spend(budget)
+            stack.append((node, True))
+            stack.extend(
+                (operand, False)
+                for operand in node.operands
+                if id(operand) not in values
+            )
+            continue
+        values[key] = _combined_truth(
+            kind, [values[id(operand)] for operand in node.operands]
+        )
+    return values
+
+
+def _forced_atoms(root: Formula, values: dict, budget: "list[int]") -> "dict | None":
+    """Every atom whose value ``root`` being true forces under the current
+    assignment (``values``), or None when ``root`` cannot be true there."""
+    forced: dict = {}
+    seen: set[tuple[int, bool]] = set()
+    stack = [(root, True)]
+    while stack:
+        node, wanted = stack.pop()
+        have = values[id(node)]
+        if have is not None:
+            if have is not wanted:
+                return None
+            continue
+        mark = (id(node), wanted)
+        if mark in seen:
+            continue
+        seen.add(mark)
+        _spend(budget)
+        kind = _proposition_kind(node)
+        if kind is None:
+            if forced.get(node, wanted) is not wanted:
+                return None
+            forced[node] = wanted
+            continue
+        operands = node.operands
+        if kind == "not":
+            stack.append((operands[0], not wanted))
+        elif kind == "implies":
+            antecedent, consequent = operands
+            if not wanted:
+                stack.append((antecedent, True))
+                stack.append((consequent, False))
+            elif values[id(antecedent)] is True:
+                stack.append((consequent, True))
+            elif values[id(consequent)] is False:
+                stack.append((antecedent, False))
+        elif (kind == "and") is wanted:
+            # A true conjunction, or a false disjunction: every operand is.
+            stack.extend((operand, wanted) for operand in operands)
+        else:
+            # A false conjunction, or a true disjunction: when one operand is
+            # still open and every other already answered the other way, it
+            # is that one.
+            open_operands = [op for op in operands if values[id(op)] is None]
+            if len(open_operands) == 1:
+                stack.append((open_operands[0], wanted))
+    return forced
+
+
+def _undecided_atom(root: Formula, values: dict) -> "Formula | None":
+    """An atom beneath an undecided node of ``root``: the next to split on."""
+    seen: set[int] = set()
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if id(node) in seen or values[id(node)] is not None:
+            continue
+        seen.add(id(node))
+        if _proposition_kind(node) is None:
+            return node
+        stack.extend(reversed(node.operands))
+    return None
+
+
+def _jointly_satisfiable(left: Formula, right: Formula, budget: "list[int]") -> bool:
+    """Whether some truth assignment to the atoms makes ``left`` and
+    ``right`` both true: a propagate-and-split search (DPLL) over the
+    guards' boolean structure, iterative and bounded by ``budget``.
+
+    True whenever the search cannot rule the pair out (including an atom it
+    cannot find to split on), so a False answer is always a proof."""
+    root = _Connective("and", (left, right))
+    pending: list[dict] = [{}]
+    while pending:
+        assignment = pending.pop()
+        while True:
+            values = _truth_values(root, assignment, budget)
+            verdict = values[id(root)]
+            if verdict is not None:
+                break
+            forced = _forced_atoms(root, values, budget)
+            if forced is None:
+                verdict = False
+                break
+            if not forced:
+                break
+            assignment = {**assignment, **forced}
+        if verdict is True:
+            return True
+        if verdict is False:
+            continue
+        atom = _undecided_atom(root, values)
+        if atom is None:
+            return True
+        budget[0] -= len(assignment)
+        pending.append({**assignment, atom: False})
+        pending.append({**assignment, atom: True})
     return False
 
 
