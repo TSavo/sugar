@@ -6226,6 +6226,43 @@ def annotation_evaluated(annotation, *, postponed_module: bool) -> bool:
     return not (postponed_module or _string_annotation(annotation))
 
 
+_FUNCTION_SCOPE_KINDS = frozenset(("FunctionDef", "AsyncFunctionDef", "Lambda"))
+
+
+def annotated_assignment_annotation_evaluated(
+    target_kind: str,
+    has_value: bool,
+    holder_kind: Optional[str],
+    *,
+    postponed_module: bool,
+) -> bool:
+    """Whether Python evaluates the annotation of an annotated assignment
+    (``<target>: <annotation> [= <value>]``) when the statement runs: never
+    in a module that postpones its annotations (``postponed_module``, PEP
+    563); a Name target's (``x: T``, ``x: T = v``) in a module or class body
+    (``holder_kind``: the kind of the innermost class, function or lambda
+    whose body holds the statement, None at module level), never in a
+    function or lambda body; an attribute target's (``o.f: T [= v]``) and a
+    valued subscript target's (``o[k]: T = v``) in a module body only.
+
+    The one law, over the statement's own shape, read by the meaning layer
+    (``AnnAssign._evaluates_annotation``, which splices exactly these
+    annotations into the block as evaluations) and by the lexical import
+    pass, which walks exactly these annotations for their import reads
+    (``import_binding._Pass.statement``): ``values: np.ndarray`` in a class
+    body reads ``np`` there, and its read takes the import's row, never the
+    free name (#7757)."""
+    if postponed_module:
+        return False
+    if target_kind == "Name":
+        return holder_kind not in _FUNCTION_SCOPE_KINDS
+    if target_kind not in ("Attribute", "Subscript"):
+        return False
+    if not has_value and target_kind != "Attribute":
+        return False
+    return holder_kind is None
+
+
 def _postponed_annotations(definition) -> Tuple["Node", ...]:
     """The annotations of the ``def`` ``definition`` that Python does not
     evaluate when its statement runs (``Node.unevaluated_parts``): every
@@ -15745,20 +15782,23 @@ class AnnAssign(Statement):
         (``o.f: T``, whose receiver is evaluated first), in a module body.
         A function body never evaluates it; a class body refuses a non-Name
         annotated target; a bare subscript target stays loud
-        (``_construct_sugar``)."""
+        (``_construct_sugar``).  The one law the lexical import pass reads
+        too (``annotated_assignment_annotation_evaluated``)."""
         if isinstance(self.target, Name):
-            return not _annotations_postponed(self.unit) and not isinstance(
-                self.unit.scope_holding(self.line_col_span()),
-                (FunctionDef, AsyncFunctionDef, Lambda),
-            )
-        if not isinstance(self.target, (Attribute, Subscript)):
+            target_kind = "Name"
+        elif isinstance(self.target, Attribute):
+            target_kind = "Attribute"
+        elif isinstance(self.target, Subscript):
+            target_kind = "Subscript"
+        else:
             return False
-        if self.value is None and not isinstance(self.target, Attribute):
-            return False
-        unit = self.unit
-        if unit.scope_holding(self.line_col_span()) is not None:
-            return False
-        return not _annotations_postponed(unit)
+        holder = self.unit.scope_holding(self.line_col_span())
+        return annotated_assignment_annotation_evaluated(
+            target_kind,
+            self.value is not None,
+            None if holder is None else holder.kind,
+            postponed_module=_annotations_postponed(self.unit),
+        )
 
     def unevaluated_parts(self) -> Tuple["Node", ...]:
         """The annotation, where Python does not evaluate it when this

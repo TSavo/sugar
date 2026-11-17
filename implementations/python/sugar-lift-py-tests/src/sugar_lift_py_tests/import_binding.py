@@ -29,6 +29,7 @@ from sugar_source_tree.nodes import (
     Module,
     Node,
     Statement,
+    annotated_assignment_annotation_evaluated,
     annotation_evaluated,
     module_postpones_annotations,
 )
@@ -647,8 +648,10 @@ class _Pass:
         self.module_state = module_state or {}
         self.analyze_nested = analyze_nested
         # Whether the module postpones its annotations
-        # (``module_postpones_annotations``): a ``def``'s annotations are
-        # walked exactly where this lift evaluates them.
+        # (``module_postpones_annotations``): a ``def``'s annotations, and an
+        # annotated assignment's, are walked exactly where this lift
+        # evaluates them (``annotation_evaluated``,
+        # ``annotated_assignment_annotation_evaluated``).
         self.postpones_annotations = postpones_annotations
         self.class_outer_states: dict[int, State] = {}
         # The alias each import binding was made at, by the binding's CID
@@ -1382,6 +1385,19 @@ class _Pass:
                     continue
                 for name in names:
                     state[name] = frozenset({_NON_IMPORT})
+            if node.kind == "AnnAssign" and (
+                annotated_assignment_annotation_evaluated(
+                    node.target.kind,
+                    value is not None,
+                    None if scope.kind == "Module" else scope.kind,
+                    postponed_module=self.postpones_annotations,
+                )
+            ):
+                # Then the annotation, where Python evaluates it after the
+                # store (``annotated_assignment_annotation_evaluated``, the
+                # law the meaning layer splices it by): ``values:
+                # np.ndarray`` in a class body reads ``np`` (#7757).
+                self.expression(node.annotation, state, scope)
             return state
         if node.kind == "If":
             self.expression(node.test, state, scope)
