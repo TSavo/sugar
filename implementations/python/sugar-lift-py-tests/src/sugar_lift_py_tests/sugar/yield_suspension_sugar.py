@@ -68,30 +68,44 @@ class YieldSuspensionSugar(Sugar):
         )
 
     def _resumed(self):
-        """What the suspension hands back where the generator is resumed:
-        the one two-faced undecided operation, keyed where it evaluates
-        (``floor_value.undecided_result_terms``)."""
-        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-        from sugar_lift_py_tests.floor.floor_value import (
-            _siteless_undecided_read,
-            undecided_result_terms,
+        """What the suspension hands back where the generator is resumed
+        (``suspension_resumed``)."""
+        return suspension_resumed(
+            self.site, name="yield", owner="YieldSuspensionSugar", node="Yield"
         )
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.occurrence import occurrence_key
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-        if self.site is None:
-            _siteless_undecided_read("YieldSuspensionSugar", "yield", "Yield")
-        key = occurrence_key(self.site)
-        term, completes = undecided_result_terms("yield", (), key)
-        return ExitSet.two_faced(
-            SymbolicValue(term),
-            UndeterminedRaiseEffect(
-                blame=str(self.site),
-                occurrence=key,
-                producer_node_owner="YieldSuspensionSugar",
-                site=self.site,
-            ),
-            guard=completes,
-            site=self.site,
-        )
+
+def suspension_resumed(site, *, name: str, owner: str, node: str):
+    """What a suspension -- a ``yield``, a ``yield from``'s delegation --
+    hands back where the generator is resumed: the one two-faced undecided
+    operation, keyed where it evaluates (``floor_value.
+    undecided_result_terms``).  It completes with
+    ``python:<name>_result(<key>)`` under ``python:<name>_op.completes`` and
+    halts with an ``UndeterminedRaiseEffect`` (producer ``owner``) under the
+    complement, both faces owing the ``undecided`` member at ``site``.  A
+    suspension that reached reduction with no site refuses by name
+    (``_siteless_undecided_read``)."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.floor_value import (
+        _siteless_undecided_read,
+        undecided_result_terms,
+    )
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    if site is None:
+        _siteless_undecided_read(owner, name, node)
+    key = occurrence_key(site)
+    term, completes = undecided_result_terms(name, (), key)
+    return ExitSet.two_faced(
+        SymbolicValue(term),
+        UndeterminedRaiseEffect(
+            blame=str(site),
+            occurrence=key,
+            producer_node_owner=owner,
+            site=site,
+        ),
+        guard=completes,
+        site=site,
+    )

@@ -151,13 +151,10 @@ def test_yield_from_constructs_suspension_sugar(tmp_path: Path) -> None:
     fn = next(sf.functions())
     sugar = fn.sugar()
     assert any(isinstance(node, YieldFromSugar) for node in _walk_sugars(sugar))
-    # Eager desugar stays loud — generator protocol owns consumption.
-    try:
-        sugar.desugar(None)
-        # May complete as Universe with a halt/gap in body depending on
-        # statement wrapping; if it raises SNW from YieldFrom, that is correct.
-    except SugarNotWritten as gap:
-        assert "YieldFrom" in gap.owner or "yield from" in str(gap).lower()
+    # The body reduces through the delegation: ``iter``/``next`` of ``xs``
+    # and the resume are each the one undecided read, so the body completes.
+    assert sugar.suspends
+    assert sugar.desugar(None).exits
 
 
 # --- Starred ---

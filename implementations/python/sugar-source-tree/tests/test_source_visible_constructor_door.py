@@ -12,7 +12,6 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -378,22 +377,28 @@ def test_yield_from_only_function_owns_its_suspension() -> None:
     assert FunctionDef._owns_yield(function.body)
 
 
-def test_census_door_reduces_a_yield_and_refuses_a_yield_from() -> None:
+@pytest.mark.parametrize(
+    "suspension", ["yield 7", "yield from (1, 2)"], ids=["yield", "yield-from"]
+)
+def test_census_door_reduces_both_suspensions(suspension: str) -> None:
     """CLASSIFICATION PIN: the census door reduces a generator body through
-    its ``yield`` and states no result of its call.
+    its ``yield`` and its ``yield from`` and states no result of its call.
 
     `functions() -> sugar -> desugar` reduces a function body with no call.
-    A ``yield`` is the two-faced resume (``YieldSuspensionSugar``): the body
-    runs past it to its ``return``, and the universe of a generator function
-    states nothing about the call's ``out`` (``UniverseValue.suspends``): its
-    call returns the generator, never the ``9`` the body returns.  A
-    ``yield from`` still refuses by name (``YieldFromSugar.desugar``).
+    A ``yield`` is the two-faced resume (``YieldSuspensionSugar``); a
+    ``yield from`` is ``iter`` and ``next`` of its operand, then the same
+    resume (``YieldFromSugar``).  The body runs past either to its
+    ``return``, and the universe of a generator function states nothing
+    about the call's ``out`` (``UniverseValue.suspends``): its call returns
+    the generator, never the ``9`` the body returns.
     """
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
     from sugar_lift_py_tests.ir import and_
     from sugar_lift_py_tests.outcome.exit_set import Completed
 
-    source = _source_file("def arbitrarily_renamed():\n    yield 7\n    return 9\n")
+    source = _source_file(
+        f"def arbitrarily_renamed():\n    {suspension}\n    return 9\n"
+    )
     function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
     sugar = function.sugar()
     assert sugar.suspends
@@ -407,17 +412,6 @@ def test_census_door_reduces_a_yield_and_refuses_a_yield_from() -> None:
         assert isinstance(universe, UniverseValue)
         assert universe.suspends
         assert universe.post() == and_([])
-
-    source = _source_file(
-        "def arbitrarily_renamed():\n    yield from (1, 2)\n    return 9\n"
-    )
-    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
-    try:
-        function.sugar().desugar(None)
-    except SugarNotWritten as refusal:
-        assert refusal.owner == "YieldFromSugar.desugar"
-    else:
-        raise AssertionError("YieldFromSugar.desugar must refuse under the census door")
 
 
 _ENGINE_PICKING_NEW = (
