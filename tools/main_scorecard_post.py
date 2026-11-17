@@ -535,7 +535,8 @@ def lane_result(summary: object) -> dict:
     if lacking:
         return {"measured": False, "note": "lane summary lacks " + ", ".join(lacking)}
     result = {k: summary[k] for k in LANE_KEYS}
-    for key in ("files_minted", "unanswered_edges"):
+    for key in ("files_minted", "unanswered_edges", "corpus_edges", "corpus_edges_bound",
+                "corpus_edge_misses"):
         if isinstance(summary.get(key), int):
             result[key] = summary[key]
     result["refusals_top"] = str(summary.get("refusals_top") or "none")

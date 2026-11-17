@@ -67,6 +67,15 @@ name: Main scorecard board
 # starts once it could not finish inside LIFT_SEAT_CAP_S. Its rows live
 # under $HOME/.cache/sugar-lift-lane/<run id>, so a re-run of a failed seat
 # on the same runner resumes; a new run measures every file.
+#
+# CROSS-MODULE EDGES BIND. The seat mints every module first, then proves
+# each with the same-corpus proofs that answer its calls staged in
+# .sugar/imports/ (as examples/python-base64-federation/run.sh stages the
+# vendor's), so a call into another pandas module joins that module's
+# contract at step 9. The join posts `pandas_edges: corpus=bound/total ...`
+# and uploads every corpus edge that did not bind, by reason, beside the
+# refusals (`edge-misses.json`). Calls leaving pandas, or into its compiled
+# modules, stay unbound and are counted as boundary edges, never misses.
 
 on:
   push:
@@ -367,7 +376,7 @@ jobs:
             rm -rf "lift-prior/$id"
           done
           true
-      - name: Seat (sugar mint + sugar prove per file)
+      - name: Seat (sugar mint per file, then sugar prove with its imports)
         shell: bash
         env:
           PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
@@ -401,8 +410,9 @@ jobs:
               > "$OUT/s$SEAT.log" 2>&1
           rc=$?
           echo "$rc" > "$OUT/s$SEAT.rc"
-          # The per-file projects are scratch: only the rows travel.
-          rm -rf "$STATE/work"
+          # The per-file projects and the proof store are scratch (the store
+          # is a few GB of .proof files, one run an hour): only the rows travel.
+          rm -rf "$STATE/work" "$STATE/store"
           cp "$STATE/rows.jsonl" "$OUT/s$SEAT/rows.jsonl"
           echo "lift seat s$SEAT rc=$rc wall=$(( $(date +%s) - JOB_T0 ))s"
           grep -E "^pandas seat |^seat budget|^holding|^resuming|^retry" "$OUT/s$SEAT.log" | tail -n 40
@@ -480,6 +490,7 @@ jobs:
             python -u tools/nine_step_lift_lane.py --join "${dirs[@]}" \
               --label pandas --enrolled "$enrolled" \
               --out pandas-lift/summary.json --refusals pandas-lift/refusals.json \
+              --edge-misses pandas-lift/edge-misses.json \
               > pandas-lift/join.log 2>&1
             echo "join rc=$?"
             cat pandas-lift/join.log
@@ -498,7 +509,9 @@ jobs:
         with:
           name: pandas-lift-refusals
           overwrite: true
-          path: pandas-lift/refusals.json
+          path: |
+            pandas-lift/refusals.json
+            pandas-lift/edge-misses.json
           if-no-files-found: warn
       - name: Upload the lift join
         if: ${{ !cancelled() }}
