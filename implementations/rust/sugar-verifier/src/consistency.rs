@@ -8421,6 +8421,10 @@ pub fn members_answered_at_prove(
                 }
             }
         }
+        // A member an earlier claim left owed stays owed whatever this claim
+        // decides (the fold below never answers an owed member), so its atoms
+        // are asked of no solver again: the same answers, without the solves.
+        reads.retain(|member_cid, _| !owed.contains(member_cid));
         if reads.is_empty() {
             continue;
         }
@@ -8688,13 +8692,33 @@ fn answers_at<'a>(
     at_site
 }
 
-pub(crate) fn linked_post_instance_count(pool: &MementoPool, body: &Json) -> usize {
-    if !is_consistency_candidate(body) {
-        return 0;
+/// The join's members for one pool (`collect_ambient_posts`), collected once
+/// and read by every row that asks whether the join binds its contract.
+///
+/// `collect_ambient_posts` decodes every contract body, bridge and undecided
+/// member of the pool. Asked once per callsite row (the report fold and the
+/// link surface each ask it of every callsite), it was the pool decoded once
+/// per row: quadratic in the proof's size. The members are a pure projection
+/// of the pool, so one collection answers every row of that pool alike.
+pub(crate) struct PoolJoin {
+    ambient: Vec<AmbientPost>,
+}
+
+impl PoolJoin {
+    pub(crate) fn of(pool: &MementoPool) -> Self {
+        Self {
+            ambient: collect_ambient_posts(pool),
+        }
     }
-    let inv = canonicalize_formula_json(&axiom_context_formula(body));
-    let ambient_posts = collect_ambient_posts(pool);
-    instantiate_ambient_posts_for_inv(&inv, &ambient_posts).len()
+
+    /// `linked_post_instance_count` over this pool's members.
+    pub(crate) fn linked_post_instance_count(&self, body: &Json) -> usize {
+        if !is_consistency_candidate(body) {
+            return 0;
+        }
+        let inv = canonicalize_formula_json(&axiom_context_formula(body));
+        instantiate_ambient_posts_for_inv(&inv, &self.ambient).len()
+    }
 }
 
 fn instantiate_ambient_posts_for_inv(inv: &Json, ambient: &[AmbientPost]) -> Vec<Json> {
@@ -9251,8 +9275,20 @@ fn settle_owed_operations(
         .to_value(),
         class_namespaces,
     );
+    // One atom read by several owed entries is one question of the one
+    // context: asked once, its answer read by each entry.
+    let mut settled: Vec<(Json, bool)> = Vec::new();
     for (entry, atom) in owed {
-        if !joined_context_decides(&context, &atom, plan, registry, compilers) {
+        let known = settled.iter().find(|(seen, _)| *seen == atom).map(|(_, decides)| *decides);
+        let decides = match known {
+            Some(decides) => decides,
+            None => {
+                let decides = joined_context_decides(&context, &atom, plan, registry, compilers);
+                settled.push((atom, decides));
+                decides
+            }
+        };
+        if !decides {
             partition.dropped.push(entry);
         }
     }
@@ -19365,6 +19401,84 @@ mod tests {
             "same(3) == 4 under same's `out = x` is refuted: {}",
             lying.reason
         );
+    }
+
+    /// A seat that counts the scripts it is asked and answers `sat`.
+    struct CountingSeat {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::solvers::Solver for CountingSeat {
+        fn name(&self) -> &str {
+            "z3"
+        }
+        fn version(&self) -> &str {
+            "counting-0"
+        }
+        fn ir_compiler(&self) -> &str {
+            "smt-lib-v2.6"
+        }
+        fn solve(&self, smt: &str) -> crate::solvers::SolveResult {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            crate::solvers::Solver::solve(
+                &StubSolver::new("z3", ObligationVerdict::Unsatisfied),
+                smt,
+            )
+        }
+    }
+
+    fn owed_entry(member_cid: &str) -> DroppedAmbientPost {
+        DroppedAmbientPost {
+            source_symbol: "python:same".to_string(),
+            target_cid: String::new(),
+            member_cid: member_cid.to_string(),
+            reason: DroppedAmbientPostReason::Unanswered,
+            spelling: String::new(),
+        }
+    }
+
+    /// The solver invocations `settle_owed_operations` makes for `entries`
+    /// owed entries that all read one atom, and what it drops.
+    fn settle_one_atom_read_by(entries: usize) -> (usize, usize) {
+        let atom = eqf(int(1), int(2));
+        let mut partition = AmbientPostInstances {
+            owed_operations: (0..entries)
+                .map(|i| (owed_entry(&format!("owed-{i}")), atom.clone()))
+                .collect(),
+            ..AmbientPostInstances::default()
+        };
+        let seat = Arc::new(CountingSeat {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut registry: HashMap<SolverSeat, SolverHandle> = HashMap::new();
+        registry.insert(SolverSeat::Z3, Arc::clone(&seat) as SolverHandle);
+        settle_owed_operations(
+            &mut partition,
+            &BTreeMap::new(),
+            &SolverPlan::Single(SolverSeat::Z3),
+            &registry,
+            &test_compilers(),
+        );
+        (
+            seat.calls.load(std::sync::atomic::Ordering::SeqCst),
+            partition.dropped.len(),
+        )
+    }
+
+    /// Benchmark-shaped regression: one atom that several owed entries read
+    /// is one question of the joined context, asked once, and every entry
+    /// reads its answer: the solves do not grow with the entries.
+    #[test]
+    fn an_atom_several_owed_entries_read_is_settled_by_one_solve() {
+        let (one_calls, one_dropped) = settle_one_atom_read_by(1);
+        let (many_calls, many_dropped) = settle_one_atom_read_by(50);
+        assert!(one_calls > 0, "the atom reaches the solver");
+        assert_eq!(
+            many_calls, one_calls,
+            "fifty entries reading one atom are one atom's solves"
+        );
+        assert_eq!(one_dropped, 1, "an undecided atom drops its entry");
+        assert_eq!(many_dropped, 50, "and drops every entry that reads it");
     }
 
     #[test]

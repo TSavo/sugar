@@ -134,6 +134,7 @@ impl Solver for SubprocessSolver {
         let timed_out;
         if let Some(to) = self.timeout {
             let deadline = started + to;
+            let mut poll = PollBackoff::new();
             loop {
                 match child.try_wait() {
                     Ok(Some(_)) => {
@@ -166,7 +167,7 @@ impl Solver for SubprocessSolver {
                                 true,
                             );
                         }
-                        std::thread::sleep(Duration::from_millis(20));
+                        std::thread::sleep(poll.next_sleep());
                     }
                     Err(e) => {
                         return SolveResult::with_evidence(
@@ -252,6 +253,35 @@ impl Solver for SubprocessSolver {
             started.elapsed(),
             timed_out,
         )
+    }
+}
+
+/// The sleep between two `try_wait` polls of a solver child: 1 ms, doubling
+/// to a 20 ms ceiling.
+///
+/// A pinned obligation is answered in a few milliseconds, but the first poll
+/// lands right after the script is written, before the solver has answered,
+/// so a flat 20 ms sleep charged every invocation at least 20 ms of waiting
+/// on an answer that was already there: on a prove of thousands of solver
+/// invocations that idle wait was most of the wall time. Doubling from 1 ms
+/// reads a quick answer within about its own run time, and a long run still
+/// polls at the old 20 ms. The deadline and what it answers are unchanged.
+struct PollBackoff {
+    next: Duration,
+}
+
+impl PollBackoff {
+    const FIRST: Duration = Duration::from_millis(1);
+    const CEILING: Duration = Duration::from_millis(20);
+
+    fn new() -> Self {
+        Self { next: Self::FIRST }
+    }
+
+    fn next_sleep(&mut self) -> Duration {
+        let sleep = self.next;
+        self.next = (self.next * 2).min(Self::CEILING);
+        sleep
     }
 }
 
@@ -344,6 +374,47 @@ mod refusal_tests {
             "the rejection is read from what the seat printed: {}",
             r.solver_stdout()
         );
+    }
+
+    // The poll between two `try_wait`s starts at 1 ms and doubles to the old
+    // flat 20 ms: a quick answer is read at about its own run time, a long run
+    // polls no more often than before.
+    #[test]
+    fn poll_backoff_doubles_from_one_millisecond_to_the_old_twenty() {
+        let mut poll = PollBackoff::new();
+        let sleeps: Vec<u64> = (0..8).map(|_| poll.next_sleep().as_millis() as u64).collect();
+        assert_eq!(sleeps, vec![1, 2, 4, 8, 16, 20, 20, 20]);
+    }
+
+    // The backoff changes when an answer is read, never what it is: a seat's
+    // answer under a deadline is the answer, and a seat that outlives the
+    // deadline is still a solver timeout.
+    #[test]
+    fn a_bounded_seat_answers_as_before_and_still_times_out() {
+        let answering = SubprocessSolver::new(
+            "answering",
+            "sh",
+            "0",
+            "smt-lib-v2.6",
+            vec!["-c".into(), "echo unsat".into()],
+            Some(Duration::from_secs(10)),
+        );
+        for _ in 0..20 {
+            let r = answering.solve("(assert true)\n(check-sat)\n");
+            assert_eq!(r.verdict, ObligationVerdict::Discharged);
+            assert!(!r.timed_out);
+        }
+        let hanging = SubprocessSolver::new(
+            "hanging",
+            "sh",
+            "0",
+            "smt-lib-v2.6",
+            vec!["-c".into(), "sleep 5; echo unsat".into()],
+            Some(Duration::from_millis(200)),
+        );
+        let r = hanging.solve("(check-sat)\n");
+        assert_eq!(r.verdict, ObligationVerdict::SolverTimeout);
+        assert!(r.timed_out);
     }
 
     // A genuinely-unparseable verdict (not an unknown-constant lowering gap) stays
