@@ -38,6 +38,21 @@ name: Main scorecard board
 # board run on main whose commit is not this run's, waiting or measuring, so
 # a merge burst measures the board of its head, not of its first commit.
 #
+# ONE HEAVY LANE AT A TIME (run 43996546635, 2026-11-17)
+#
+# On 9c4067da8 the board, the pandas lift seat and the numpy lift all took a
+# runner at 01:49:22Z, the moment the fast lane finished (three runners, one
+# 32-thread, 48 GB host: 4 board seats + 28 + 12 lift files at once), and
+# all three were cancelled at 02:28:15-32Z with no row posted. No timeout
+# fired (240/120/150 minutes; the logs carry no "exceeded the maximum
+# execution time"), no run was cancelled (`lift join` ran after them), no
+# supersede or schedule run touched them (the only supersede jobs ran at
+# 01:34Z, and the 02:12Z hourly run gated itself out). The lanes now take
+# the host one at a time: the fast lane, then the board, then the pandas lift
+# seat (`lift` needs `board`), then numpy (its `wait` holds until this
+# workflow's run on the same commit finished, AFTER_WORKFLOWS in
+# tools/main_scorecard_wait_fast_lane.sh).
+
 # THE NINE-STEP LANE (`lift`, #8416)
 #
 # The board builds trees (roll_call.discharge calls .sugar(), never
@@ -101,8 +116,9 @@ env:
   BOARD_JOIN_CAP_S: "300"
   # The nine-step lane: seats, files at once per seat, and the budget of one
   # seat (seconds; no file starts once it could not finish inside it). The
-  # per-file ceiling is the lane script's own (300 s). The 1-minute load gate
-  # in the script (1.25 x CPUs) shares the host with the board and numpy.
+  # per-file ceiling is the lane script's own (300 s). The seat runs after
+  # the board and before numpy (ONE HEAVY LANE AT A TIME); the script's
+  # 1-minute load gate (1.25 x CPUs) still guards the shared host.
   LIFT_SEATS: "1"
   LIFT_WORKERS: "28"
   LIFT_SEAT_CAP_S: "5400"
@@ -183,6 +199,8 @@ jobs:
     needs: [gate, wait]
     if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' && needs.wait.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
+    # Set-up, BOARD_SEAT_CAP_S (180 min) and BOARD_JOIN_CAP_S (5 min), and
+    # the post: inside 240. A healthy board takes ~10 min.
     timeout-minutes: 240
     steps:
       - name: Start the job clock
@@ -309,12 +327,14 @@ jobs:
   # The nine-step lane: every pinned pandas file through `sugar mint` and
   # `sugar prove` (tools/nine_step_lift_lane.py), seat i of LIFT_SEATS
   # (--slice i/K), on the board's resolved and pin-gated corpus.
+  # After the board (ONE HEAVY LANE AT A TIME), whatever the board's result.
   lift:
     name: pandas lift seat ${{ matrix.seat }}
-    needs: [gate, wait]
+    needs: [gate, wait, board]
     if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' && needs.wait.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
-    # Set-up, LIFT_SEAT_CAP_S (90 min), and the upload.
+    # Set-up (~5 min), LIFT_SEAT_CAP_S (90 min) plus the 5 min KILL
+    # backstop, and the upload: 100 min at most, inside 120.
     timeout-minutes: 120
     strategy:
       fail-fast: false

@@ -53,7 +53,11 @@ def test_lease_tools_are_deleted():
 # The main scorecard's workflows realize the ruling per commit (#8964,
 # #8416): a concurrency group per commit, and a ``supersede`` job that
 # cancels the older runs on other commits (tools/main_scorecard_supersede.sh).
-SCORECARD_WORKFLOWS = ("main-scorecard.yml", "main-scorecard-board.yml")
+SCORECARD_WORKFLOWS = (
+    "main-scorecard.yml",
+    "main-scorecard-board.yml",
+    "main-scorecard-numpy.yml",
+)
 SUPERSEDE = "tools/main_scorecard_supersede.sh"
 
 
