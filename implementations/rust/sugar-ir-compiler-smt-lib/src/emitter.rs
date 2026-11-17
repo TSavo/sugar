@@ -5679,6 +5679,41 @@ mod emit_term_direct_tests {
         assert_eq!(emit_term(&term), "(let ((x 1)) x)");
     }
 
+    /// #7757: a term graph reaches the solver shared. A 40-level chain whose
+    /// level `i` binds `py.conditional(g_i, py.box(t_{i-1}), t_{i-1})` is
+    /// 2^40 copies of `x` written out; emitted as nested `let`s it is linear.
+    #[test]
+    fn a_doubling_term_graph_emits_as_linear_lets() {
+        let mut term = var("term:39");
+        for level in (0..40).rev() {
+            let below = if level == 0 {
+                var("x")
+            } else {
+                var(&format!("term:{}", level - 1))
+            };
+            term = Term::Let {
+                bindings: vec![LetBinding {
+                    name: format!("term:{level}"),
+                    bound_term: Term::Ctor {
+                        name: "py.conditional".into(),
+                        args: vec![
+                            var(&format!("g{level}")),
+                            Term::Ctor {
+                                name: "py.box".into(),
+                                args: vec![below.clone()],
+                            },
+                            below,
+                        ],
+                    },
+                }],
+                body: Box::new(term),
+            };
+        }
+        let emitted = emit_term(&term);
+        assert!(emitted.matches("(let ").count() >= 40, "{emitted}");
+        assert!(emitted.len() < 40 * 200, "{} bytes", emitted.len());
+    }
+
     #[test]
     fn ctor_emits_expected_smt_lib() {
         let term = Term::Ctor {

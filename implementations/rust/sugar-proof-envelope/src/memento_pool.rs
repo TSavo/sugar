@@ -12,10 +12,41 @@ pub use crate::{AnchoredMember, AtomCid, ContractBodyCid, MemberKind, MementoCid
 use serde_json::Value as Json;
 
 /// Written-out term nodes one body formula slot may hold when the verifier
-/// reads it (#7757). The proof carries its term graph; this bounds only what
-/// the verifier writes out for its laws to read. Above every slot a lift
-/// bounded at 16 MiB written out could state.
+/// reads it written out (#7757). The proof carries its term graph; within
+/// this bound the slot is written out, exactly the formula a written-out
+/// proof states, so every law reads it as before. Past it the slot keeps its
+/// graph (`MementoPool::shared_term`).
 pub const WRITTEN_OUT_TERM_NODE_BOUND: usize = 4_000_000;
+
+/// In a slot past `WRITTEN_OUT_TERM_NODE_BOUND`, a term of at most this many
+/// nodes written out is still written out; a larger one stays shared.
+pub const SHARED_TERM_INLINE_NODES: usize = 4_096;
+
+/// Name prefix of a `let` binding that stands for one row of a proof's term
+/// graph (#7757): the binding is this prefix and the row's CID. A formula
+/// holding one holds a term the verifier's laws do not read written out.
+pub use sugar_ir_types::SHARED_TERM_BINDING_PREFIX;
+
+/// The `let` binding name of the term row `cid`.
+pub fn shared_term_binding(cid: &str) -> String {
+    format!("{SHARED_TERM_BINDING_PREFIX}{cid}")
+}
+
+/// True when `value` holds a term-graph `let` binding or a reference to one
+/// (`SHARED_TERM_BINDING_PREFIX`), anywhere.
+pub fn holds_shared_term(value: &Json) -> bool {
+    match value {
+        Json::Array(items) => items.iter().any(holds_shared_term),
+        Json::Object(fields) => {
+            fields
+                .get("name")
+                .and_then(Json::as_str)
+                .is_some_and(|name| name.starts_with(SHARED_TERM_BINDING_PREFIX))
+                || fields.values().any(holds_shared_term)
+        }
+        _ => false,
+    }
+}
 
 /// The CID a `{kind: term-ref, cid}` node names; `None` for any other node.
 fn term_ref_cid(value: &Json) -> Option<&str> {
@@ -741,9 +772,9 @@ impl MementoPool {
     /// verifier's laws read terms written out, so a slot is written out here,
     /// at the one door every body formula passes, up to
     /// `WRITTEN_OUT_TERM_NODE_BOUND` nodes. The size is counted on the graph
-    /// first (each row once), so a slot past the bound is never built; it
-    /// reads as no body. Load already refused a catalog with a term-ref that
-    /// names no term row of its own.
+    /// first (each row once), so a slot past the bound is never written out;
+    /// it keeps its graph (`share_term_refs`). Load already refused a catalog
+    /// with a term-ref that names no term row of its own.
     fn state_term_refs(&self, formula: Json) -> Option<Json> {
         if !crate::contains_term_ref(&formula) {
             return Some(formula);
@@ -757,9 +788,131 @@ impl MementoPool {
             total = total.saturating_add(self.written_out_nodes(cid, &mut rows, &mut sizes)?);
         }
         if total > WRITTEN_OUT_TERM_NODE_BOUND {
-            return None;
+            // Past the bound the slot keeps its graph: each large term is a
+            // `let` over its rows, each row bound once (#7757).
+            return self.share_term_refs(formula, &mut rows, &sizes);
         }
         self.write_out_term_refs(formula, &mut rows)
+    }
+
+    /// `value` with every term-ref stated over the proof's own graph: a term
+    /// of at most `SHARED_TERM_INLINE_NODES` nodes written out, a larger one
+    /// as `shared_term`'s `let`.
+    fn share_term_refs(
+        &self,
+        value: Json,
+        rows: &mut BTreeMap<String, Json>,
+        sizes: &BTreeMap<String, usize>,
+    ) -> Option<Json> {
+        match value {
+            Json::Object(fields) => {
+                if fields.get("kind").and_then(Json::as_str) == Some("term-ref") {
+                    let cid = fields.get("cid").and_then(Json::as_str)?;
+                    if sizes.get(cid).copied().unwrap_or(usize::MAX) <= SHARED_TERM_INLINE_NODES {
+                        return self.written_out_term(cid, rows);
+                    }
+                    return self.shared_term(cid, rows);
+                }
+                let mut out = serde_json::Map::new();
+                for (key, item) in fields {
+                    out.insert(key, self.share_term_refs(item, rows, sizes)?);
+                }
+                Some(Json::Object(out))
+            }
+            Json::Array(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    out.push(self.share_term_refs(item, rows, sizes)?);
+                }
+                Some(Json::Array(out))
+            }
+            scalar => Some(scalar),
+        }
+    }
+
+    /// The term `root` names, kept shared (#7757): every ctor row it reaches
+    /// is bound once, by `shared_term_binding(cid)`, in nested `let`s grouped
+    /// by height (a level's rows name only rows of lower levels, bound
+    /// outside it), and the body is the root's binding. `var`/`const` rows
+    /// are stated in place. The `let` is linear in the graph; written out it
+    /// is the term the rows state.
+    fn shared_term(&self, root: &str, rows: &mut BTreeMap<String, Json>) -> Option<Json> {
+        let root_row = self.term_row(root, rows)?;
+        if root_row.get("kind").and_then(Json::as_str)? != "ctor" {
+            return Some(root_row);
+        }
+        // Height of every row the root reaches; ctor rows in children-first
+        // order.
+        let mut heights: BTreeMap<String, usize> = BTreeMap::new();
+        let mut order: Vec<String> = Vec::new();
+        let mut stack: Vec<(String, bool)> = vec![(root.to_string(), false)];
+        while let Some((cid, children_done)) = stack.pop() {
+            if heights.contains_key(&cid) {
+                continue;
+            }
+            let row = self.term_row(&cid, rows)?;
+            let kind = row.get("kind").and_then(Json::as_str)?.to_string();
+            if kind == "var" || kind == "const" {
+                heights.insert(cid, 0);
+                continue;
+            }
+            if kind != "ctor" {
+                return None;
+            }
+            let children = row
+                .get("args")?
+                .as_array()?
+                .iter()
+                .map(|arg| term_ref_cid(arg).map(str::to_string))
+                .collect::<Option<Vec<String>>>()?;
+            if !children_done {
+                stack.push((cid, true));
+                for child in children {
+                    if !heights.contains_key(&child) {
+                        stack.push((child, false));
+                    }
+                }
+                continue;
+            }
+            let height = 1 + children
+                .iter()
+                .map(|child| heights.get(child).copied().unwrap_or(0))
+                .max()
+                .unwrap_or(0);
+            heights.insert(cid.clone(), height);
+            order.push(cid);
+        }
+        let top = heights.get(root).copied()?;
+        let mut levels: Vec<Vec<Json>> = vec![Vec::new(); top + 1];
+        for cid in &order {
+            let row = self.term_row(cid, rows)?;
+            let mut args = Vec::new();
+            for arg in row.get("args")?.as_array()? {
+                let child = term_ref_cid(arg)?;
+                let child_row = self.term_row(child, rows)?;
+                if child_row.get("kind").and_then(Json::as_str) == Some("ctor") {
+                    args.push(serde_json::json!({
+                        "kind": "var",
+                        "name": shared_term_binding(child),
+                    }));
+                } else {
+                    args.push(child_row);
+                }
+            }
+            let height = heights.get(cid).copied()?;
+            levels[height].push(serde_json::json!({
+                "name": shared_term_binding(cid),
+                "boundTerm": {"kind": "ctor", "name": row.get("name")?, "args": args},
+            }));
+        }
+        let mut term = serde_json::json!({"kind": "var", "name": shared_term_binding(root)});
+        for level in levels.into_iter().skip(1).rev() {
+            if level.is_empty() {
+                continue;
+            }
+            term = serde_json::json!({"kind": "let", "bindings": level, "body": term});
+        }
+        Some(term)
     }
 
     /// The term-row atom `cid` names, parsed once per slot.

@@ -571,18 +571,17 @@ def function_def_memento(fn, file_rel: str):
     )
 
 
-# What one definition's rows may state inline, in serialized bytes.  A proof
-# states every term inline (#7843): the fold resolves every term-ref a row
-# carries into its term before mint (``tree::decode_enumerate_result``), so a
-# row whose term DAG is small can state a term many times its DAG's size --
-# a subterm shared by every arm is written out once per arm.  Past the
-# transport's finite-or-refuse bound (256 MiB, ``kit_path::lift_plugin``)
-# the WHOLE file's response is swapped for a marker that is no lift response
-# at all, and mint ended the file on it (``lift response missing `kind`
-# field``: pandas ``core/interchange/utils.py``, ``io/formats/style_render.py``,
-# run 43960179946).  The definition that cannot be stated is the one
-# refused, by name, inside the file's proof; the rest of the file is served.
-# Sixteen definitions at the bound still fit the transport's.
+# What one definition's rows may carry, in serialized bytes: a crash guard
+# for the transport only.  A proof carries its term graph (#7757): a row
+# states each term by reference, and the response carries each term row
+# once, so what a definition puts on the wire is its rows plus the rows of
+# the graph they reach -- never the term written out (which doubles per
+# conditional whose arms share a subterm).  Past the transport's
+# finite-or-refuse bound (256 MiB, ``kit_path::lift_plugin``) the WHOLE
+# file's response is swapped for a marker that is no lift response at all
+# (run 43960179946), so a definition whose graph alone is past this bound is
+# refused by name, inside the file's proof, and the rest of the file is
+# served.  Sixteen definitions at the bound still fit the transport's.
 STATED_DEFINITION_BYTE_BOUND = 16 * 1024 * 1024
 
 
@@ -602,18 +601,18 @@ class StatedRow:
 def stated_rows(rows, term_table, memento):
     """``rows`` (one definition's contract rows, or None for an effect)
     lowered through ``term_table`` as the universe scan writes them, or the
-    definition at ``memento`` refused by name when they state more than
-    ``STATED_DEFINITION_BYTE_BOUND`` bytes inline.
+    definition at ``memento`` refused by name when its rows and the term
+    graph they reach carry more than ``STATED_DEFINITION_BYTE_BOUND`` bytes.
 
     Raised inside the scan's one ``try`` for the definition, the refusal is
     its ``undecided`` row by the one rule (``refused_function_row``,
     ``refused_class_row``); nothing is truncated and no row is dropped.  The
-    size is the inline statement's, read off the DAG once per term
-    (``stated_inline_bytes``), never by expanding it."""
+    size is the graph's (``stated_graph_bytes``), each row once; the term is
+    never written out."""
     if not rows:
         return rows
     wire = [row.to_rpc_with_term_table(term_table) for row in rows]
-    stated = stated_inline_bytes(wire, term_table.nodes)
+    stated = stated_graph_bytes(wire, term_table.nodes)
     if stated <= STATED_DEFINITION_BYTE_BOUND:
         return [StatedRow(row) for row in wire]
     from types import SimpleNamespace
@@ -628,99 +627,53 @@ def stated_rows(rows, term_table, memento):
             col=memento.span.start_col,
         ),
         observed=(
-            f"rows stating {stated} bytes inline, past the "
+            f"rows and term graph carrying {stated} bytes, past the "
             f"{STATED_DEFINITION_BYTE_BOUND}-byte bound of one definition"
         ),
-        requested="a statement of the definition's terms within the bound",
+        requested="a definition whose term graph fits the transport",
         fix=(
-            "find the term the definition's arms share and state it once "
-            "(a carried value, never a copy per arm); do not raise the bound"
+            "the graph itself is past the transport's bound: state fewer "
+            "distinct terms; do not raise the bound"
         ),
     )
 
 
-def stated_inline_bytes(value, nodes) -> int:
-    """Bytes of ``value`` serialized compactly with every term-ref replaced by
-    the term it names (``nodes``: a ``TermTableBuilder``'s CID-keyed rows),
-    as the fold resolves it.
+def stated_graph_bytes(value, nodes) -> int:
+    """Bytes ``value`` and the term graph it reaches put on the wire: the
+    compact serialization of ``value`` (term-refs as they stand) plus that of
+    every term row (``nodes``: a ``TermTableBuilder``'s CID-keyed rows) it
+    reaches, each row once.
 
-    Each term's size is counted once and read from its CID thereafter, on an
-    explicit worklist: the DAG is walked, the expansion never built, and a
-    deep term spine does not lean on the call stack.  A CID ``nodes`` lacks
-    is counted as the reference itself; the fold's decode is what refuses a
-    dangling reference."""
-    sizes: dict[str, int] = {}
+    Walked on an explicit worklist, so a deep term spine does not lean on the
+    call stack.  A CID ``nodes`` lacks adds nothing; the fold's decode is
+    what refuses a dangling reference."""
 
-    def scalar(item) -> int:
+    def compact(item) -> int:
         return len(
             json.dumps(item, separators=(",", ":"), ensure_ascii=False).encode(
-                "utf-8"
+                "utf-8", "surrogatepass"
             )
         )
 
-    def term_ref_cid(item):
-        if (
-            isinstance(item, dict)
-            and item.get("kind") == "term-ref"
-            and isinstance(item.get("cid"), str)
-        ):
-            return item["cid"]
-        return None
-
-    def refs_in(item) -> list:
-        found = []
-        pending = [item]
-        while pending:
-            current = pending.pop()
-            cid = term_ref_cid(current)
-            if cid is not None:
-                found.append(cid)
-            elif isinstance(current, dict):
-                pending.extend(current.values())
-            elif isinstance(current, (list, tuple)):
-                pending.extend(current)
-        return found
-
-    def measure(item) -> int:
-        # Every term-ref ``item`` holds is already sized.
-        total = 0
-        pending = [item]
-        while pending:
-            current = pending.pop()
-            cid = term_ref_cid(current)
-            if cid is not None and cid in sizes:
-                total += sizes[cid]
-            elif isinstance(current, dict):
-                total += 2 + max(len(current) - 1, 0)
-                for key, child in current.items():
-                    total += scalar(str(key)) + 1
-                    pending.append(child)
-            elif isinstance(current, (list, tuple)):
-                total += 2 + max(len(current) - 1, 0)
-                pending.extend(current)
-            else:
-                total += scalar(current)
-        return total
-
-    entered: set[str] = set()
-    work = [(cid, False) for cid in refs_in(value)]
-    while work:
-        cid, ready = work.pop()
-        if cid in sizes:
-            continue
-        node = nodes.get(cid)
-        if node is None or (not ready and cid in entered):
-            # Dangling, or a cycle no content address can make: counted as
-            # the reference, left for the fold's decode to refuse.
-            sizes[cid] = scalar({"kind": "term-ref", "cid": cid})
-            continue
-        if not ready:
-            entered.add(cid)
-            work.append((cid, True))
-            work.extend((child, False) for child in refs_in(node) if child not in sizes)
-            continue
-        sizes[cid] = measure(node)
-    return measure(value)
+    total = compact(value)
+    seen: set[str] = set()
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            if current.get("kind") == "term-ref":
+                cid = current.get("cid")
+                if isinstance(cid, str) and cid not in seen:
+                    seen.add(cid)
+                    row = nodes.get(cid)
+                    if row is not None:
+                        total += compact(row)
+                        pending.append(row)
+                continue
+            pending.extend(current.values())
+        elif isinstance(current, (list, tuple)):
+            pending.extend(current)
+    return total
 
 
 class UndecidedRow:

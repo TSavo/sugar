@@ -14,7 +14,7 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 // form before hashing. Alpha + pure-let normal form, solver-free.
 pub mod canonicalize;
 pub mod membership;
-pub use canonicalize::{canonicalize_formula, canonicalize_property};
+pub use canonicalize::{canonicalize_formula, canonicalize_property, SHARED_TERM_BINDING_PREFIX};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]

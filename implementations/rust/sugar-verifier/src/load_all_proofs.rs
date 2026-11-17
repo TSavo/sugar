@@ -1153,6 +1153,67 @@ mod tests {
             .expect("the written-out proof's contract has a body");
         assert_eq!(shared_body["post"], inline_body["post"]);
         assert!(!sugar_proof_envelope::contains_term_ref(&shared_body["post"]));
+        assert!(!sugar_proof_envelope::memento_pool::holds_shared_term(
+            &shared_body["post"]
+        ));
+    }
+
+    /// #7757: a doubling chain of 40 conditionals (2^40 copies of `x`
+    /// written out) is carried in 121 rows. Its post reads as a term-graph
+    /// `let`, linear in the rows, that decodes for the solver; the solver
+    /// seam leaves it undecided by name, never a verdict over a term the laws
+    /// did not read.
+    #[test]
+    fn a_doubling_chain_of_forty_conditionals_states_and_reads_in_linear_size() {
+        use sugar_canonicalizer::Value as C;
+        use sugar_proof_envelope::FlatAtom;
+        let reference = |row: &std::sync::Arc<C>| {
+            let cid = FlatAtom::new(row.clone()).cid().as_str().to_string();
+            C::object([("cid", C::string(cid)), ("kind", C::string("term-ref"))])
+        };
+        let mut below = C::object([("kind", C::string("var")), ("name", C::string("x"))]);
+        let mut rows = vec![below.clone()];
+        for level in 0..40 {
+            let guard = C::object([
+                ("kind", C::string("var")),
+                ("name", C::string(format!("g{level}"))),
+            ]);
+            let boxed = C::object([
+                ("kind", C::string("ctor")),
+                ("name", C::string("py.box")),
+                ("args", C::array(vec![reference(&below)])),
+            ]);
+            let conditional = C::object([
+                ("kind", C::string("ctor")),
+                ("name", C::string("py.conditional")),
+                (
+                    "args",
+                    C::array(vec![reference(&guard), reference(&boxed), reference(&below)]),
+                ),
+            ]);
+            rows.push(guard);
+            rows.push(boxed);
+            rows.push(conditional.clone());
+            below = conditional;
+        }
+        assert_eq!(rows.len(), 121);
+        let root = reference(&below);
+        let mut pool = MementoPool::default();
+        load_proof_bytes_into_pool(&[contract_proof_with_rows(root, rows)], &mut pool);
+        assert!(term_ref_refusals(&pool).is_empty(), "{:#?}", pool.load_errors);
+
+        let body = pool
+            .contract_members_with_bodies()
+            .next()
+            .map(|(_, body)| body)
+            .expect("the chain's contract has a body");
+        let post = body["post"].clone();
+        let stated = serde_json::to_string(&post).expect("the post serializes");
+        assert!(stated.len() < 64 * 1024, "{} bytes", stated.len());
+        assert!(sugar_proof_envelope::memento_pool::holds_shared_term(&post));
+        let input = sugar_ir_compiler::CompilerInput::decode_json(post)
+            .expect("the shared post decodes for the solver");
+        assert!(crate::solvers::plan::shares_term_graph(&input));
     }
 
     /// A string that merely spells `term-ref` is data, not a reference.

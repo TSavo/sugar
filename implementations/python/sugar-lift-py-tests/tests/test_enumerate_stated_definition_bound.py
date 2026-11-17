@@ -1,15 +1,16 @@
-"""A definition whose rows cannot be stated inline is refused by name.
+"""A definition whose term graph is past the transport's bound is refused by
+name; a definition whose term written out is huge is not.
 
-A proof states every term inline (#7843): the fold resolves each term-ref a
-row carries into its term before mint.  A row whose term DAG is small can
-state a term many times its size (a subterm every arm shares, written once
-per arm), and past the transport's finite-or-refuse bound the WHOLE file's
-response was swapped for a marker with no ``kind``: mint ended the file on
-``lift response missing `kind` field`` (pandas ``core/interchange/utils.py``
-and ``io/formats/style_render.py``, run 43960179946).  Now the definition
-past the bound is its own ``undecided`` row, by the one refusal rule, and
-the file is served.  Twins at the real JSON-RPC door: past the bound the
-function is refused by name; within it the same row is served as stated.
+A proof carries its term graph (#7757): a row states each term by reference
+and the response carries each term row once.  A term whose written-out form
+doubles per level (a subterm both arms of a conditional share) is a few rows
+of graph, so it is served as stated -- the 16 MiB bound no longer reads the
+written-out form (#9151 read it, and refused 294 pandas/numpy functions whose
+graphs are small).  The bound stays as a crash guard for the transport only:
+past the transport's finite-or-refuse bound the WHOLE file's response was
+swapped for a marker with no ``kind`` (run 43960179946), so a definition whose
+graph alone is past it is its own ``undecided`` row, by the one refusal rule,
+and the file is served.  Twins at the real JSON-RPC door.
 """
 
 from __future__ import annotations
@@ -21,12 +22,17 @@ from sugar_lift_py_tests.ir import TermTableBuilder, atomic, ctor, make_var
 
 
 def _doubled(depth: int):
-    """A term whose DAG has ``depth + 1`` nodes and whose inline statement
+    """A term whose graph has ``depth + 1`` rows and whose written-out form
     has ``2 ** depth`` leaves: each level names the one below twice."""
     term = make_var("x")
     for _ in range(depth):
         term = ctor("pair", [term, term])
     return term
+
+
+def _wide(width: int):
+    """A term whose graph has ``width + 1`` rows: ``width`` distinct leaves."""
+    return ctor("tuple", [make_var(f"v{index}") for index in range(width)])
 
 
 class _Row:
@@ -40,14 +46,12 @@ class _Row:
         }
 
 
-def _serve_universe(tmp_path, monkeypatch, depth: int) -> dict:
+def _serve_universe(tmp_path, monkeypatch, term) -> dict:
     subject = tmp_path / "subject.py"
     subject.write_text("def subject():\n    return 1\n", encoding="utf-8")
 
     def stated_contract_rows(fn, file_rel):
-        return tree_enumerate.function_def_memento(fn, file_rel), [
-            _Row(_doubled(depth))
-        ]
+        return tree_enumerate.function_def_memento(fn, file_rel), [_Row(term)]
 
     request = {
         "jsonrpc": "2.0",
@@ -73,10 +77,30 @@ def _serve_universe(tmp_path, monkeypatch, depth: int) -> dict:
     return sent[0]
 
 
-def test_a_definition_past_the_bound_is_its_refused_member(tmp_path, monkeypatch):
-    """POSITIVE. 2**12 leaves inline, past the bound: the function's one
-    `undecided` row names the bound; the file is served, not ended."""
-    response = _serve_universe(tmp_path, monkeypatch, depth=12)
+def test_a_doubling_term_is_served_as_its_graph(tmp_path, monkeypatch):
+    """POSITIVE (#7757). 2**30 leaves written out, 31 rows of graph: within
+    the bound, served as the contract row, its term by reference through the
+    response's own table, never refused for the size of its expansion."""
+    response = _serve_universe(tmp_path, monkeypatch, _doubled(30))
+
+    assert "error" not in response, response
+    result = response["result"]
+    (node,) = result["nodes"]
+    audit = node["audit"]
+    assert audit["kind"] == "contract"
+    reference = audit["post"]["args"][1]
+    assert reference["kind"] == "term-ref"
+    assert reference["cid"] in result["termTable"]
+    assert len(result["termTable"]) <= 32 + 1
+
+
+def test_a_definition_whose_graph_is_past_the_bound_is_its_refused_member(
+    tmp_path, monkeypatch
+):
+    """DISCRIMINATING. 400 distinct leaves are 400 rows of graph, past the
+    4096-byte bound: the function's one ``undecided`` row names the bound;
+    the file is served, not ended."""
+    response = _serve_universe(tmp_path, monkeypatch, _wide(400))
 
     assert "error" not in response, response
     result = response["result"]
@@ -88,47 +112,23 @@ def test_a_definition_past_the_bound_is_its_refused_member(tmp_path, monkeypatch
     refused = audit["reason"]["refused"]
     assert refused["owner"] == "tree_enumerate.stated_definition_bound"
     assert "4096-byte bound" in refused["observed"]
-    # The refused row states no term: nothing of the doubled term is carried.
+    # The refused row states no term: nothing of the graph is carried.
     assert "termTable" not in result
 
 
-def test_a_definition_within_the_bound_is_served_as_stated(tmp_path, monkeypatch):
-    """DISCRIMINATING. The same row with 2**4 leaves states within the bound:
-    it is served as the contract row, its term by reference through the
-    response's own table, never refused for its shape."""
-    response = _serve_universe(tmp_path, monkeypatch, depth=4)
-
-    assert "error" not in response, response
-    result = response["result"]
-    (node,) = result["nodes"]
-    audit = node["audit"]
-    assert audit["kind"] == "contract"
-    reference = audit["post"]["args"][1]
-    assert reference["kind"] == "term-ref"
-    assert reference["cid"] in result["termTable"]
-
-
-def _resolved(value, nodes):
-    if isinstance(value, dict) and value.get("kind") == "term-ref":
-        node = nodes[value["cid"]]
-        return _resolved(node, nodes)
-    if isinstance(value, dict):
-        return {key: _resolved(child, nodes) for key, child in value.items()}
-    if isinstance(value, list):
-        return [_resolved(child, nodes) for child in value]
-    return value
-
-
-def test_the_measure_is_the_resolved_statements_length() -> None:
-    """The size the bound reads is exactly the compact serialization of the
-    row with every term-ref resolved, as the fold resolves it -- read off the
-    DAG, never by building the expansion."""
+def test_the_measure_is_the_rows_and_their_graph_each_row_once() -> None:
+    """The size the bound reads is the compact serialization of the rows as
+    they stand plus each term row they reach, once -- never the written-out
+    term."""
     table = TermTableBuilder()
     wire = [_Row(_doubled(6)).to_rpc_with_term_table(table), {"kind": "x", "n": []}]
 
-    expanded = json.dumps(
-        _resolved(wire, table.nodes), separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    def compact(item) -> int:
+        return len(
+            json.dumps(item, separators=(",", ":"), ensure_ascii=False).encode()
+        )
 
-    assert tree_enumerate.stated_inline_bytes(wire, table.nodes) == len(expanded)
-    assert len(table.nodes) < 12  # the DAG, not the 64 leaves
+    expected = compact(wire) + sum(compact(row) for row in table.nodes.values())
+
+    assert tree_enumerate.stated_graph_bytes(wire, table.nodes) == expected
+    assert len(table.nodes) < 12  # the graph, not the 64 leaves

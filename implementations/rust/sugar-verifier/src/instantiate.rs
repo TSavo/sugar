@@ -221,7 +221,43 @@ fn substitute_term(t: &Json, name: &str, replacement: &Json) -> Json {
             return rebuild_with_child(map, "args", Json::Array(new_args));
         }
     }
+    if kind == "let" {
+        return substitute_let(map, name, replacement);
+    }
     t.clone()
+}
+
+/// Substitution through a `let` (#7757): each binding's term is substituted
+/// once, so a subterm the term graph shares is substituted once, never per
+/// occurrence; the body is substituted unless a binding rebinds `name`
+/// (bindings are parallel: they see the scope outside the `let`).
+fn substitute_let(map: &serde_json::Map<String, Json>, name: &str, replacement: &Json) -> Json {
+    let mut out = map.clone();
+    let mut shadows = false;
+    if let Some(Json::Array(bindings)) = map.get("bindings") {
+        let new_bindings: Vec<Json> = bindings
+            .iter()
+            .map(|binding| {
+                if binding.get("name").and_then(Json::as_str) == Some(name) {
+                    shadows = true;
+                }
+                let Json::Object(fields) = binding else {
+                    return binding.clone();
+                };
+                let Some(bound) = fields.get("boundTerm") else {
+                    return binding.clone();
+                };
+                rebuild_with_child(fields, "boundTerm", substitute_term(bound, name, replacement))
+            })
+            .collect();
+        out.insert("bindings".to_string(), Json::Array(new_bindings));
+    }
+    if !shadows {
+        if let Some(body) = map.get("body") {
+            out.insert("body".to_string(), substitute_term(body, name, replacement));
+        }
+    }
+    Json::Object(out)
 }
 
 #[cfg(test)]
@@ -371,5 +407,59 @@ mod strip_outer_forall_tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod shared_term_substitution_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A 40-level term-graph `let` whose written-out term doubles per level:
+    /// level `i` binds `py.conditional(g_i, py.box(t_{i-1}), t_{i-1})`.
+    fn doubling_chain() -> Json {
+        let mut body = json!({"kind": "var", "name": "term:39"});
+        for level in (0..40).rev() {
+            let below = if level == 0 {
+                json!({"kind": "var", "name": "x"})
+            } else {
+                json!({"kind": "var", "name": format!("term:{}", level - 1)})
+            };
+            body = json!({"kind": "let", "bindings": [{
+                "name": format!("term:{level}"),
+                "boundTerm": {"kind": "ctor", "name": "py.conditional", "args": [
+                    {"kind": "var", "name": format!("g{level}")},
+                    {"kind": "ctor", "name": "py.box", "args": [below.clone()]},
+                    below
+                ]}
+            }], "body": body});
+        }
+        body
+    }
+
+    /// #7757: substitution through a shared `let` substitutes each binding
+    /// once: the result stays linear in the graph, never the 2^40-copy term.
+    #[test]
+    fn substitution_through_a_doubling_chain_stays_linear() {
+        let chain = doubling_chain();
+        let before = serde_json::to_string(&chain).expect("serializes").len();
+        let substituted = substitute_term(&chain, "x", &json!({"kind": "const", "value": 7}));
+        let after = serde_json::to_string(&substituted).expect("serializes");
+        assert!(after.len() < before + 200, "{} vs {}", after.len(), before);
+        assert_eq!(after.matches("\"value\":7").count(), 2);
+        assert!(!after.contains("\"name\":\"x\""));
+    }
+
+    /// A binding that rebinds the substituted name shadows it in the body,
+    /// never in the bindings (they see the scope outside the `let`).
+    #[test]
+    fn a_let_binding_shadows_the_substituted_name_in_its_body() {
+        let term = json!({"kind": "let", "bindings": [{
+            "name": "x",
+            "boundTerm": {"kind": "var", "name": "x"}
+        }], "body": {"kind": "var", "name": "x"}});
+        let substituted = substitute_term(&term, "x", &json!({"kind": "const", "value": 1}));
+        assert_eq!(substituted["bindings"][0]["boundTerm"], json!({"kind": "const", "value": 1}));
+        assert_eq!(substituted["body"], json!({"kind": "var", "name": "x"}));
     }
 }

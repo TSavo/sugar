@@ -28,6 +28,11 @@
 use crate::{IrFormula, IrTerm, LetBinding};
 use std::collections::HashMap;
 
+/// Name prefix of a `let` binding that stands for one row of a proof's term
+/// graph (#7757): the binding is this prefix and the row's CID. Such a `let`
+/// is never inlined: inlining writes the shared term out.
+pub const SHARED_TERM_BINDING_PREFIX: &str = "term:";
+
 #[derive(Clone, Default)]
 struct Ctx {
     /// let-bound name -> its already-canonical value term (inlined at use site).
@@ -94,6 +99,33 @@ fn canon_term(t: &IrTerm, ctx: &Ctx) -> IrTerm {
             IrTerm::Lambda {
                 param_name: canon,
                 param_sort: param_sort.clone(),
+                body: Box::new(canon_term(body, &child)),
+            }
+        }
+        IrTerm::Let { bindings, body }
+            if bindings
+                .iter()
+                .any(|binding| binding.name.starts_with(SHARED_TERM_BINDING_PREFIX)) =>
+        {
+            // A term-graph `let` (#7757) names each row of a shared term
+            // once; inlining it writes the term out, which doubles per
+            // conditional whose arms share a subterm. It stays a `let`: its
+            // bindings are canonicalized in the scope outside it (they are
+            // parallel), its body with the bound names shadowing.
+            let kept = bindings
+                .iter()
+                .map(|LetBinding { name, bound_term }| LetBinding {
+                    name: name.clone(),
+                    bound_term: canon_term(bound_term, ctx),
+                })
+                .collect();
+            let mut child = ctx.clone();
+            for LetBinding { name, .. } in bindings {
+                child.rename.remove(name);
+                child.subst.remove(name);
+            }
+            IrTerm::Let {
+                bindings: kept,
                 body: Box::new(canon_term(body, &child)),
             }
         }
@@ -452,5 +484,28 @@ mod tests {
             sort: int_sort(),
         };
         assert_eq!(canon_term(&c, &Ctx::default()), c);
+    }
+
+    /// #7757: a term-graph `let` names each row of a shared term once;
+    /// canonicalizing never inlines it (that writes the term out), and the
+    /// bound names shadow in its body.
+    #[test]
+    fn a_term_graph_let_is_never_inlined() {
+        let row = format!("{SHARED_TERM_BINDING_PREFIX}c0");
+        let shared = IrTerm::Let {
+            bindings: vec![LetBinding {
+                name: row.clone(),
+                bound_term: IrTerm::Ctor {
+                    name: "f".into(),
+                    args: vec![var("x")],
+                },
+            }],
+            body: Box::new(IrTerm::Ctor {
+                name: "g".into(),
+                args: vec![var(&row), var(&row)],
+            }),
+        };
+        let canon = canonicalize_formula(&eq(var("out"), shared.clone()));
+        assert_eq!(canon, eq(var("out"), shared));
     }
 }

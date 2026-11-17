@@ -118,12 +118,39 @@ pub fn run_plan_with_compilers(
     )
 }
 
+/// Why a formula holding a shared term is not decided (#7757).
+pub(crate) const SHARED_TERM_UNDECIDED_REASON: &str =
+    "term graph past the written-out bound (#7757): the verifier's laws read \
+     terms written out and did not read this one, so no solver answer over it \
+     is a verdict";
+
+/// True when `input` holds a term the proof states over its own graph past
+/// the written-out bound (`memento_pool::shared_term`): a term-graph `let`
+/// binding or a reference to one.
+pub(crate) fn shares_term_graph(input: &CompilerInput) -> bool {
+    serde_json::to_value(input)
+        .is_ok_and(|value| sugar_proof_envelope::memento_pool::holds_shared_term(&value))
+}
+
 fn run_plan_inner(
     plan: &SolverPlan,
     registry: &Registry,
     source: InputSource<'_>,
     formula: Option<&CompilerInput>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
+    // The laws that add what a solver needs (ground folds, isinstance and
+    // dispatch facts, object identity per evaluation) read terms written
+    // out. A shared term is opaque to them, so a model over it is not a
+    // counterexample and an unsat core over it may rest on a fact they would
+    // have keyed apart: the formula is undecided, by name, and nothing is
+    // dropped from it.
+    if formula.is_some_and(shares_term_graph) {
+        return (
+            ObligationVerdict::Undecidable,
+            SHARED_TERM_UNDECIDED_REASON.to_string(),
+            Vec::new(),
+        );
+    }
     match plan {
         SolverPlan::Single(name) => single(*name, registry, source, formula),
         SolverPlan::Chain(names) => chain(names, registry, source, formula),

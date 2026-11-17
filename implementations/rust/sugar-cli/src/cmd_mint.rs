@@ -56,7 +56,7 @@ use sugar_claim_envelope::{
     BodyDischargePolicyWarning, BridgeCallsite, MintAuthorityArgs, MintBridgeArgs,
     MintContractArgs, MintImplicationArgs, MintUndecidedArgs,
 };
-use sugar_compiler::kit_path::LiftTermTable;
+use sugar_compiler::kit_path::{LiftTermNode, LiftTermTable};
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
     cid_from_proof_stem, ed25519_pubkey_string, proof_filename, AssertionSurfaceMemento,
@@ -4131,7 +4131,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
         let panic_loci: Vec<Arc<CValue>> = match panic_loci_value {
             Some(Value::Array(arr)) => arr
                 .iter()
-                .map(|value| json_to_cvalue_with_terms(value, term_table))
+                .map(|value| json_to_cvalue_header_terms(value, term_table, &mut named_terms))
                 .collect::<Result<Vec<_>, _>>()?,
             Some(value) => {
                 return Err(format!(
@@ -4147,7 +4147,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
         let input_values: Vec<Arc<CValue>> = match decl.get("inputValues") {
             Some(Value::Array(arr)) => arr
                 .iter()
-                .map(|value| json_to_cvalue_with_terms(value, term_table))
+                .map(|value| json_to_cvalue_header_terms(value, term_table, &mut named_terms))
                 .collect::<Result<Vec<_>, _>>()?,
             Some(value) => {
                 return Err(format!(
@@ -4173,7 +4173,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
         let class_shapes: Vec<Arc<CValue>> = match class_shapes_value {
             Some(Value::Array(arr)) => arr
                 .iter()
-                .map(|value| json_to_cvalue_with_terms(value, term_table))
+                .map(|value| json_to_cvalue_header_terms(value, term_table, &mut named_terms))
                 .collect::<Result<Vec<_>, _>>()?,
             Some(value) => {
                 return Err(format!(
@@ -4193,7 +4193,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                     push_graph_memento!(SourceMemento, push_source, cid.as_str(), bytes);
                 }
                 arr.iter()
-                    .map(|value| json_to_cvalue_with_terms(value, term_table))
+                    .map(|value| json_to_cvalue_header_terms(value, term_table, &mut named_terms))
                     .collect::<Result<Vec<_>, _>>()?
             }
             Some(value) => {
@@ -4327,8 +4327,17 @@ fn mint_ir_document_with_source_and_plan_mementos(
         );
         let evidence_term = decl
             .get("evidence")
-            .map(|value| json_to_cvalue_with_terms(value, term_table))
+            .map(|value| json_to_cvalue_header_terms(value, term_table, &mut named_terms))
             .transpose()?;
+        // A header term past the written-out bound states its rows by
+        // reference too: they are written into the proof like the slots'.
+        register_term_rows(
+            &mut proof_graph,
+            &term_rows,
+            &named_terms,
+            &mut written_term_rows,
+        )
+        .map_err(|e| format!("contract `{name}`: {e}"))?;
         let mut pushed_content_cid = false;
         for proofir_provenance in proofir_provenance_variants {
             let args = MintContractArgs {
@@ -5514,6 +5523,55 @@ fn json_to_cvalue_stating_term_refs(
         named.insert(cid);
     }
     Ok(json_to_cvalue(value))
+}
+
+/// Written-out term nodes a contract header field may hold (#7757). Header
+/// fields are read as typed member views, which read terms written out; a
+/// field whose terms written out pass this bound states them by reference to
+/// the proof's own rows instead, and a solver given one leaves it undecided
+/// (no typed term reads a term-ref), so the doubling is never written out.
+const HEADER_WRITTEN_OUT_NODE_BOUND: usize = 1_000_000;
+
+/// A contract header field: written out from the table within
+/// `HEADER_WRITTEN_OUT_NODE_BOUND`, else stated by reference
+/// (`json_to_cvalue_stating_term_refs`). The size is counted on the graph.
+fn json_to_cvalue_header_terms(
+    value: &Value,
+    term_table: Option<&LiftTermTable>,
+    named: &mut BTreeSet<String>,
+) -> Result<Arc<CValue>, String> {
+    let Some(table) = term_table else {
+        return json_to_cvalue_with_terms(value, None);
+    };
+    let mut cids = Vec::new();
+    collect_term_ref_cids(value, &mut cids)?;
+    let mut sizes: BTreeMap<String, usize> = BTreeMap::new();
+    let mut total = 0usize;
+    for cid in &cids {
+        let node = table.get(cid).ok_or_else(|| {
+            format!("term-ref names term-table CID `{cid}` the ir-document termTable lacks")
+        })?;
+        total = total.saturating_add(written_out_term_nodes(&node, &mut sizes));
+    }
+    if total <= HEADER_WRITTEN_OUT_NODE_BOUND {
+        return table.canonical_value(value);
+    }
+    json_to_cvalue_stating_term_refs(value, term_table, named)
+}
+
+/// Nodes of `node`'s term written out, counted on the graph (each row once).
+fn written_out_term_nodes(node: &Arc<LiftTermNode>, sizes: &mut BTreeMap<String, usize>) -> usize {
+    if let Some(nodes) = sizes.get(node.cid()) {
+        return *nodes;
+    }
+    let mut nodes = 1usize;
+    if let Some(args) = node.args() {
+        for arg in args {
+            nodes = nodes.saturating_add(written_out_term_nodes(arg, sizes));
+        }
+    }
+    sizes.insert(node.cid().to_string(), nodes);
+    nodes
 }
 
 /// Write every term row `named` reaches into the proof as an atom (#7757):
