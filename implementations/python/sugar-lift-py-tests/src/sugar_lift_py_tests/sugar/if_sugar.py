@@ -123,9 +123,20 @@ def truth_formula(truth, value):
     # NamedExpressionValue`, blaming the wrapper for a formula the presented
     # value had all along. Structural: any value that presents another is
     # projected through, with no table of which ones do.
+    #
+    # Projected through to the bottom: the writes a truth face carries are a
+    # CHAIN (``carry_walrus_binds`` wraps one ``NamedExpressionValue`` per
+    # write -- each walrus, each call's record, each callee store), so a face
+    # whose operands made two writes presents a wrapper that presents the
+    # value.  Peeling one level read the second wrapper's ``formula``, found
+    # nothing, and the whole file failed to mint (pandas ``core/base.py``,
+    # ``core/reshape/tile.py``: `condition folded without a symbolic formula:
+    # NamedExpressionValue (condition GuardedValue)`).  Every write stays on
+    # the face for ``extend_scope``; only the guard is read beneath them.
     presented = getattr(truth_value, "presented_value", None)
-    if presented is not None:
+    while presented is not None:
         truth_value = presented
+        presented = getattr(truth_value, "presented_value", None)
     formula = getattr(truth_value, "formula", None)
     if formula is None:
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -139,9 +150,23 @@ def truth_formula(truth, value):
             return true_guard()
         if isinstance(truth_value, FalseBoolLiteralSugar):
             return false_guard()
-        raise NotImplementedError(
-            "condition folded without a symbolic formula: "
-            f"{type(truth_value).__name__} (condition {type(value).__name__})"
+        # A truth face that states no guard is this condition's refusal by
+        # name: the enclosing function is the proof's refused member
+        # (``lift_rpc``'s per-function scan), never a crash of the file.
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            owner="if_sugar.truth_formula",
+            blame=getattr(value, "site", None) or "if_sugar.truth_formula",
+            observed=(
+                "condition folded without a symbolic formula: "
+                f"{type(truth_value).__name__} (condition {type(value).__name__})"
+            ),
+            requested="the guard formula the condition's truth face states",
+            fix=(
+                f"give {type(truth_value).__name__} a truth that answers a "
+                "PredicateValue or a bool literal through bool_op_sugar.truth_of"
+            ),
         )
     ground = _ground_atomic_truth(formula)
     if ground is True:
