@@ -1,0 +1,216 @@
+name: Lift trace
+
+# WHY THIS EXISTS
+#
+# An agent fixing a lifter refusal may only drive git and gh: it cannot run
+# the lifter, and reading the code does not find every root cause (about 325
+# pandas/numpy `EvaluationRefSugar` "key unbound" refusals read a name both
+# arms of an `if` bind). This workflow is the lifter run it can ask for: ONE
+# corpus file through the nine-step lane (tools/nine_step_lift_lane.py
+# --only: `sugar mint`, then `sugar prove`) on the lane's own set-up
+# (.github/actions/lift-lane-setup: the same interpreter, venv, toolchain and
+# resolved, pin-gated corpus as the pandas and numpy lift lanes), with the
+# kit's refusal trace on (SUGAR_KIT_TRACE_REFUSALS=1,
+# sugar_lift_py_tests.refusal_trace: per refusal, the testimony whole and
+# every key bound on the path at the refusing read) and the kit's stack
+# sampler on (SUGAR_KIT_PROFILE_DIR). tools/lift_trace_bundle.py writes the
+# small artifact `lift-trace-<run id>` (capped at LIFT_TRACE_CAP_BYTES):
+#
+#   refusals.json            the file's lane row and every refusal, whole
+#   kit-trace.jsonl          one line per kit refusal: detail (name, key,
+#                            construct-time evaluation), bindings, near, trace
+#   kit-trace-summary.json   the same without bindings and frames
+#   proof-dump.json          `sugar dump --json`, trimmed to the function
+#   kit-profile/             the mint's stack sampler aggregate (when small)
+#   manifest.json            inputs, counts, what the cap dropped
+#   lane.log                 the lane's own output for the file
+#
+# Usage (from any clone, gh only):
+#
+#   gh workflow run lift-trace.yml -f corpus=pandas \
+#     -f path=pandas/core/frame.py -f function=DataFrame.merge
+#   gh run list --workflow lift-trace.yml --limit 1
+#   gh run download <run id> --name lift-trace-<run id> --dir lift-trace
+#
+# Dispatch only: it never runs on push or on a schedule, posts nothing to
+# the scorecard issue, and writes nothing a scorecard run reads (its state
+# lives under RUNNER_TEMP and is removed after the upload). `ref` is the
+# commit traced; it must contain this workflow's lift-lane-setup action.
+#
+# One dispatch per (corpus, path, function, ref) runs at a time; dispatching
+# the same trace again cancels the older one (CI cancels superseded runs).
+
+on:
+  workflow_dispatch:
+    inputs:
+      corpus:
+        description: "The corpus: pandas or numpy"
+        type: choice
+        options: [pandas, numpy]
+        default: pandas
+        required: true
+      path:
+        description: "Corpus-relative file, e.g. pandas/core/frame.py"
+        type: string
+        required: true
+      function:
+        description: "Optional function filter: dotted qualname (DataFrame.merge) or bare name"
+        type: string
+        required: false
+        default: ""
+      ref:
+        description: "The commit, branch or tag to trace"
+        type: string
+        required: false
+        default: main
+
+concurrency:
+  group: lift-trace-${{ inputs.corpus }}-${{ inputs.path }}-${{ inputs.function }}-${{ inputs.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  # The artifact's cap (20 MB): the bundle keeps 2 MB of it for lane.log.
+  LIFT_TRACE_CAP_BYTES: "20971520"
+  LIFT_TRACE_LOG_CAP_BYTES: "2097152"
+  # The file's one ceiling for this trace (mint, then prove with what is
+  # left): above the lane's 300 s, since the trace itself costs time.
+  LIFT_TRACE_FILE_CAP_S: "900"
+
+jobs:
+  trace:
+    name: lift trace ${{ inputs.corpus }} ${{ inputs.path }} ${{ inputs.function }}
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
+    steps:
+      - name: Check the inputs
+        shell: bash
+        env:
+          TRACE_CORPUS: ${{ inputs.corpus }}
+          TRACE_PATH: ${{ inputs.path }}
+          TRACE_FUNCTION: ${{ inputs.function }}
+          TRACE_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          case "$TRACE_CORPUS" in pandas|numpy) ;; *) echo "corpus must be pandas or numpy" >&2; exit 2 ;; esac
+          if [[ ! "$TRACE_PATH" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]*\.py$ ]] || [[ "$TRACE_PATH" == *..* ]]; then
+            echo "path must be a corpus-relative .py file (e.g. pandas/core/frame.py): $TRACE_PATH" >&2
+            exit 2
+          fi
+          if [[ ! "$TRACE_FUNCTION" =~ ^[A-Za-z0-9_.]*$ ]]; then
+            echo "function must be a dotted qualname or a bare name: $TRACE_FUNCTION" >&2
+            exit 2
+          fi
+          if [[ ! "$TRACE_REF" =~ ^[A-Za-z0-9_./-]+$ ]]; then
+            echo "ref must be a commit, branch or tag: $TRACE_REF" >&2
+            exit 2
+          fi
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      # The lift lanes' own set-up (no second one): interpreter, venv, Rust,
+      # z3, the corpus resolved and authenticated (pandas pin-gated).
+      - name: Lift lane setup (${{ inputs.corpus }})
+        id: corpus
+        uses: ./.github/actions/lift-lane-setup
+        with:
+          corpus: ${{ inputs.corpus }}
+      - name: Mint and prove the one file (kit refusal trace on)
+        shell: bash
+        env:
+          CORPUS_ROOT: ${{ steps.corpus.outputs.root }}
+          TRACE_LABEL: ${{ inputs.corpus }}
+          TRACE_PATH: ${{ inputs.path }}
+        run: |
+          set -euo pipefail
+          export SUGAR_HOME="$GITHUB_WORKSPACE/.sugar"
+          SUGAR_BIN="$(bin/sugarbin --profile release)"
+          bin/sugarbin --profile release --bin sugar-ir-smt-lib >/dev/null
+          T="$RUNNER_TEMP/lift-trace-$GITHUB_RUN_ID"
+          rm -rf "$T"
+          mkdir -p "$T/state" "$T/kit-trace" "$T/kit-profile"
+          {
+            echo "SUGAR_HOME=$SUGAR_HOME"
+            echo "SUGAR_BIN=$SUGAR_BIN"
+            echo "TRACE_STATE=$T"
+          } >> "$GITHUB_ENV"
+          set +e
+          # The kit inherits these through `sugar mint` (the lane's run()).
+          SUGAR_BIN="$SUGAR_BIN" \
+          SUGAR_KIT_TRACE_REFUSALS=1 \
+          SUGAR_KIT_TRACE_DIR="$T/kit-trace" \
+          SUGAR_KIT_PROFILE_DIR="$T/kit-profile" \
+          SUGAR_LIFT_RESPONSE_TIMEOUT_SECS="$LIFT_TRACE_FILE_CAP_S" \
+            timeout -s KILL "$((2 * LIFT_TRACE_FILE_CAP_S + 300))" \
+            python -u tools/nine_step_lift_lane.py \
+              --corpus-root "$CORPUS_ROOT" \
+              --label "$TRACE_LABEL" \
+              --only "$TRACE_PATH" \
+              --out-dir "$T/state" \
+              --workers 1 \
+              --file-cap "$LIFT_TRACE_FILE_CAP_S" \
+              > "$T/lane.log" 2>&1
+          echo "lane rc=$?"
+          cat "$T/lane.log"
+      - name: Bundle the trace (refusals, kit trace, trimmed proof dump)
+        if: ${{ !cancelled() && env.TRACE_STATE != '' }}
+        shell: bash
+        env:
+          CORPUS_ROOT: ${{ steps.corpus.outputs.root }}
+          TRACE_PATH: ${{ inputs.path }}
+          TRACE_FUNCTION: ${{ inputs.function }}
+        run: |
+          set +e -uo pipefail
+          OUT="$GITHUB_WORKSPACE/lift-trace"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          python -u tools/lift_trace_bundle.py \
+            --corpus-root "$CORPUS_ROOT" \
+            --path "$TRACE_PATH" \
+            --function "$TRACE_FUNCTION" \
+            --state "$TRACE_STATE/state" \
+            --kit-trace "$TRACE_STATE/kit-trace" \
+            --kit-profile "$TRACE_STATE/kit-profile" \
+            --sugar-bin "$SUGAR_BIN" \
+            --out "$OUT" \
+            --cap-bytes "$((LIFT_TRACE_CAP_BYTES - LIFT_TRACE_LOG_CAP_BYTES))" \
+            | tee "$OUT/bundle.log"
+          echo "bundle rc=${PIPESTATUS[0]}"
+          if [ -f "$TRACE_STATE/lane.log" ]; then
+            if [ "$(stat -c %s "$TRACE_STATE/lane.log")" -le "$LIFT_TRACE_LOG_CAP_BYTES" ]; then
+              cp "$TRACE_STATE/lane.log" "$OUT/lane.log"
+            else
+              # Over the log's share of the cap: its end, marked as cut.
+              { echo "[lane.log over $LIFT_TRACE_LOG_CAP_BYTES bytes: its last part only]"
+                tail -c "$((LIFT_TRACE_LOG_CAP_BYTES - 100))" "$TRACE_STATE/lane.log"; } > "$OUT/lane.log"
+            fi
+          fi
+          size="$(du -sb "$OUT" | cut -f1)"
+          echo "artifact bytes=$size cap=$LIFT_TRACE_CAP_BYTES"
+          {
+            echo "### lift trace: \`$TRACE_PATH\` ${TRACE_FUNCTION:+(\`$TRACE_FUNCTION\`)}"
+            echo
+            echo '```'
+            cat "$OUT/bundle.log"
+            echo '```'
+            echo
+            echo "Download: \`gh run download $GITHUB_RUN_ID --name lift-trace-$GITHUB_RUN_ID --dir lift-trace\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the trace
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lift-trace-${{ github.run_id }}
+          path: lift-trace/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Remove the trace state
+        if: always()
+        shell: bash
+        run: |
+          [ -n "${TRACE_STATE:-}" ] && rm -rf "$TRACE_STATE"
+          rm -rf "$GITHUB_WORKSPACE/lift-trace"
+          true

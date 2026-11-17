@@ -135,6 +135,30 @@ def test_classify_members_sorts_edges_and_reads_answers():
     assert [r["owner"] for r in got["refusals"]] == ["o"]
 
 
+def test_a_refusals_observed_text_is_kept_whole_to_4_kb():
+    # The key and the coordinate an EvaluationRefSugar refusal names sit past
+    # the old 240-character cut; the row keeps the text whole, up to 4 KB.
+    long = "read of `x` with its evaluation evaluation:" + "k" * 600 + " unbound"
+    huge = "y" * 10_000
+    members = {
+        cid(1): member(
+            "undecided", symbol="python:pkg.core.series.g",
+            reason={"refused": {"owner": "EvaluationRefSugar", "observed": long}},
+            site={"file": "f", "startLine": 2},
+        ),
+        cid(2): member(
+            "undecided", symbol="python:pkg.core.series.h",
+            reason={"refused": {"owner": "o", "observed": huge}},
+            site={"file": "f", "startLine": 9},
+        ),
+    }
+    got = lane.classify_members(members, {"g", "h"}, "pkg/core/series.py", corpus())
+    observed = {r["symbol"]: r["observed"] for r in got["refusals"]}
+    assert observed["python:pkg.core.series.g"] == long
+    assert len(observed["python:pkg.core.series.h"]) == 4096
+    assert lane.OBSERVED_CHARS == lane.DIAGNOSTIC_FIELD_CHARS == 4096
+
+
 def test_member_field_reads_every_envelope_layer():
     assert lane.member_field({"metadata": {"sourceSymbol": "s"}}, "sourceSymbol") == "s"
     assert lane.member_field({"envelope": {"header": {"kind": "bridge"}}}, "kind") == "bridge"

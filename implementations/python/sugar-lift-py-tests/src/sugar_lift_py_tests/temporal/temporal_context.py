@@ -121,4 +121,4 @@ class TemporalContext:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        construction_panic(info)
+        construction_panic(info, temporal=self, trace_detail={"key": observed})

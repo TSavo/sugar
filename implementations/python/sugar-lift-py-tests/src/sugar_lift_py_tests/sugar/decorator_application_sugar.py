@@ -395,6 +395,7 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
             key=key,
             evaluation=read,
             site=self.site,
+            temporal=temporal,
         )
 
     def as_statement(self):

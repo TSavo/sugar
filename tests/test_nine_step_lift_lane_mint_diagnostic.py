@@ -15,7 +15,7 @@ import repo_root_test_support  # noqa: F401 -- puts tools/ on sys.path
 
 import nine_step_lift_lane as lane
 
-LONG = "x" * 3000
+LONG = "x" * 6000  # past the 4 KB field cap
 
 
 def kit_error(code: int = -32001) -> dict:

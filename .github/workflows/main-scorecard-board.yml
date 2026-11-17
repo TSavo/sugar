@@ -353,36 +353,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12.13"
-      - name: Scorecard environment (persistent venv, gh)
-        shell: bash
-        run: bash tools/main_scorecard_env.sh
-      - name: Set up Rust toolchain
-        uses: ./.github/actions/setup-rust-cache
-      - name: Install z3 (cached on the runner)
-        shell: bash
-        run: tools/ci-apt-install.sh z3
-      - name: Resolve authenticated pandas corpus
+      # The one lift lane set-up (interpreter, venv, Rust, z3, the pandas
+      # corpus resolved and pin-gated), shared with lift-trace.yml.
+      - name: Lift lane setup (pandas)
         id: corpus
-        shell: bash
-        run: |
-          set -euo pipefail
-          root="$(
-            python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
-          )"
-          echo "root=$root" >> "$GITHUB_OUTPUT"
-          echo "pandas corpus: $root"
-      - name: Corpus pin gate (pandas 3.0.3)
-        shell: bash
-        env:
-          PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
-        run: |
-          set -euo pipefail
-          python tools/bx_corpus_pin_gate.py \
-            --expected-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
-            --corpus-root "$PANDAS_CORPUS"
+        uses: ./.github/actions/lift-lane-setup
+        with:
+          corpus: pandas
       - name: Timing prior (an earlier run's rows; order only)
         shell: bash
         run: |

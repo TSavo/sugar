@@ -149,36 +149,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12.13"
-      - name: Scorecard environment (persistent venv, gh)
-        shell: bash
-        run: bash tools/main_scorecard_env.sh
-      - name: Set up Rust toolchain
-        uses: ./.github/actions/setup-rust-cache
-      - name: Install z3 (cached on the runner)
-        shell: bash
-        run: tools/ci-apt-install.sh z3
-      - name: Resolve authenticated numpy corpus
+      # The one lift lane set-up (interpreter, venv, Rust, z3, the numpy
+      # corpus resolved and authenticated), shared with lift-trace.yml.
+      - name: Lift lane setup (numpy)
         id: corpus
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          from sugar_lift_py_tests.authenticated_pytest import authenticated_numpy_corpus
-          c = authenticated_numpy_corpus()
-          import sys
-          print(f"root={c.root}")
-          print(f"version={c.version}")
-          print(f"files={c.file_count}")
-          print(f"cid={c.manifest_cid}")
-          print(
-              f"numpy corpus: {c.distribution}=={c.version} files={c.file_count} "
-              f"manifestCid={c.manifest_cid} root={c.root}",
-              file=sys.stderr,
-          )
-          PY
+        uses: ./.github/actions/lift-lane-setup
+        with:
+          corpus: numpy
       - name: Timing prior (an earlier run's rows; order only)
         shell: bash
         run: |

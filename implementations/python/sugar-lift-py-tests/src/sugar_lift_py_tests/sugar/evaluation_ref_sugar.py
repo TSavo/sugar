@@ -239,7 +239,7 @@ def evaluation_read_here(temporal, evaluation: str) -> str:
     return f"{evaluation}@{'/'.join(segments)}"
 
 
-def refuse_unbound_evaluation(*, name: str, key, evaluation, site):
+def refuse_unbound_evaluation(*, name: str, key, evaluation, site, temporal=None):
     """THE refusal of a read of a statement's key no reduction bound where
     the read reduces: by name, naming the key ``key`` the read took
     (``evaluation_read_here``) and its construct-time key ``evaluation``.
@@ -264,6 +264,10 @@ def refuse_unbound_evaluation(*, name: str, key, evaluation, site):
             "or bind the key where the read is reduced; never read the "
             "name in its place"
         ),
+        # The opt-in refusal trace only (``refusal_trace``): the binding
+        # state the read reduced in, and the keys it names.
+        temporal=temporal,
+        trace_detail={"name": name, "key": key, "evaluation": evaluation},
     )
 
 
@@ -371,9 +375,9 @@ class EvaluationRefSugar(ConstructedTermSugar):
             return ExitSet.halted(NameErrorEffect.at(name=self.name, site=self.site))
         if self.walrus:
             return self._unreached_walrus()
-        self._unbound(key)
+        self._unbound(key, temporal)
 
-    def _unbound(self, key: str):
+    def _unbound(self, key: str, temporal=None):
         """A statement's reference whose key this temporal never received:
         the statement never completed here, or the read was reduced where
         nothing bound its key (a frame reduced apart from the block that ran
@@ -382,7 +386,11 @@ class EvaluationRefSugar(ConstructedTermSugar):
         (it may hold nothing, or a write older than the statement), and the
         statement is never evaluated again."""
         refuse_unbound_evaluation(
-            name=self.name, key=key, evaluation=self.evaluation, site=self.site
+            name=self.name,
+            key=key,
+            evaluation=self.evaluation,
+            site=self.site,
+            temporal=temporal,
         )
 
     def _unreached_walrus(self) -> ExitSet:

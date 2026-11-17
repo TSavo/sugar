@@ -59,6 +59,10 @@ SCORECARD_WORKFLOWS = (
     "main-scorecard-numpy.yml",
 )
 SUPERSEDE = "tools/main_scorecard_supersede.sh"
+# Dispatch-only diagnostics: every dispatch is its own trace (corpus, file,
+# function, ref), so the group is the trace's and a re-dispatch of the same
+# trace cancels the older one (``test_a_lift_trace_dispatch_supersedes_only_itself``).
+DISPATCH_TRACE_WORKFLOWS = ("lift-trace.yml",)
 
 
 def test_a_newer_push_cancels_the_superseded_run():
@@ -75,9 +79,31 @@ def test_a_newer_push_cancels_the_superseded_run():
         "  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n"
     )
     for path in sorted(WORKFLOWS.glob("*.yml")):
-        if path.name == "issue-claim-labels.yml" or path.name in SCORECARD_WORKFLOWS:
+        if (
+            path.name == "issue-claim-labels.yml"
+            or path.name in SCORECARD_WORKFLOWS
+            or path.name in DISPATCH_TRACE_WORKFLOWS
+        ):
             continue
         assert block in path.read_text(), path.name
+
+
+@pytest.mark.parametrize("workflow", DISPATCH_TRACE_WORKFLOWS)
+def test_a_lift_trace_dispatch_supersedes_only_itself(workflow):
+    """A trace runs on dispatch only, never on push or a schedule, and a
+    newer dispatch of the same trace cancels the older; two traces of
+    different files never queue behind each other."""
+    text = _text(workflow)
+    on = text[text.index("\non:\n") :].split("\n\n", 1)[0]
+    assert "workflow_dispatch:" in on, on
+    assert "push:" not in on and "schedule:" not in on and "pull_request" not in on, on
+    concurrency = text[text.index("\nconcurrency:\n") :].split("\n\n", 1)[0]
+    for name in ("corpus", "path", "function", "ref"):
+        assert "${{ inputs.%s }}" % name in concurrency, concurrency
+    assert "cancel-in-progress: true" in concurrency, concurrency
+    # It posts nothing to the scorecard.
+    assert "main_scorecard_post.py" not in text
+    assert "issues: write" not in text
 
 
 @pytest.mark.parametrize("workflow", SCORECARD_WORKFLOWS)
