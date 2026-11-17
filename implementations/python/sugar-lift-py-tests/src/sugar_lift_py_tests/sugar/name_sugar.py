@@ -109,6 +109,12 @@ class NameSugar(ConstructedTermSugar):
                 from sugar_lift_py_tests.floor.object_identity import arrived
 
                 return ExitSet.completed(arrived(held, self.site))
+        # A module attribute the import system set (``__file__``,
+        # ``__name__``, ...) that nothing in the source binds: the one
+        # undecided read off the module, never the free name.
+        faces = self._interpreter_module_attribute_faces()
+        if faces is not None:
+            return faces
         # A name nothing binds -- not local, not a parameter, not module-level,
         # not imported, not a builtin -- is no free variable: reading it raises
         # NameError, and that halt is its meaning.  A name only a star import
@@ -150,6 +156,49 @@ class NameSugar(ConstructedTermSugar):
         ):
             return None
         return temporal.value_if_bound(undecided_module_binding_key(unit, self.name))
+
+    def _interpreter_module_attribute_faces(self):
+        """The read of a module attribute the import system set before the
+        body ran (``SourceUnit.interpreter_module_attribute_at``: ``__file__``,
+        ``__name__``, ``__spec__``, ... where nothing in the source binds the
+        name and no star import may), else None.
+
+        Python reads the name off the module's own namespace (``LOAD_GLOBAL``
+        / ``LOAD_NAME``), where the import system put it; what it holds is
+        the loader's and the importer's to decide, never this source's, and
+        the namespace may lack it (no ``__file__`` for a frozen module, no
+        ``__path__`` outside a package).  So it is the one two-faced
+        undecided read (``floor_value.undecided_attribute_result``) of the
+        attribute off the module the import door spells
+        (``module_coordinate``): it completes with
+        ``python:attribute_result("<name>", python:module(<m>), <key>)`` under
+        its completes atom, halts with an undetermined raise under the
+        complement, and owes the ``undecided`` member, keyed per evaluation.
+        No path, no module name and no ``NameError`` is decided.  Before, the
+        read was the free name, and ``ScopedFormula`` refused its whole
+        function by it (#7757: ``illegal free var(s): __file__``)."""
+        from sugar_source_tree.nodes import Name
+
+        node = getattr(self.site, "node", None)
+        unit = getattr(self.site, "unit", None)
+        if unit is None or not isinstance(node, Name) or node.id != self.name:
+            return None
+        reached = getattr(unit, "interpreter_module_attribute_at", None)
+        if reached is None:
+            return None
+        module = reached(node.id, node.line_col_span())
+        if module is None:
+            return None
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+        from sugar_lift_py_tests.floor.import_member_value import module_coordinate
+
+        return undecided_attribute_result(
+            None,
+            self.name,
+            self.site,
+            owner="NameSugar.interpreter_module_attribute",
+            receiver_term=module_coordinate(module),
+        )
 
     def _builtin_floor_value(self):
         """The builtin floor's value this read is bound to, else None.

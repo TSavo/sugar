@@ -199,6 +199,34 @@ _INTERPRETER_BOUND_NAMES = frozenset(
 # (``SourceUnit.interpreter_reference_at``).
 _INTERPRETER_BOUND_TARGETS = {"__builtins__": "python:builtins"}
 
+# The names the import system binds in every module's own namespace before
+# its body runs (the language reference, "The import system", 5.4.4 and
+# 5.4.5: ``__name__``, ``__loader__``, ``__package__``, ``__spec__``,
+# ``__file__``, ``__cached__``, ``__path__`` for a package; ``exec`` adds
+# ``__builtins__``; the body's docstring ``__doc__`` and annotations
+# ``__annotations__``).  A read of one that nothing in the source binds is a
+# read of that module attribute (``SourceUnit.interpreter_module_attribute_at``),
+# whose value the import system decides, never the lifter: the one undecided
+# read off the module (``NameSugar``), never the free name and never the
+# builtin namespace's attribute of the same spelling (``builtins.__name__``
+# is ``"builtins"``; the module's own ``__name__`` shadows it).  The
+# class-body names (``__module__``, ``__qualname__``), a method's
+# ``__class__`` cell and ``__dict__`` are no module attributes.
+_INTERPRETER_MODULE_ATTRIBUTES = frozenset(
+    (
+        "__name__",
+        "__file__",
+        "__doc__",
+        "__spec__",
+        "__loader__",
+        "__package__",
+        "__path__",
+        "__cached__",
+        "__builtins__",
+        "__annotations__",
+    )
+)
+
 
 def _scope_body_bounds(node) -> "tuple | None":
     """``((start_line, start_col), (end_line, end_col))`` of the BODY of a
@@ -2831,12 +2859,62 @@ class SourceUnit:
 
         if builtin_name_temporal().value_if_bound(name) is None:
             return None
-        if "*" in self._module_name_rows()[0]:
-            # A star import may bind any name in the module namespace.
+        if name in _INTERPRETER_MODULE_ATTRIBUTES:
+            # The import system binds it in the module's own namespace, which
+            # a read searches before the builtin one: ``__name__`` read in a
+            # module is that module's name, never ``builtins.__name__``
+            # (``interpreter_module_attribute_at``).
             return None
-        if not self._read_falls_through_the_source(name, span):
+        if not self._interpreter_binding_reached(name, span):
             return None
         return f"python:builtins.{name}"
+
+    def _interpreter_binding_reached(self, name: str, span) -> bool:
+        """Whether the read of ``name`` at ``span`` reaches a binding the
+        interpreter made (the builtin namespace, a module attribute the
+        import system set): no star import may bind the name in the module
+        namespace and nothing the source spells binds it where the read
+        stands (``_read_falls_through_the_source``).  The one law
+        ``builtin_reference_at``, ``interpreter_reference_at`` and
+        ``interpreter_module_attribute_at`` read."""
+        if "*" in self._module_name_rows()[0]:
+            # A star import may bind any name in the module namespace.
+            return False
+        return self._read_falls_through_the_source(name, span)
+
+    def interpreter_module_attribute_at(self, name: str, span) -> Optional[str]:
+        """The module (its dotted name, as the one import table spells this
+        unit's seat, ``module_member_target_symbol``) whose attribute the
+        import system set that the read of ``name`` at ``span`` reaches, else
+        ``None``.
+
+        ``__file__``, ``__name__``, ``__spec__``, ... (``_INTERPRETER_MODULE_
+        ATTRIBUTES``): the import system binds each in the module namespace
+        before the body runs, to a value the lifter does not decide (the
+        loader's path, the importer's name).  A read reaches it only where
+        nothing in the source binds the name and no star import may
+        (``_interpreter_binding_reached``): ``__file__ = ...`` at module
+        level, a parameter or local of that spelling, or ``from m import *``
+        keep their own binding.  None also where the seat names no module.
+        A unit with no typed root refuses by name (``_require_typed_module``).
+        """
+        self._require_typed_module(
+            "SourceUnit.interpreter_module_attribute_at", blame=self.filename
+        )
+        if name not in _INTERPRETER_MODULE_ATTRIBUTES:
+            return None
+        if not self._interpreter_binding_reached(name, span):
+            return None
+        if name in self.module_rebindable_names():
+            # A function or class body rebinds it through ``global``
+            # (``global __doc__`` then ``__doc__ = ...``): the source binds it,
+            # and its reader reads that global undecided by the threading
+            # (``module_unthreaded_names``), never the import system's value.
+            return None
+        symbol = self.module_member_target_symbol()
+        if symbol is None or not symbol.startswith("python:"):
+            return None
+        return symbol[len("python:") :]
 
     def interpreter_reference_at(self, name: str, span) -> Optional[str]:
         """The target symbol of the module attribute the interpreter binds
@@ -2855,9 +2933,7 @@ class SourceUnit:
         target = _INTERPRETER_BOUND_TARGETS.get(name)
         if target is None:
             return None
-        if "*" in self._module_name_rows()[0]:
-            return None
-        if not self._read_falls_through_the_source(name, span):
+        if not self._interpreter_binding_reached(name, span):
             return None
         return target
 
